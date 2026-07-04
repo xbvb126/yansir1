@@ -421,6 +421,7 @@ export function AppShell() {
   const [routePrompt, setRoutePrompt] = useState<RouteAccessPrompt | null>(null);
   const [valueClawSignalContext, setValueClawSignalContext] = useState<LiveSignal | null>(null);
   const [symbolSignalContext, setSymbolSignalContext] = useState<LiveSignal | null>(null);
+  const authGenerationRef = useRef(0);
 
   useEffect(() => {
     void refreshAll();
@@ -455,6 +456,7 @@ export function AppShell() {
   }, [view, currentUser, entitlements]);
 
   async function refreshAll() {
+    const refreshGeneration = authGenerationRef.current;
     const failed: string[] = [];
     const [signalsRes, marketRes, meRes, plansRes, teamRes, paymentRes] = await Promise.allSettled([
       withClientTimeout(apiGet<{ signals: Signal[] }>("/api/signals"), "signals"),
@@ -494,15 +496,20 @@ export function AppShell() {
       failed.push("行情");
     }
 
-    const nextOrderUser = meRes.status === "fulfilled" ? meRes.value.user : currentUser;
+    const canApplyMeResult = refreshGeneration === authGenerationRef.current;
+    const nextOrderUser = canApplyMeResult && meRes.status === "fulfilled" ? meRes.value.user : currentUser;
     if (meRes.status === "fulfilled") {
       nextCurrentUser = meRes.value.user || emptyUser;
       nextEntitlements = meRes.value.entitlements || emptyEntitlements;
-      setCurrentUser(nextCurrentUser);
-      setEntitlements(nextEntitlements);
-      setCurrentUserVerified(true);
+      if (canApplyMeResult) {
+        setCurrentUser(nextCurrentUser);
+        setEntitlements(nextEntitlements);
+        setCurrentUserVerified(true);
+      }
     } else {
-      setCurrentUserVerified(false);
+      if (canApplyMeResult) {
+        setCurrentUserVerified(false);
+      }
       failed.push("账户");
     }
 
@@ -536,19 +543,21 @@ export function AppShell() {
       failed.push("订单");
     }
 
-    writeAppDataCache({
-      timestamp: Date.now(),
-      signals: nextSignals,
-      marketRows: nextMarketRows,
-      factors: nextFactors,
-      marketStats: nextMarketStats,
-      currentUser: nextCurrentUser,
-      entitlements: nextEntitlements,
-      plans: nextPlans,
-      orders: nextOrders,
-      teamDashboard: nextTeamDashboard,
-      paymentProviders: nextPaymentProviders
-    });
+    if (refreshGeneration === authGenerationRef.current) {
+      writeAppDataCache({
+        timestamp: Date.now(),
+        signals: nextSignals,
+        marketRows: nextMarketRows,
+        factors: nextFactors,
+        marketStats: nextMarketStats,
+        currentUser: nextCurrentUser,
+        entitlements: nextEntitlements,
+        plans: nextPlans,
+        orders: nextOrders,
+        teamDashboard: nextTeamDashboard,
+        paymentProviders: nextPaymentProviders
+      });
+    }
     setDataStatus("ready");
     setDataError(failed.length ? `部分接口连接失败：${failed.join("、")}，已展示本地缓存。` : "");
   }
@@ -610,10 +619,11 @@ export function AppShell() {
   }
 
   async function handleLogin(phone: string, password: string) {
+    authGenerationRef.current += 1;
+    setCurrentUserVerified(false);
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/login", { phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
-    setCurrentUserVerified(false);
     setCurrentUser(response.user);
     showToast("登录成功");
     await refreshAll();
@@ -621,10 +631,11 @@ export function AppShell() {
   }
 
   async function handleRegister(name: string, phone: string, password: string) {
+    authGenerationRef.current += 1;
+    setCurrentUserVerified(false);
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/register", { name, phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
-    setCurrentUserVerified(false);
     setCurrentUser(response.user);
     showToast("注册成功");
     await refreshAll();
@@ -632,6 +643,7 @@ export function AppShell() {
   }
 
   function logout() {
+    authGenerationRef.current += 1;
     setAuthToken("");
     setActiveUserId("");
     setCurrentUserVerified(false);
