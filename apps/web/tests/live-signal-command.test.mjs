@@ -106,6 +106,29 @@ await build({
 });
 
 const componentModule = await import(pathToFileURL(componentOutfile).href);
+assert.equal(componentModule.resolveNextSelectedSignalId(undefined, riskSignal.id), riskSignal.id);
+assert.equal(componentModule.resolveNextSelectedSignalId(riskSignal.id, riskSignal.id), undefined);
+assert.equal(componentModule.resolveNextSelectedSignalId(baseSignal.id, riskSignal.id), riskSignal.id);
+
+const collapsedMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: [baseSignal, riskSignal, watchSignal],
+    activeFilter: "now",
+    listeningStatus: "live",
+    now: Date.parse("2026-07-04T08:03:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(collapsedMarkup, /实时雷达/);
+assert.match(collapsedMarkup, /ETHUSDT/);
+assert.doesNotMatch(collapsedMarkup, /live-command__row-detail/);
+assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|信号详情/);
+
 const markup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
     signals: [baseSignal, riskSignal, watchSignal],

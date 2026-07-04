@@ -9,7 +9,7 @@ type LiveSignalCommandProps = {
   listeningStatus: StrategyListeningStatus;
   now?: number;
   onFilterChange: (filter: LiveSignalFilter) => void;
-  onSelectSignal: (signalId: string) => void;
+  onSelectSignal: (signalId?: string) => void;
   onOpenDetail: (signalId: string) => void;
   onOpenValueClaw: (signalId: string) => void;
   onToggleWatch: (symbol: string) => void;
@@ -25,7 +25,7 @@ type RealtimeSignalQueueProps = {
   selectedSignalId?: string;
   selectedFacts: SignalFact[];
   now: number;
-  onSelectSignal: (signalId: string) => void;
+  onSelectSignal: (signalId?: string) => void;
   onOpenDetail: (signalId: string) => void;
   onOpenValueClaw: (signalId: string) => void;
   onToggleWatch: (symbol: string) => void;
@@ -69,9 +69,10 @@ export function LiveSignalCommand({
   const visibleSignals = useMemo(() => filterLiveSignals(sortedSignals, activeFilter), [activeFilter, sortedSignals]);
   const selectedSignal = useMemo(
     () =>
-      visibleSignals.find((signal) => signal.id === selectedSignalId) ??
-      visibleSignals[0] ??
-      signals.find((signal) => signal.id === selectedSignalId),
+      selectedSignalId
+        ? visibleSignals.find((signal) => signal.id === selectedSignalId) ??
+          signals.find((signal) => signal.id === selectedSignalId)
+        : undefined,
     [selectedSignalId, signals, visibleSignals],
   );
   const selectedFacts = useMemo(
@@ -161,7 +162,7 @@ function RealtimeSignalQueue({
             <button
               type="button"
               className={`live-command__row is-${signal.tone} ${selected ? "is-active" : ""}`.trim()}
-              onClick={() => onSelectSignal(signal.id)}
+              onClick={() => onSelectSignal(resolveNextSelectedSignalId(selectedSignalId, signal.id))}
             >
               <span className="live-command__symbol">
                 <strong>{signal.symbol}</strong>
@@ -188,6 +189,10 @@ function RealtimeSignalQueue({
       })}
     </section>
   );
+}
+
+export function resolveNextSelectedSignalId(selectedSignalId: string | undefined, clickedSignalId: string): string | undefined {
+  return selectedSignalId === clickedSignalId ? undefined : clickedSignalId;
 }
 
 function SelectedSignalPanel({
