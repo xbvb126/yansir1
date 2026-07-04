@@ -10,6 +10,7 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "test:entitlements": "node tests/plan-access.test.mjs",
     "test:radar-live": "node tests/live-signal-command.test.mjs",
+    "test:touch-targets": "node tests/touch-targets.test.mjs",
     "test:view-routing": "node tests/view-routing.test.mjs"
   },
   "dependencies": {

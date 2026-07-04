@@ -16201,7 +16201,10 @@ body {
 }
 
 .ai-track-sections button {
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
+  min-height: 44px;
   padding: 0;
   color: #737b8a;
   background: transparent;
@@ -17565,7 +17568,7 @@ body {
 
 .live-command__filters button,
 .live-command__selected button {
-  min-height: 39px;
+  min-height: 44px;
   padding: 0 10px;
   color: #233149;
   background: #ffffff;
@@ -17624,6 +17627,20 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 8px;
+}
+
+.live-command__empty-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 12px;
+  color: #233149;
+  background: #ffffff;
+  border: 1px solid #dfe8f4;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .live-command__empty-actions button:first-child {
@@ -17858,6 +17875,7 @@ body {
 }
 
 .radar-tracking-screen .ai-track-sections button {
+  min-height: 44px;
   font-size: 22px;
 }
 
