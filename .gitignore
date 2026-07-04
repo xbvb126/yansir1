@@ -55,3 +55,6 @@ artifacts/
 coverage/
 .nyc_output/
 .cache/
+
+# Local brainstorming companion
+.superpowers/
