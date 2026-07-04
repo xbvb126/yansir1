@@ -390,6 +390,15 @@ function writeAppDataCache(cache: AppDataCache) {
   }
 }
 
+function clearAppDataCache() {
+  try {
+    window.localStorage.removeItem(APP_DATA_CACHE_KEY);
+    initialAppDataCache = null;
+  } catch {
+    // Local cache is best-effort only.
+  }
+}
+
 export function AppShell() {
   const initialCache = getInitialAppDataCache();
   const [view, setView] = useState<ViewName>(() => readView());
@@ -402,6 +411,7 @@ export function AppShell() {
   const [factors, setFactors] = useState<Factor[]>(() => initialCache?.factors || []);
   const [marketStats, setMarketStats] = useState<MarketStats>(() => initialCache?.marketStats || { monitoredSymbols: 0, crowdedRisks: 0, liveSources: 0 });
   const [currentUser, setCurrentUser] = useState<CurrentUser>(() => initialCache?.currentUser || emptyUser);
+  const [currentUserVerified, setCurrentUserVerified] = useState(false);
   const [entitlements, setEntitlements] = useState<Entitlements>(() => initialCache?.entitlements || emptyEntitlements);
   const [plans, setPlans] = useState<Plan[]>(() => initialCache?.plans || []);
   const [orders, setOrders] = useState<BillingOrder[]>(() => initialCache?.orders || []);
@@ -490,7 +500,9 @@ export function AppShell() {
       nextEntitlements = meRes.value.entitlements || emptyEntitlements;
       setCurrentUser(nextCurrentUser);
       setEntitlements(nextEntitlements);
+      setCurrentUserVerified(true);
     } else {
+      setCurrentUserVerified(false);
       failed.push("账户");
     }
 
@@ -601,6 +613,7 @@ export function AppShell() {
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/login", { phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
+    setCurrentUserVerified(false);
     setCurrentUser(response.user);
     showToast("登录成功");
     await refreshAll();
@@ -611,6 +624,7 @@ export function AppShell() {
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/register", { name, phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
+    setCurrentUserVerified(false);
     setCurrentUser(response.user);
     showToast("注册成功");
     await refreshAll();
@@ -620,8 +634,10 @@ export function AppShell() {
   function logout() {
     setAuthToken("");
     setActiveUserId("");
+    setCurrentUserVerified(false);
     setCurrentUser(emptyUser);
     setEntitlements(emptyEntitlements);
+    clearAppDataCache();
     showToast("已退出当前账号");
     navigate("account");
   }
@@ -646,6 +662,7 @@ export function AppShell() {
   async function payOrder(order: BillingOrder) {
     const response = await apiPost<{ order: BillingOrder; user: CurrentUser }>(`/api/billing/orders/${order.id}/pay`, {});
     setOrders((items) => items.map((item) => (item.id === response.order.id ? response.order : item)));
+    setCurrentUserVerified(false);
     setCurrentUser(response.user);
     showToast("支付成功，会员权益已更新");
     await refreshAll();
@@ -656,6 +673,7 @@ export function AppShell() {
   const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
   const showBottomNav = !isSubPage;
   const showSymbolDetail = view === "data" && selectedSymbol;
+  const canRenderKlineLab = view === "kline-lab" && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
 
   return (
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : view}`}>
@@ -681,7 +699,25 @@ export function AppShell() {
         <PlansPage paymentProviders={paymentProviders} plans={plans} orders={orders} currentUser={currentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
       )}
       {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={teamDashboard} currentUser={currentUser} onBack={() => navigate("account")} />}
-      {dataStatus !== "loading" && view === "kline-lab" && currentUser.role === "admin" && <KlineLabView currentUser={currentUser} rows={rows} signals={safeSignals} navigate={navigate} showToast={showToast} />}
+      {dataStatus !== "loading" && canRenderKlineLab && <KlineLabView currentUser={currentUser} rows={rows} signals={safeSignals} navigate={navigate} showToast={showToast} />}
+      {dataStatus !== "loading" && view === "kline-lab" && !canRenderKlineLab && (
+        <section className="view active-view kline-lab-view" aria-label="内部页面验证中">
+          <header className="kline-lab-header">
+            <button className="kline-lab-back" type="button" onClick={() => navigate("radar")} aria-label="返回">
+              返回
+            </button>
+            <div className="kline-lab-title">
+              <span>Yansir Internal</span>
+              <h1>K线验信室</h1>
+            </div>
+            <span className="kline-confirmation-badge">验证中</span>
+          </header>
+          <section className="kline-strategy-panel empty" aria-label="管理员权限验证">
+            <strong>内部页面验证中</strong>
+            <p>正在验证管理员权限，验证完成前不会请求策略 inbox。</p>
+          </section>
+        </section>
+      )}
       {dataStatus !== "loading" && view === "login" && <LoginPage onBack={() => navigate("account")} onLogin={handleLogin} onRegister={() => navigate("register")} />}
       {dataStatus !== "loading" && view === "register" && <RegisterPage onBack={() => navigate("login")} onRegister={handleRegister} />}
       {dataError && dataStatus === "ready" && <div className="toast subtle-toast">{dataError}</div>}
