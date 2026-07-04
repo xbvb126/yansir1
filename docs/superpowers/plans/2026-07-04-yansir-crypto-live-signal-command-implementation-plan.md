@@ -20,11 +20,12 @@ The local feature branch has implemented the core Live Signal Command UI and sev
 - The previous standalone signal evidence page is no longer the primary detail route.
 - The unused `SignalEvidenceDetail.tsx` component and its standalone page styles were removed after the coin-detail-first flow was confirmed.
 - Desktop-width browser QA around `1280x900` verified radar row expansion and `币种详情` navigation into the existing symbol detail page.
+- The feature branch was pushed to `origin/feature/yansir-crypto-live-signal-command`.
 - `services/strategy/**`, API strategy modules, and database migrations remain untouched.
 
 Remaining work after this update:
 
-- Push the local feature branch when GitHub connectivity/permissions allow it.
+- Open a PR or merge into the target branch when you are ready to integrate this feature branch.
 
 Known workspace note: `apps/web/src/components/AppShell.tsx` currently has an unrelated uncommitted mini-sparkline smoothing change. Keep it separate from Live Signal Command commits unless it is intentionally accepted later.
 
