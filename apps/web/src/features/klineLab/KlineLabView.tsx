@@ -111,6 +111,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
   const [inboxSignals, setInboxSignals] = useState<StrategyInboxSignal[]>([]);
   const [signalState, setSignalState] = useState<LoadState>("idle");
   const [signalError, setSignalError] = useState("");
+  const canRequestInbox = Boolean(currentUser.id && currentUser.role === "admin");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -144,7 +145,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
   }, [symbol, timeframe, refreshNonce]);
 
   useEffect(() => {
-    if (!currentUser.id) {
+    if (!canRequestInbox) {
       setInboxSignals([]);
       setSignalState("idle");
       setSignalError("");
@@ -153,6 +154,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
 
     let alive = true;
     setSignalState("loading");
+    setInboxSignals([]);
     setSignalError("");
     apiGet<StrategySignalListResponse>(`/api/strategy/inbox?mode=all&limit=20&page=1&symbol=${encodeURIComponent(symbol)}`)
       .then((response) => {
@@ -169,7 +171,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
     return () => {
       alive = false;
     };
-  }, [currentUser.id, symbol, refreshNonce]);
+  }, [canRequestInbox, symbol, refreshNonce]);
 
   const symbolOptions = useMemo(() => {
     const marketSymbols = rows.map((row) => normalizeLabSymbol(row.symbol)).filter(Boolean);
@@ -257,7 +259,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
         <EvidenceCard confirmation={confirmation} />
       </section>
 
-      <StrategySignalPanel signal={selectedSignal} status={signalState} error={signalError} signedIn={Boolean(currentUser.id)} />
+      <StrategySignalPanel signal={selectedSignal} status={signalState} error={signalError} canRequestInbox={canRequestInbox} />
 
       <section className="kline-mtf-placeholders" aria-label="多周期占位">
         {TIMEFRAMES.map((item) => (
@@ -352,13 +354,13 @@ function EvidenceCard({ confirmation }: { confirmation: KlineConfirmationResult 
   );
 }
 
-function StrategySignalPanel({ signal, status, error, signedIn }: { signal: SelectedSignal | null; status: LoadState; error: string; signedIn: boolean }) {
+function StrategySignalPanel({ signal, status, error, canRequestInbox }: { signal: SelectedSignal | null; status: LoadState; error: string; canRequestInbox: boolean }) {
   if (!signal) {
     return (
       <section className="kline-strategy-panel empty" aria-label="策略信号">
         <strong>策略信号</strong>
         <p>暂无策略命中，当前页面不从K线生成新信号。</p>
-        {!signedIn && <small>未登录状态不会请求策略 inbox。</small>}
+        {!canRequestInbox && <small>Guest/non-admin will not request strategy inbox.</small>}
         {error && <small>{error}</small>}
       </section>
     );

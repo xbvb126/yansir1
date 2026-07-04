@@ -681,7 +681,7 @@ export function AppShell() {
         <PlansPage paymentProviders={paymentProviders} plans={plans} orders={orders} currentUser={currentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
       )}
       {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={teamDashboard} currentUser={currentUser} onBack={() => navigate("account")} />}
-      {dataStatus !== "loading" && view === "kline-lab" && <KlineLabView currentUser={currentUser} rows={rows} signals={safeSignals} navigate={navigate} showToast={showToast} />}
+      {dataStatus !== "loading" && view === "kline-lab" && currentUser.role === "admin" && <KlineLabView currentUser={currentUser} rows={rows} signals={safeSignals} navigate={navigate} showToast={showToast} />}
       {dataStatus !== "loading" && view === "login" && <LoginPage onBack={() => navigate("account")} onLogin={handleLogin} onRegister={() => navigate("register")} />}
       {dataStatus !== "loading" && view === "register" && <RegisterPage onBack={() => navigate("login")} onRegister={handleRegister} />}
       {dataError && dataStatus === "ready" && <div className="toast subtle-toast">{dataError}</div>}
