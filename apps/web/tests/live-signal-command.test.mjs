@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const outfile = join(process.cwd(), "tmp-tests", "live-signal-command.mjs");
 const componentOutfile = join(process.cwd(), "tmp-tests", "LiveSignalCommand.mjs");
+const detailOutfile = join(process.cwd(), "tmp-tests", "SignalEvidenceDetail.mjs");
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 await build({
@@ -124,5 +125,32 @@ assert.match(markup, /Yansir Crypto/);
 assert.match(markup, /Yansir strategy engine/);
 assert.match(markup, /Signal Detail/);
 assert.match(markup, /Explain and review only/);
+
+await build({
+  entryPoints: ["src/features/radar/SignalEvidenceDetail.tsx"],
+  outfile: detailOutfile,
+  bundle: true,
+  external: ["react", "react/jsx-runtime"],
+  format: "esm",
+  jsx: "automatic",
+  platform: "node",
+  target: "node18",
+});
+
+const detailModule = await import(pathToFileURL(detailOutfile).href);
+const detailMarkup = renderToStaticMarkup(
+  React.createElement(detailModule.SignalEvidenceDetail, {
+    signal: baseSignal,
+    now: Date.parse("2026-07-04T08:03:00.000Z"),
+    onBack: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(detailMarkup, /BTCUSDT/);
+assert.match(detailMarkup, /Strategy score/);
+assert.match(detailMarkup, /AI Review Boundary/);
+assert.match(detailMarkup, /does not create or override/);
 
 console.log("live signal command tests passed");
