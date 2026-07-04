@@ -12,6 +12,14 @@ mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
 const liveSignalCommandSource = readFileSync(join(process.cwd(), "src/features/radar/LiveSignalCommand.tsx"), "utf8");
+const liveCommandIndex = appShellSource.indexOf("<LiveSignalCommand");
+const trackingHeaderIndex = appShellSource.indexOf('<header className="ai-track-header">');
+assert.ok(liveCommandIndex > -1, "radar should render LiveSignalCommand");
+assert.ok(trackingHeaderIndex > -1, "radar should keep tracking tools");
+assert.ok(
+  liveCommandIndex < trackingHeaderIndex,
+  "realtime strategy radar should render before tracking filters",
+);
 assert.doesNotMatch(
   appShellSource,
   /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,

@@ -17343,6 +17343,18 @@ body {
   color: var(--text);
 }
 
+.radar-tools-panel {
+  margin-top: 12px;
+}
+
+.radar-tools-panel .ai-track-header {
+  margin-top: 0;
+}
+
+.app-shell.view-radar .live-command {
+  margin-top: 0;
+}
+
 .live-command__header {
   display: flex;
   align-items: flex-start;

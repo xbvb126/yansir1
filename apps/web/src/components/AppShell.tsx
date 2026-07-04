@@ -1224,6 +1224,19 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
+      <LiveSignalCommand
+        signals={liveSignals}
+        selectedSignalId={selectedLiveSignalId}
+        activeFilter={activeLiveFilter}
+        listeningStatus={listeningStatus}
+        now={scanNow}
+        onFilterChange={setActiveLiveFilter}
+        onSelectSignal={setSelectedLiveSignalId}
+        onOpenDetail={handleOpenSignalDetail}
+        onOpenValueClaw={handleOpenValueClaw}
+        onToggleWatch={handleToggleWatchSymbol}
+      />
+      <section className="radar-tools-panel" aria-label="筛选与历史追踪">
       <header className="ai-track-header">
         <div className="ai-track-topline">
           <div className="ai-track-sections" role="tablist" aria-label="追踪类型">
@@ -1314,18 +1327,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
           </section>
         </div>
       )}
-      <LiveSignalCommand
-        signals={liveSignals}
-        selectedSignalId={selectedLiveSignalId}
-        activeFilter={activeLiveFilter}
-        listeningStatus={listeningStatus}
-        now={scanNow}
-        onFilterChange={setActiveLiveFilter}
-        onSelectSignal={setSelectedLiveSignalId}
-        onOpenDetail={handleOpenSignalDetail}
-        onOpenValueClaw={handleOpenValueClaw}
-        onToggleWatch={handleToggleWatchSymbol}
-      />
+      </section>
       <section className="live-command__history-actions">
         {trackingSection === "strategy" && strategyPagination?.hasMore && (
           <button className="scan-history-more" type="button" disabled={strategyLoadingMore} onClick={loadMoreStrategySignals}>
