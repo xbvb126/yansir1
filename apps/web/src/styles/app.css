@@ -17724,12 +17724,6 @@ body {
   line-height: 1.45;
 }
 
-@media (min-width: 900px) {
-  .live-command__body {
-    grid-template-columns: minmax(0, 1.05fr) minmax(240px, 0.95fr);
-  }
-}
-
 @media (max-width: 420px) {
   .live-command__header {
     flex-direction: column;
@@ -17756,6 +17750,19 @@ body {
   .signal-evidence__actions {
     grid-template-columns: 1fr;
   }
+}
+
+.radar-tracking-screen .ai-track-sections {
+  gap: 18px;
+  padding-left: 2px;
+}
+
+.radar-tracking-screen .ai-track-sections button {
+  font-size: 22px;
+}
+
+.radar-tracking-screen .ai-track-sections button.active {
+  font-size: 28px;
 }
 
 
