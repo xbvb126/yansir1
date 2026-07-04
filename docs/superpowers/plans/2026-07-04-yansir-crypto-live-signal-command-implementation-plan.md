@@ -18,12 +18,12 @@ The local feature branch has implemented the core Live Signal Command UI and sev
 - Clicking a row toggles `展开 -> 收起 -> 展开`; clicking another row switches the inline detail.
 - The inline `币种详情` action opens the existing symbol detail page through `onOpenSymbol(signal.symbol)`.
 - The previous standalone signal evidence page is no longer the primary detail route.
+- The unused `SignalEvidenceDetail.tsx` component and its standalone page styles were removed after the coin-detail-first flow was confirmed.
+- Desktop-width browser QA around `1280x900` verified radar row expansion and `币种详情` navigation into the existing symbol detail page.
 - `services/strategy/**`, API strategy modules, and database migrations remain untouched.
 
 Remaining work after this update:
 
-- Run desktop-width browser QA around `1280x900`.
-- Decide whether to keep the unused `SignalEvidenceDetail.tsx` component for a future dedicated signal-event page or remove it.
 - Push the local feature branch when GitHub connectivity/permissions allow it.
 
 Known workspace note: `apps/web/src/components/AppShell.tsx` currently has an unrelated uncommitted mini-sparkline smoothing change. Keep it separate from Live Signal Command commits unless it is intentionally accepted later.
@@ -390,11 +390,13 @@ Required local component behavior:
 
 ## Task 3: Create The Signal Evidence Detail Component
 
-Status: implemented earlier, then removed from the primary user flow after browser review. Keep this component only if we later create a dedicated signal-event evidence page; otherwise it can be deleted as cleanup.
+Status: implemented earlier, then removed from the primary user flow after browser review. The cleanup pass deleted this unused component and its standalone styles so the product has one canonical detail path: existing coin detail.
 
 - [x] Create `apps/web/src/features/radar/SignalEvidenceDetail.tsx`.
 - [x] Run `npm run build:web`.
 - [x] Commit with message `Add signal evidence detail component`.
+- [x] Delete `apps/web/src/features/radar/SignalEvidenceDetail.tsx` after the coin-detail-first route was confirmed.
+- [x] Remove unused `.signal-evidence*` styles from `apps/web/src/styles/app.css`.
 
 Implementation contract:
 
@@ -893,7 +895,7 @@ Browser acceptance criteria:
 - `apps/web/src/components/AppShell.tsx`
 - `apps/web/src/features/radar/liveSignalCommand.ts`
 - `apps/web/src/features/radar/LiveSignalCommand.tsx`
-- `apps/web/src/features/radar/SignalEvidenceDetail.tsx` (created earlier; now deferred or removable)
+- `apps/web/src/features/radar/SignalEvidenceDetail.tsx` (created earlier, now removed as unused cleanup)
 - `apps/web/src/styles/app.css`
 - `apps/web/tests/live-signal-command.test.mjs`
 

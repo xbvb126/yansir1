@@ -8,7 +8,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const outfile = join(process.cwd(), "tmp-tests", "live-signal-command.mjs");
 const componentOutfile = join(process.cwd(), "tmp-tests", "LiveSignalCommand.mjs");
-const detailOutfile = join(process.cwd(), "tmp-tests", "SignalEvidenceDetail.mjs");
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
@@ -185,32 +184,5 @@ assert.ok(followingRowIndex > -1, "following signal row should render");
 assert.ok(inlineDetailIndex > selectedRowIndex, "signal detail should render after the selected row");
 assert.ok(inlineDetailIndex < followingRowIndex, "signal detail should render before the next signal row");
 
-await build({
-  entryPoints: ["src/features/radar/SignalEvidenceDetail.tsx"],
-  outfile: detailOutfile,
-  bundle: true,
-  external: ["react", "react/jsx-runtime"],
-  format: "esm",
-  jsx: "automatic",
-  platform: "node",
-  target: "node18",
-});
-
-const detailModule = await import(pathToFileURL(detailOutfile).href);
-const detailMarkup = renderToStaticMarkup(
-  React.createElement(detailModule.SignalEvidenceDetail, {
-    signal: baseSignal,
-    now: Date.parse("2026-07-04T08:03:00.000Z"),
-    onBack: () => undefined,
-    onOpenValueClaw: () => undefined,
-    onToggleWatch: () => undefined,
-  }),
-);
-
-assert.match(detailMarkup, /BTCUSDT/);
-assert.match(detailMarkup, /策略评分/);
-assert.match(detailMarkup, /AI 复核边界/);
-assert.match(detailMarkup, /不会创建或覆盖策略信号/);
-assert.doesNotMatch(detailMarkup, /Strategy score|AI Review Boundary|does not create or override|Back|Watch Symbol|Open ValueClaw|LONG/);
 
 console.log("live signal command tests passed");

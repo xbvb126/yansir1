@@ -17370,10 +17370,7 @@ body {
 
 .live-command__status,
 .live-command__queue,
-.live-command__selected,
-.signal-evidence__score,
-.signal-evidence__facts,
-.signal-evidence__ai-boundary {
+.live-command__selected {
   background: #ffffff;
   border: 1px solid #e8eef7;
   border-radius: 8px;
@@ -17413,9 +17410,7 @@ body {
 }
 
 .live-command__filters button,
-.live-command__selected button,
-.signal-evidence__actions button,
-.signal-evidence__back {
+.live-command__selected button {
   min-height: 39px;
   padding: 0 10px;
   color: #233149;
@@ -17605,28 +17600,24 @@ body {
   text-transform: uppercase;
 }
 
-.live-command__facts,
-.signal-evidence__facts {
+.live-command__facts {
   display: grid;
   gap: 9px;
   margin: 0;
 }
 
-.live-command__facts div,
-.signal-evidence__facts div {
+.live-command__facts div {
   display: grid;
   gap: 3px;
 }
 
-.live-command__facts dt,
-.signal-evidence__facts dt {
+.live-command__facts dt {
   color: #7d8897;
   font-size: 11px;
   font-weight: 850;
 }
 
-.live-command__facts dd,
-.signal-evidence__facts dd {
+.live-command__facts dd {
   margin: 0;
   color: #1d2738;
   font-size: 13px;
@@ -17634,20 +17625,17 @@ body {
   line-height: 1.35;
 }
 
-.live-command__facts .is-emphasis dd,
-.signal-evidence__facts .is-emphasis dd {
+.live-command__facts .is-emphasis dd {
   color: #0d5fe8;
 }
 
-.live-command__actions,
-.signal-evidence__actions {
+.live-command__actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 
-.live-command__selected button:first-child,
-.signal-evidence__actions button:first-child {
+.live-command__selected button:first-child {
   color: #ffffff;
   background: var(--blue);
   border-color: var(--blue);
@@ -17656,101 +17644,6 @@ body {
 .live-command__history-actions {
   display: grid;
   padding: 0 0 16px;
-}
-
-.signal-evidence {
-  display: flex;
-  min-height: auto;
-  flex-direction: column;
-  gap: 14px;
-  padding: 4px 0 18px;
-}
-
-.signal-evidence__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.signal-evidence__header h1,
-.signal-evidence__header p {
-  margin: 0;
-}
-
-.signal-evidence__header h1 {
-  color: var(--text);
-  font-size: 28px;
-  font-weight: 950;
-  letter-spacing: 0;
-}
-
-.signal-evidence__header p {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.signal-evidence__header strong {
-  color: var(--green);
-  font-size: 14px;
-  font-weight: 950;
-}
-
-.signal-evidence__score {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 15px;
-}
-
-.signal-evidence__score span {
-  color: var(--blue);
-  font-size: 43px;
-  font-weight: 950;
-  line-height: 1;
-}
-
-.signal-evidence__score p,
-.signal-evidence__score small {
-  display: block;
-  margin: 0;
-}
-
-.signal-evidence__score p {
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 950;
-}
-
-.signal-evidence__score small {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.signal-evidence__facts,
-.signal-evidence__ai-boundary {
-  padding: 14px;
-}
-
-.signal-evidence__ai-boundary h2,
-.signal-evidence__ai-boundary p {
-  margin: 0;
-}
-
-.signal-evidence__ai-boundary h2 {
-  color: var(--text);
-  font-size: 17px;
-  font-weight: 950;
-}
-
-.signal-evidence__ai-boundary p {
-  margin-top: 7px;
-  color: #4d596a;
-  font-size: 13px;
-  line-height: 1.45;
 }
 
 @media (max-width: 420px) {
@@ -17768,15 +17661,12 @@ body {
   }
 
   .live-command__filters button,
-  .live-command__selected button,
-  .signal-evidence__actions button,
-  .signal-evidence__back {
+  .live-command__selected button {
     padding: 0 8px;
     font-size: 11px;
   }
 
-  .live-command__actions,
-  .signal-evidence__actions {
+  .live-command__actions {
     grid-template-columns: 1fr;
   }
 }

@@ -22,7 +22,7 @@ This keeps the app closer to the current Yansir information architecture:
 - Coin detail = full symbol context and historical scan review.
 - ValueClaw = explanation and review only.
 
-The previous standalone `SignalEvidenceDetail` concept is deferred unless a future dedicated signal-event page is needed.
+The previous standalone `SignalEvidenceDetail` concept has been removed from the current implementation. If a future dedicated signal-event page is needed, it should be rebuilt from the updated coin-detail-first flow rather than reintroduced as a parallel route.
 
 ## Non-Negotiable Rule
 
