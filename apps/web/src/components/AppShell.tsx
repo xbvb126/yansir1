@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { normalizeViewParam } from "../lib/viewRouting";
+import { KlineLabView } from "../features/klineLab/KlineLabView";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
@@ -652,7 +653,7 @@ export function AppShell() {
 
   const rows = marketRows;
   const safeSignals = signals;
-  const isSubPage = ["plans", "team", "admin", "login", "register"].includes(view);
+  const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
   const showBottomNav = !isSubPage;
   const showSymbolDetail = view === "data" && selectedSymbol;
 
@@ -680,6 +681,7 @@ export function AppShell() {
         <PlansPage paymentProviders={paymentProviders} plans={plans} orders={orders} currentUser={currentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
       )}
       {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={teamDashboard} currentUser={currentUser} onBack={() => navigate("account")} />}
+      {dataStatus !== "loading" && view === "kline-lab" && <KlineLabView currentUser={currentUser} rows={rows} signals={safeSignals} navigate={navigate} showToast={showToast} />}
       {dataStatus !== "loading" && view === "login" && <LoginPage onBack={() => navigate("account")} onLogin={handleLogin} onRegister={() => navigate("register")} />}
       {dataStatus !== "loading" && view === "register" && <RegisterPage onBack={() => navigate("login")} onRegister={handleRegister} />}
       {dataError && dataStatus === "ready" && <div className="toast subtle-toast">{dataError}</div>}
@@ -3091,7 +3093,7 @@ function buildScanRecord(symbol: string, row: MarketRow, signal: Signal | undefi
 }
 
 function isViewName(value: string): value is ViewName {
-  return ["data", "claw", "radar", "signal", "account", "login", "register", "admin", "plans", "team"].includes(value);
+  return ["data", "claw", "radar", "signal", "account", "login", "register", "admin", "plans", "team", "kline-lab"].includes(value);
 }
 
 function normalizeDisplaySymbol(symbol: string) {
