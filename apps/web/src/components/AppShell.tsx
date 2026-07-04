@@ -412,6 +412,7 @@ export function AppShell() {
   const [marketStats, setMarketStats] = useState<MarketStats>(() => initialCache?.marketStats || { monitoredSymbols: 0, crowdedRisks: 0, liveSources: 0 });
   const [currentUser, setCurrentUser] = useState<CurrentUser>(() => initialCache?.currentUser || emptyUser);
   const [currentUserVerified, setCurrentUserVerified] = useState(false);
+  const [currentUserVerificationReady, setCurrentUserVerificationReady] = useState(false);
   const [entitlements, setEntitlements] = useState<Entitlements>(() => initialCache?.entitlements || emptyEntitlements);
   const [plans, setPlans] = useState<Plan[]>(() => initialCache?.plans || []);
   const [orders, setOrders] = useState<BillingOrder[]>(() => initialCache?.orders || []);
@@ -431,6 +432,11 @@ export function AppShell() {
     const onPop = () => {
       const nextView = readView();
       const nextSymbol = readSymbolParam();
+      if (nextView === "kline-lab" && !currentUserVerificationReady) {
+        setView(nextView);
+        setSelectedSymbol(nextSymbol);
+        return;
+      }
       const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
       if (prompt) {
         setRoutePrompt(prompt);
@@ -444,16 +450,17 @@ export function AppShell() {
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [currentUser, entitlements]);
+  }, [currentUser, currentUserVerificationReady, entitlements]);
 
   useEffect(() => {
+    if (view === "kline-lab" && !currentUserVerificationReady) return;
     const prompt = routeAccessPrompt(view, currentUser, entitlements);
     if (!prompt) return;
     setRoutePrompt(prompt);
     setView(prompt.fallbackView);
     setSelectedSymbol("");
     replaceAppUrl(prompt.fallbackView);
-  }, [view, currentUser, entitlements]);
+  }, [view, currentUser, currentUserVerificationReady, entitlements]);
 
   async function refreshAll() {
     const refreshGeneration = authGenerationRef.current;
@@ -505,10 +512,12 @@ export function AppShell() {
         setCurrentUser(nextCurrentUser);
         setEntitlements(nextEntitlements);
         setCurrentUserVerified(true);
+        setCurrentUserVerificationReady(true);
       }
     } else {
       if (canApplyMeResult) {
         setCurrentUserVerified(false);
+        setCurrentUserVerificationReady(true);
       }
       failed.push("账户");
     }
@@ -621,6 +630,7 @@ export function AppShell() {
   async function handleLogin(phone: string, password: string) {
     authGenerationRef.current += 1;
     setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/login", { phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
@@ -633,6 +643,7 @@ export function AppShell() {
   async function handleRegister(name: string, phone: string, password: string) {
     authGenerationRef.current += 1;
     setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/register", { name, phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
@@ -647,6 +658,7 @@ export function AppShell() {
     setAuthToken("");
     setActiveUserId("");
     setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     setCurrentUser(emptyUser);
     setEntitlements(emptyEntitlements);
     clearAppDataCache();
@@ -675,6 +687,7 @@ export function AppShell() {
     const response = await apiPost<{ order: BillingOrder; user: CurrentUser }>(`/api/billing/orders/${order.id}/pay`, {});
     setOrders((items) => items.map((item) => (item.id === response.order.id ? response.order : item)));
     setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     setCurrentUser(response.user);
     showToast("支付成功，会员权益已更新");
     await refreshAll();
@@ -685,7 +698,7 @@ export function AppShell() {
   const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
   const showBottomNav = !isSubPage;
   const showSymbolDetail = view === "data" && selectedSymbol;
-  const canRenderKlineLab = view === "kline-lab" && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
+  const canRenderKlineLab = view === "kline-lab" && currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
 
   return (
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : view}`}>
