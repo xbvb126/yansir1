@@ -927,7 +927,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
   const [activeLiveFilter, setActiveLiveFilter] = useState<LiveSignalFilter>("now");
   const [selectedLiveSignalId, setSelectedLiveSignalId] = useState<string | undefined>();
-  const [radarToolsOpen, setRadarToolsOpen] = useState(false);
   const [ruleSettingsOpen, setRuleSettingsOpen] = useState(false);
   const [upgradePrompt, setUpgradePrompt] = useState<{ title: string; desc: string } | null>(null);
   const [radarWindow, setRadarWindow] = useState<"4H" | "8H" | "24H">("8H");
@@ -1024,12 +1023,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     risk: "风险",
     watch: "观察"
   };
-  const trackingSectionLabels: Record<typeof trackingSection, string> = {
-    ai: "市场追踪",
-    strategy: "策略追踪",
-    mine: "我的追踪"
-  };
-  const activeMonitorLabel = monitorTabs.find(([key]) => key === signalFilter)?.[1] || "全部";
   const latestScanLabel = strategyLastScan || formatClockTime(scanBaseTime);
   const activeScopeLabel = trackingSection === "strategy"
     ? strategyHistoryMode === "current"
@@ -1297,20 +1290,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
-      <section className="radar-tools-disclosure" aria-label="筛选与历史追踪入口">
-        <button
-          className="radar-tools-toggle"
-          type="button"
-          aria-expanded={radarToolsOpen}
-          aria-controls="radar-tools-panel"
-          onClick={() => setRadarToolsOpen((open) => !open)}
-        >
-          <span>筛选与历史追踪</span>
-          <strong>{trackingSectionLabels[trackingSection]} · {activeMonitorLabel}</strong>
-          <SystemIcon name="chevron" />
-        </button>
-      </section>
-      {radarToolsOpen && (
       <section id="radar-tools-panel" className="radar-tools-panel" aria-label="筛选与历史追踪">
       <header className="ai-track-header">
         <div className="ai-track-topline">
@@ -1403,8 +1382,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         </div>
       )}
       </section>
-      )}
-      {radarToolsOpen && (
       <section className="live-command__history-actions">
         {trackingSection === "strategy" && strategyPagination?.hasMore && (
           <button className="scan-history-more" type="button" disabled={strategyLoadingMore} onClick={loadMoreStrategySignals}>
@@ -1412,7 +1389,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
           </button>
         )}
       </section>
-      )}
       <LiveSignalCommand
         signals={liveSignals}
         selectedSignalId={selectedLiveSignalId}

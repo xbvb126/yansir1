@@ -13,33 +13,23 @@ mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
 const liveSignalCommandSource = readFileSync(join(process.cwd(), "src/features/radar/LiveSignalCommand.tsx"), "utf8");
 const liveCommandIndex = appShellSource.indexOf("<LiveSignalCommand");
-const trackingDisclosureIndex = appShellSource.indexOf('<section className="radar-tools-disclosure"');
+const trackingPanelIndex = appShellSource.indexOf('<section id="radar-tools-panel" className="radar-tools-panel"');
 const trackingHeaderIndex = appShellSource.indexOf('<header className="ai-track-header">');
 assert.ok(liveCommandIndex > -1, "radar should render LiveSignalCommand");
-assert.ok(trackingDisclosureIndex > -1, "radar should render tracking tools disclosure");
+assert.ok(trackingPanelIndex > -1, "radar should render tracking tools panel");
 assert.ok(trackingHeaderIndex > -1, "radar should keep tracking tools");
 assert.ok(
-  trackingDisclosureIndex < liveCommandIndex,
-  "radar tracking disclosure should render before the signal list",
+  trackingPanelIndex < liveCommandIndex,
+  "radar tracking tools should render before the signal list",
 );
 assert.ok(
   trackingHeaderIndex < liveCommandIndex,
-  "expanded radar tracking tools should render before the signal list",
+  "radar tracking header should render before the signal list",
 );
-assert.match(
+assert.doesNotMatch(
   appShellSource,
-  /const \[radarToolsOpen, setRadarToolsOpen\] = useState\(false\)/,
-  "radar tracking tools should be collapsed by default",
-);
-assert.match(
-  appShellSource,
-  /aria-expanded=\{radarToolsOpen\}/,
-  "radar tracking disclosure should expose expanded state",
-);
-assert.match(
-  appShellSource,
-  /\{radarToolsOpen && \(\s*<section id="radar-tools-panel" className="radar-tools-panel"/,
-  "radar tracking tools should render only after expansion",
+  /radarToolsOpen|radar-tools-disclosure|aria-expanded=\{radarToolsOpen\}/,
+  "radar tracking tools should not use an extra disclosure row",
 );
 assert.doesNotMatch(
   appShellSource,
