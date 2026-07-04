@@ -976,11 +976,23 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   }), [rows, scanBaseTime, signals]);
 
   const watchlistSet = useMemo(() => new Set(watchlistSymbols.map(normalizeDisplaySymbol)), [watchlistSymbols]);
+  const strategySectionRecords = useMemo<RadarTimelineRecord[]>(() =>
+    buildAllMarketRadarRecords(rows, strategyRecords, {
+      mode: "strategy",
+      scanBaseTime
+    }),
+  [rows, scanBaseTime, strategyRecords]);
+  const marketSectionRecords = useMemo<RadarTimelineRecord[]>(() =>
+    buildAllMarketRadarRecords(rows, radarRecords, {
+      mode: "market",
+      scanBaseTime
+    }),
+  [rows, radarRecords, scanBaseTime]);
   const sectionRecords = trackingSection === "strategy"
-    ? strategyRecords
+    ? strategySectionRecords
     : trackingSection === "mine"
-      ? radarRecords.filter((record) => watchlistSet.has(record.symbol))
-      : radarRecords;
+      ? marketSectionRecords.filter((record) => watchlistSet.has(record.symbol))
+      : marketSectionRecords;
   const filteredSignals = sectionRecords.filter((record) => {
     if (signalFilter !== "all" && record.group !== signalFilter) return false;
     return true;
@@ -2854,6 +2866,72 @@ function buildSignalScanRecord(symbol: string, signal: Signal): ScanRecord {
     signature: createScanSignature(title, tone, [symbol, actionTag, "合约"]),
     tone
   };
+}
+
+function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRecord[], options: { mode: "strategy" | "market"; scanBaseTime: number }) {
+  const rowSymbols = new Set(rows.map((row) => normalizeDisplaySymbol(row.symbol)));
+  const recordBySymbol = new Map<string, RadarTimelineRecord>();
+
+  [...records]
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0) || (b.score || 0) - (a.score || 0))
+    .forEach((record) => {
+      const symbol = normalizeDisplaySymbol(record.symbol);
+      if (!symbol || recordBySymbol.has(symbol)) return;
+      recordBySymbol.set(symbol, { ...record, symbol });
+    });
+
+  const marketBackfilled = rows.map((row, index) => {
+    const symbol = normalizeDisplaySymbol(row.symbol);
+    return recordBySymbol.get(symbol) || buildMarketBackfillRecord(row, index, options);
+  });
+  const unmatchedRecords = records.filter((record) => !rowSymbols.has(normalizeDisplaySymbol(record.symbol)));
+
+  return [...marketBackfilled, ...unmatchedRecords];
+}
+
+function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mode: "strategy" | "market"; scanBaseTime: number }): RadarTimelineRecord {
+  const symbol = normalizeDisplaySymbol(row.symbol);
+  const change = parseNumber(row.change);
+  const score = normalizeRadarScore(row.score);
+  const isRisk = change < 0 && score < 60;
+  const group: RadarGroup = isRisk ? "risk" : score >= 70 ? "surge" : "opportunity";
+  const category = options.mode === "strategy"
+    ? "等待策略信号"
+    : isRisk
+      ? "风险观察"
+      : score >= 70
+        ? "市场异动"
+        : "市场观察";
+  const timestamp = options.scanBaseTime - (1000 + index) * 60 * 1000;
+  const trigger = options.mode === "strategy"
+    ? `${symbol} 已纳入全市场策略扫描，当前暂未触发 Yansir 策略信号。`
+    : `${symbol} 当前价格 ${row.price || "-"}，24H ${row.change || "--"}，继续观察成交量、资金费率和下一轮雷达信号。`;
+  const tone: Tone = isRisk ? "danger" : score >= 70 ? "warning" : "success";
+  const direction: Direction = isRisk ? "short" : "flat";
+
+  return {
+    id: `${options.mode}-market-${symbol || index}`,
+    symbol,
+    group,
+    category,
+    title: `${symbol} ${category}`,
+    body: trigger,
+    signature: createScanSignature(`${symbol} ${category}`, tone, [symbol, category]),
+    tags: [symbol, category, options.mode === "strategy" ? "策略扫描池" : "全市场"],
+    time: formatClockTime(timestamp),
+    timestamp,
+    tone,
+    score,
+    direction,
+    strategyName: options.mode === "strategy" ? "Yansir 策略引擎" : "市场观察池",
+    trigger,
+    risk: isRisk ? category : undefined
+  };
+}
+
+function normalizeRadarScore(value: number | undefined) {
+  if (!Number.isFinite(value)) return 50;
+  return Math.max(0, Math.min(100, Math.round(value || 0)));
 }
 
 function strategyInboxToRecord(signal: StrategyInboxSignal): RadarTimelineRecord {

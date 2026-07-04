@@ -145,7 +145,7 @@ function StrategyStatusPanel({ status, signalCount }: StrategyStatusPanelProps) 
   return (
     <aside className={`live-command__status is-${status}`} aria-label="策略监听状态">
       <strong>{copy.label}</strong>
-      <span>{signalCount} 条策略信号</span>
+      <span>{signalCount} 条雷达币种</span>
       <small>{copy.text}</small>
     </aside>
   );

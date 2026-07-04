@@ -61,6 +61,36 @@ assert.doesNotMatch(
   /策略追踪扫描失败|策略追踪实时监听|我的追踪里添加币种/,
   "radar status copy should avoid the duplicate tracking terminology",
 );
+assert.match(
+  appShellSource,
+  /const strategySectionRecords = useMemo<RadarTimelineRecord\[\]>\(\(\) =>\s*buildAllMarketRadarRecords\(rows, strategyRecords,/,
+  "strategy signal source should be backfilled from all market rows",
+);
+assert.match(
+  appShellSource,
+  /const marketSectionRecords = useMemo<RadarTimelineRecord\[\]>\(\(\) =>\s*buildAllMarketRadarRecords\(rows, radarRecords,/,
+  "market movement source should be backfilled from all market rows",
+);
+assert.match(
+  appShellSource,
+  /trackingSection === "strategy"\s*\?\s*strategySectionRecords\s*:\s*trackingSection === "mine"\s*\?\s*marketSectionRecords\.filter\(\(record\) => watchlistSet\.has\(record\.symbol\)\)\s*:\s*marketSectionRecords/,
+  "only the watchlist source should narrow the market-wide radar records",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /trackingSection === "strategy"\s*\?\s*strategyRecords\s*:\s*trackingSection === "mine"\s*\?\s*radarRecords\.filter/,
+  "strategy and market radar sources should not be limited to triggered signals only",
+);
+assert.match(
+  liveSignalCommandSource,
+  /\{signalCount\} 条雷达币种/,
+  "radar status count should describe market-wide coin rows instead of triggered strategy signals",
+);
+assert.doesNotMatch(
+  liveSignalCommandSource,
+  /\{signalCount\} 条策略信号/,
+  "radar status count should not label backfilled market rows as strategy signals",
+);
 assert.doesNotMatch(
   appShellSource,
   /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,
