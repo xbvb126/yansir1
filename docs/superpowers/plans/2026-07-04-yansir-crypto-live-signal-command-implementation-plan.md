@@ -8,6 +8,26 @@
 
 **Tech Stack:** React 18, TypeScript, Vite, existing CSS in `apps/web/src/styles/app.css`, Node assertion tests bundled with esbuild, existing NestJS/FastAPI contracts unchanged.
 
+## Current Implementation Status
+
+The local feature branch has implemented the core Live Signal Command UI and several browser-review refinements:
+
+- Live signal view model, queue component, inline signal detail, styling, and tests are in place.
+- Visible radar copy has been localized to Chinese.
+- Signal rows default to collapsed.
+- Clicking a row toggles `展开 -> 收起 -> 展开`; clicking another row switches the inline detail.
+- The inline `币种详情` action opens the existing symbol detail page through `onOpenSymbol(signal.symbol)`.
+- The previous standalone signal evidence page is no longer the primary detail route.
+- `services/strategy/**`, API strategy modules, and database migrations remain untouched.
+
+Remaining work after this update:
+
+- Run desktop-width browser QA around `1280x900`.
+- Decide whether to keep the unused `SignalEvidenceDetail.tsx` component for a future dedicated signal-event page or remove it.
+- Push the local feature branch when GitHub connectivity/permissions allow it.
+
+Known workspace note: `apps/web/src/components/AppShell.tsx` currently has an unrelated uncommitted mini-sparkline smoothing change. Keep it separate from Live Signal Command commits unless it is intentionally accepted later.
+
 ---
 
 ## Strategy Signal Boundary
@@ -363,16 +383,18 @@ Required local component behavior:
 - `StrategyStatusPanel` shows `LIVE`, `DEGRADED`, or `PAUSED`, signal count, and a short status line. This panel must not say AI is producing signals.
 - `RealtimeSignalQueue` renders one button row per `LiveSignal`, with symbol, direction, score, risk tone, strategy name, trigger, and `formatSignalTime(signal.generatedAt, now)`.
 - `SelectedSignalPanel` renders facts from `buildSelectedSignalFacts(signal)`, then three command buttons:
-  - `Signal Detail` calls `onOpenDetail(signal.id)`.
+  - `币种详情` calls `onOpenDetail(signal.symbol)` and opens the existing coin detail page.
   - `ValueClaw` calls `onOpenValueClaw(signal.id)`.
   - `Watch` calls `onToggleWatch(signal.symbol)`.
 - Empty state copy: `Waiting for strategy signals`.
 
 ## Task 3: Create The Signal Evidence Detail Component
 
-- [ ] Create `apps/web/src/features/radar/SignalEvidenceDetail.tsx`.
-- [ ] Run `npm run build:web`.
-- [ ] Commit with message `Add signal evidence detail component`.
+Status: implemented earlier, then removed from the primary user flow after browser review. Keep this component only if we later create a dedicated signal-event evidence page; otherwise it can be deleted as cleanup.
+
+- [x] Create `apps/web/src/features/radar/SignalEvidenceDetail.tsx`.
+- [x] Run `npm run build:web`.
+- [x] Commit with message `Add signal evidence detail component`.
 
 Implementation contract:
 
@@ -457,20 +479,20 @@ Required detail sections:
 
 ## Task 4: Wire The New Radar Into AppShell
 
-- [ ] Modify `apps/web/src/components/AppShell.tsx`.
-- [ ] Import `LiveSignalCommand`, `SignalEvidenceDetail`, and view-model helpers.
-- [ ] Add local radar UI state for active filter, selected signal id, and detail mode.
-- [ ] Map existing radar, inbox, or strategy signal data into `LiveSignal[]` with `toLiveSignal`.
-- [ ] Replace the current radar page main body with `LiveSignalCommand` for the radar route while keeping existing navigation, modals, account state, watchlist handlers, and API calls intact.
-- [ ] Run `npm run test:radar-live -w apps/web`.
-- [ ] Run `npm run build:web`.
-- [ ] Commit with message `Wire live signal command into radar page`.
+- [x] Modify `apps/web/src/components/AppShell.tsx`.
+- [x] Import `LiveSignalCommand` and view-model helpers.
+- [x] Add local radar UI state for active filter and selected signal id.
+- [x] Map existing radar, inbox, or strategy signal data into `LiveSignal[]` with `toLiveSignal`.
+- [x] Replace the current radar page main body with `LiveSignalCommand` for the radar route while keeping existing navigation, modals, account state, watchlist handlers, and API calls intact.
+- [x] Route `币种详情` through `onOpenSymbol(signal.symbol)` to the existing coin detail page.
+- [x] Run `npm run test:radar-live -w apps/web`.
+- [x] Run `npm run build:web`.
+- [x] Commit with message `Wire live signal command into radar page`.
 
 Implementation pattern:
 
 ```tsx
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
-import { SignalEvidenceDetail } from "../features/radar/SignalEvidenceDetail";
 import type { LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalCommand";
 import { toLiveSignal } from "../features/radar/liveSignalCommand";
 ```
@@ -480,7 +502,6 @@ State to add inside the radar page component:
 ```tsx
 const [activeLiveFilter, setActiveLiveFilter] = useState<LiveSignalFilter>("now");
 const [selectedLiveSignalId, setSelectedLiveSignalId] = useState<string | undefined>();
-const [radarDetailSignalId, setRadarDetailSignalId] = useState<string | undefined>();
 ```
 
 Mapping pattern:
@@ -491,12 +512,6 @@ const liveSignals = useMemo(
   [radarSignals],
 );
 
-const selectedDetailSignal = useMemo(
-  () => liveSignals.find((signal) => signal.id === radarDetailSignalId),
-  [liveSignals, radarDetailSignalId],
-);
-```
-
 Listening status pattern:
 
 ```tsx
@@ -506,15 +521,11 @@ const listeningStatus: StrategyListeningStatus = strategyStatus === "online" ? "
 Render pattern:
 
 ```tsx
-if (selectedDetailSignal) {
-  return (
-    <SignalEvidenceDetail
-      signal={selectedDetailSignal}
-      onBack={() => setRadarDetailSignalId(undefined)}
-      onOpenValueClaw={handleOpenValueClaw}
-      onToggleWatch={handleToggleWatchSymbol}
-    />
-  );
+function handleOpenSignalDetail(symbol: string) {
+  const signal = liveSignals.find((item) => item.symbol === symbol);
+  if (signal) {
+    onOpenSymbol(signal.symbol);
+  }
 }
 
 return (
@@ -525,7 +536,7 @@ return (
     listeningStatus={listeningStatus}
     onFilterChange={setActiveLiveFilter}
     onSelectSignal={setSelectedLiveSignalId}
-    onOpenDetail={setRadarDetailSignalId}
+    onOpenDetail={handleOpenSignalDetail}
     onOpenValueClaw={handleOpenValueClaw}
     onToggleWatch={handleToggleWatchSymbol}
   />
@@ -537,6 +548,7 @@ Execution notes:
 - Use the actual signal array name already present in `RadarPage`. If the current code uses `radarRecords`, `signals`, `strategySignals`, or another existing name, map that array with `toLiveSignal`.
 - If the existing ValueClaw handler expects a symbol instead of a signal id, pass the selected signal to a small adapter inside `AppShell.tsx`.
 - If the existing watchlist handler accepts a market object instead of a symbol, use the existing symbol lookup already used by the radar or detail screen.
+- The detail action must use the existing `openSymbol`/`onOpenSymbol` flow, not a separate evidence screen.
 - Keep old radar data fetching, refresh controls, notification wiring, and auth logic in place.
 - Do not modify backend API contracts in this task.
 
@@ -841,7 +853,7 @@ Execution notes:
 - [ ] Verify the radar first screen at desktop width around `1280x900`.
 - [ ] Click each filter: `Now`, `Long`, `Risk`, `Watch`.
 - [ ] Select at least two signal rows and verify the selected facts change.
-- [ ] Open signal detail, return to radar, and verify no console errors.
+- [x] Open coin detail from an inline radar signal and verify no console errors.
 - [ ] Click ValueClaw and Watch actions and confirm they call existing handlers without changing signal facts.
 - [ ] Apply visual fixes with `apps/web/src/styles/app.css` or component class changes only.
 - [ ] Re-run `npm run build:web` after visual fixes.
@@ -861,7 +873,8 @@ Browser acceptance criteria:
 
 - Realtime Radar is the first visible radar experience.
 - The selected strategy signal remains visually dominant on mobile and desktop.
-- AI boundary copy is visible in the detail flow.
+- AI boundary copy is visible in the inline quick evidence flow.
+- The `币种详情` action opens the existing symbol detail page.
 - No UI copy says AI creates trading signals.
 - Existing bottom navigation still works.
 - No overlapping text or clipped command buttons at mobile width.
@@ -880,7 +893,7 @@ Browser acceptance criteria:
 - `apps/web/src/components/AppShell.tsx`
 - `apps/web/src/features/radar/liveSignalCommand.ts`
 - `apps/web/src/features/radar/LiveSignalCommand.tsx`
-- `apps/web/src/features/radar/SignalEvidenceDetail.tsx`
+- `apps/web/src/features/radar/SignalEvidenceDetail.tsx` (created earlier; now deferred or removable)
 - `apps/web/src/styles/app.css`
 - `apps/web/tests/live-signal-command.test.mjs`
 

@@ -12,6 +12,18 @@ Live Signal Command is the approved UI direction for Yansir Crypto's realtime ra
 
 The product must continue to feel like a strategy signal system with AI explanation. It must not feel like an AI chatbot that invents trading calls.
 
+## Current Product Decision
+
+After browser review, the radar row action named detail was changed to open the existing coin detail page, not a separate signal evidence page. The radar row itself remains the quick signal summary and inline evidence surface; the existing coin detail page carries the deeper coin context, chart, strategy history, and scan records.
+
+This keeps the app closer to the current Yansir information architecture:
+
+- Radar = realtime strategy signal queue and quick evidence.
+- Coin detail = full symbol context and historical scan review.
+- ValueClaw = explanation and review only.
+
+The previous standalone `SignalEvidenceDetail` concept is deferred unless a future dedicated signal-event page is needed.
+
 ## Non-Negotiable Rule
 
 Existing strategy signals remain the source of truth.
@@ -85,13 +97,13 @@ The first screen should contain:
 
 7. Bottom actions
    - `Watch`
-   - `Open detail`
+   - `Coin detail`
 
 The homepage should not show long AI prose. It can show a short "AI role" line or an `Ask Claw` entry, but the signal queue must dominate.
 
-## Detail Screen: Signal Evidence
+## Detail Screen: Coin Detail
 
-Signal detail opens from a radar row. It is the place for proof, risk, and next action.
+The row detail action opens the existing coin detail page for the selected symbol. It is the place for coin-level context, strategy history, scan records, and next action.
 
 The first screen should contain:
 
@@ -108,8 +120,8 @@ The first screen should contain:
    - timeframe selector can remain compact
    - do not let the chart hide strategy facts
 
-3. Signal evidence panel
-   - strategy fact: exact signal emitted by the strategy engine
+3. Strategy evidence panel
+   - strategy fact: exact signal emitted by the strategy engine, when available for that symbol
    - market evidence: OI, volume, funding, price move, or other known data
    - risk interpretation: what the signal means and what it does not mean
    - ValueClaw role: explanation only
@@ -184,7 +196,7 @@ Priority order on Detail:
 Radar interactions:
 
 - tapping a signal row selects it and updates the selected facts panel
-- `Open detail` opens the full evidence screen for the selected signal
+- `Coin detail` opens the existing symbol detail page for the selected coin
 - `Watch` toggles tracking for the selected symbol/timeframe
 - tabs filter the queue without changing the underlying signal facts
 
@@ -204,7 +216,6 @@ The existing `apps/web/src/components/AppShell.tsx` is large and should not abso
 - `StrategyStatusPanel`
 - `RealtimeSignalQueue`
 - `SelectedSignalFacts`
-- `SignalEvidenceDetail`
 - `SignalTrackingPanel`
 - `ValueClawSignalEntry`
 
@@ -215,7 +226,7 @@ These components should consume API-shaped data rather than invent local signal 
 - Radar first screen makes realtime strategy signals more prominent than AI content.
 - Every signal row shows symbol, timeframe, signal type, trigger price/time, and score.
 - AI/ValueClaw entry is visible but clearly secondary.
-- Detail screen explains evidence and risk without changing signal facts.
+- Coin detail screen preserves the selected symbol context and does not change signal facts.
 - Risk signals are visually distinct from opportunity signals.
 - Watch and push states are visible in the signal detail flow.
 - UI remains consistent with current Yansir mobile screenshots and bottom navigation.
