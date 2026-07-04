@@ -409,6 +409,7 @@ export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [routePrompt, setRoutePrompt] = useState<RouteAccessPrompt | null>(null);
   const [valueClawSignalContext, setValueClawSignalContext] = useState<LiveSignal | null>(null);
+  const [symbolSignalContext, setSymbolSignalContext] = useState<LiveSignal | null>(null);
 
   useEffect(() => {
     void refreshAll();
@@ -541,6 +542,7 @@ export function AppShell() {
 
   function navigate(nextView: ViewName) {
     setValueClawSignalContext(null);
+    setSymbolSignalContext(null);
     const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
     if (prompt) {
       setRoutePrompt(prompt);
@@ -564,14 +566,26 @@ export function AppShell() {
 
   function openSymbol(symbol: string) {
     const clean = normalizeDisplaySymbol(symbol);
+    if (!clean) return;
     setValueClawSignalContext(null);
+    setSymbolSignalContext(null);
     setView("data");
     setSelectedSymbol(clean);
     replaceAppUrl("data", clean);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function openSymbolFromRadar(signal: LiveSignal) {
+    setValueClawSignalContext(null);
+    setSymbolSignalContext(signal);
+    setView("data");
+    setSelectedSymbol(signal.symbol);
+    replaceAppUrl("data", signal.symbol);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function closeSymbol() {
+    setSymbolSignalContext(null);
     setSelectedSymbol("");
     replaceAppUrl("data");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -645,13 +659,13 @@ export function AppShell() {
   return (
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : view}`}>
       {dataStatus !== "loading" && showSymbolDetail && (
-        <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} currentUser={currentUser} entitlements={entitlements} onBack={closeSymbol} onNavigate={navigate} onToast={showToast} />
+        <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} radarSignalContext={normalizeDisplaySymbol(symbolSignalContext?.symbol || "") === normalizeDisplaySymbol(selectedSymbol) ? symbolSignalContext : null} currentUser={currentUser} entitlements={entitlements} onBack={closeSymbol} onNavigate={navigate} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "data" && (
         <DataPage currentUser={currentUser} entitlements={entitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "radar" && (
-        <RadarPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
+        <RadarPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
@@ -907,7 +921,7 @@ function DataPage({ currentUser, entitlements, factors, onNavigate, onOpenSearch
   );
 }
 
-function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onOpenValueClawSignal, onToast, rows, signals, stats }: { currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
+function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onOpenSymbolSignal, onOpenValueClawSignal, onToast, rows, signals, stats }: { currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onOpenSymbolSignal: (signal: LiveSignal) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
   const [trackingSection, setTrackingSection] = useState<"ai" | "strategy" | "mine">("strategy");
   const [signalFilter, setSignalFilter] = useState<"all" | "surge" | "opportunity" | "risk">("all");
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
@@ -1255,8 +1269,10 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   function handleOpenSignalDetail(symbol: string) {
     const signal = liveSignals.find((item) => item.symbol === symbol);
     if (signal) {
-      onOpenSymbol(signal.symbol);
+      onOpenSymbolSignal(signal);
+      return;
     }
+    onOpenSymbol(symbol);
   }
 
   function handleToggleWatchSymbol(symbol: string) {
@@ -1879,7 +1895,7 @@ function AccountPage({ currentUser, entitlements, onLogout, onNavigate, onOpenSe
   );
 }
 
-function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onToast, seedRows, signals, symbol }: { currentUser: CurrentUser; entitlements: Entitlements; onBack: () => void; onNavigate: (view: ViewName) => void; onToast: (message: string) => void; seedRows: MarketRow[]; signals: Signal[]; symbol: string }) {
+function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpenValueClawSignal, onToast, radarSignalContext, seedRows, signals, symbol }: { currentUser: CurrentUser; entitlements: Entitlements; onBack: () => void; onNavigate: (view: ViewName) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; radarSignalContext?: LiveSignal | null; seedRows: MarketRow[]; signals: Signal[]; symbol: string }) {
   const cleanSeedSymbol = normalizeDisplaySymbol(symbol);
   const cleanSymbol = cleanSeedSymbol;
   const seed = useMemo(
@@ -2183,6 +2199,17 @@ function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onToa
           )}
         </div>
       </header>
+      {radarSignalContext && (
+        <section className="polished-card symbol-radar-context" aria-label="实时雷达信号上下文">
+          <div>
+            <span>来自实时雷达</span>
+            <strong>{formatDirectionLabel(radarSignalContext.direction)} · {radarSignalContext.score}/100</strong>
+          </div>
+          <p>{radarSignalContext.trigger}</p>
+          <small>信号来源：Yansir 策略引擎 · ValueClaw 仅用于解释和复核，策略信号保持最高优先级</small>
+          <button type="button" onClick={() => onOpenValueClawSignal(radarSignalContext)}>打开 ValueClaw 复核</button>
+        </section>
+      )}
       <section className={`polished-card symbol-overview-card ${tone}`}>
         <div className="symbol-overview-head">
           <div className="symbol-score-block">

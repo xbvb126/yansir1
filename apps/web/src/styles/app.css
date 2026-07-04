@@ -6927,6 +6927,57 @@ body {
   border-color: rgba(245, 159, 19, 0.22);
 }
 
+.symbol-radar-context {
+  display: grid;
+  gap: 10px;
+  margin-top: 0;
+  padding: 14px;
+  border-color: #c9d7ee;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+}
+
+.symbol-radar-context div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.symbol-radar-context span,
+.symbol-radar-context small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.symbol-radar-context strong {
+  color: var(--blue);
+  font-size: 14px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.symbol-radar-context p {
+  margin: 0;
+  color: #1d2738;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.symbol-radar-context button {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--blue);
+  background: #ffffff;
+  border: 1px solid #cbdaf0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .risk-pill.danger {
   color: #f04452;
   background: #fff0f0;

@@ -32,8 +32,8 @@ assert.doesNotMatch(
 );
 assert.match(
   appShellSource,
-  /function handleOpenSignalDetail\(symbol: string\)[\s\S]*onOpenSymbol\(signal\.symbol\)/,
-  "radar signal detail action should route through the existing symbol detail page",
+  /function handleOpenSignalDetail\(symbol: string\)[\s\S]*onOpenSymbolSignal\(signal\)/,
+  "radar signal detail action should route through the symbol handoff context",
 );
 assert.match(
   liveSignalCommandSource,
@@ -54,6 +54,21 @@ assert.match(
   appShellSource,
   /ValueClaw 仅解释和复核该策略信号/,
   "ValueClaw context copy should preserve the strategy-signal boundary",
+);
+assert.match(
+  appShellSource,
+  /symbolSignalContext/,
+  "symbol detail should preserve radar signal handoff context",
+);
+assert.match(
+  appShellSource,
+  /来自实时雷达/,
+  "symbol detail should label radar handoff context",
+);
+assert.match(
+  appShellSource,
+  /onOpenValueClawSignal\(radarSignalContext\)/,
+  "symbol detail radar context should keep the ValueClaw handoff",
 );
 
 await build({
