@@ -1307,7 +1307,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       <header className="ai-track-header">
         <div className="ai-track-topline">
           <div className="ai-track-sections" role="tablist" aria-label="追踪类型">
-            <button className={trackingSection === "ai" ? "active" : ""} type="button" onClick={() => setTrackingSection("ai")}>AI追踪</button>
+            <button className={trackingSection === "ai" ? "active" : ""} type="button" onClick={() => setTrackingSection("ai")}>市场追踪</button>
             <button className={trackingSection === "strategy" ? "active" : ""} type="button" onClick={() => setTrackingSection("strategy")}>策略追踪</button>
             <button className={trackingSection === "mine" ? "active" : ""} type="button" onClick={() => setTrackingSection("mine")}>我的追踪</button>
           </div>
