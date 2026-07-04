@@ -210,22 +210,22 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
           返回
         </button>
         <div className="kline-lab-title">
-          <span>Yansir Internal</span>
+          <span>Yansir 内部</span>
           <h1>K线验信室</h1>
         </div>
-        <span className={`kline-confirmation-badge state-${confirmation.state}`}>{confirmation.label}</span>
+        <span className={`kline-confirmation-badge state-${confirmation.state}`}>{formatConfirmationLabel(confirmation)}</span>
       </header>
 
       <section className="kline-lab-toolbar" aria-label="K线验信控制台">
         <label className="kline-symbol-select">
-          <span>Symbol</span>
+          <span>币种</span>
           <select value={symbol} onChange={(event) => setSymbol(normalizeLabSymbol(event.target.value))}>
             {symbolOptions.map((item) => (
               <option key={item} value={item}>{item}</option>
             ))}
           </select>
         </label>
-        <div className="kline-timeframe-tabs" role="group" aria-label="Timeframe">
+        <div className="kline-timeframe-tabs" role="group" aria-label="周期">
           {TIMEFRAMES.map((item) => (
             <button
               key={item}
@@ -239,7 +239,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
           ))}
         </div>
         <button className="kline-refresh-button" type="button" onClick={handleRefresh}>
-          Refresh
+          刷新
         </button>
       </section>
 
@@ -248,9 +248,9 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
           <div className="kline-panel-head">
             <div>
               <strong>{symbol} / USDT</strong>
-              <span>{timeframe} · limit 180{marketSource ? ` · ${marketSource}` : ""}</span>
+              <span>{timeframe} · 180 根K线{marketSource ? ` · 数据源 ${formatMarketSource(marketSource)}` : ""}</span>
             </div>
-            <span>{candleState === "loading" ? "读取K线中" : `${candles.length} candles`}</span>
+            <span>{candleState === "loading" ? "读取K线中" : `${candles.length} 根K线`}</span>
           </div>
           {candleError && <p className="kline-lab-error">{candleError}</p>}
           <KlineChart candles={candles} bands={confirmation.bands} />
@@ -272,7 +272,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
       </section>
 
       <footer className="kline-lab-footer">
-        Admin-only/internal. 本页只复核既有策略信号，不改变信号来源，也不会从K线生成新信号。
+        仅限管理员/内部使用。本页只复核既有策略信号，不改变信号来源，也不会从K线生成新信号。
       </footer>
     </section>
   );
@@ -333,20 +333,20 @@ function EvidenceCard({ confirmation }: { confirmation: KlineConfirmationResult 
     <article className="kline-evidence-card" aria-label="K线验信证据">
       <div className="kline-panel-head">
         <div>
-          <strong>{confirmation.label}</strong>
-          <span>{confirmation.state}</span>
+          <strong>{formatConfirmationLabel(confirmation)}</strong>
+          <span>{formatConfirmationState(confirmation.state)}</span>
         </div>
         <strong>{confirmation.score}/100</strong>
       </div>
-      <p>{confirmation.summary}</p>
+      <p>{formatConfirmationSummary(confirmation)}</p>
       <ul className="kline-evidence-list">
         {confirmation.evidence.map((item) => (
           <li key={item.key} className={`status-${item.status}`}>
             <div>
-              <strong>{item.label}</strong>
-              <span>{item.status} · {item.score}/{item.weight}</span>
+              <strong>{formatEvidenceLabel(item)}</strong>
+              <span>{formatEvidenceStatus(item.status)} · {item.score}/{item.weight}</span>
             </div>
-            <p>{item.detail}</p>
+            <p>{formatEvidenceDetail(item)}</p>
           </li>
         ))}
       </ul>
@@ -357,43 +357,43 @@ function EvidenceCard({ confirmation }: { confirmation: KlineConfirmationResult 
 function StrategySignalPanel({ signal, status, error, canRequestInbox }: { signal: SelectedSignal | null; status: LoadState; error: string; canRequestInbox: boolean }) {
   if (!signal) {
     return (
-      <section className="kline-strategy-panel empty" aria-label="策略信号">
-        <strong>策略信号</strong>
+      <section className="kline-strategy-panel empty" aria-label="策略信号箱">
+        <strong>策略信号箱</strong>
         <p>暂无策略命中，当前页面不从K线生成新信号。</p>
-        {!canRequestInbox && <small>Guest/non-admin will not request strategy inbox.</small>}
+        {!canRequestInbox && <small>非管理员不会请求策略信号箱。</small>}
         {error && <small>{error}</small>}
       </section>
     );
   }
 
   return (
-    <section className="kline-strategy-panel" aria-label="策略信号">
+    <section className="kline-strategy-panel" aria-label="策略信号箱">
       <div className="kline-panel-head">
         <div>
-          <strong>{signal.title}</strong>
-          <span>{signal.source === "strategy" ? "Strategy inbox" : "Cached signal"} · {signal.timeframe || "tf unknown"}</span>
+          <strong>{formatSignalTitle(signal)}</strong>
+          <span>{signal.source === "strategy" ? "策略信号箱" : "本地缓存信号"} · {signal.timeframe || "周期未知"}</span>
         </div>
         <strong>{formatDirection(signal.direction)} · {signal.score ?? "--"}</strong>
       </div>
       <dl>
         <div>
-          <dt>Symbol</dt>
+          <dt>币种</dt>
           <dd>{normalizeLabSymbol(signal.symbol)}</dd>
         </div>
         <div>
-          <dt>Price</dt>
+          <dt>价格</dt>
           <dd>{signal.price == null ? "--" : formatPrice(signal.price)}</dd>
         </div>
         <div>
-          <dt>Time</dt>
+          <dt>时间</dt>
           <dd>{formatSignalTime(signal.receivedAt || signal.time)}</dd>
         </div>
         <div>
-          <dt>Status</dt>
-          <dd>{status === "loading" ? "刷新中" : signal.engine || "Yansir Strategy"}</dd>
+          <dt>状态</dt>
+          <dd>{status === "loading" ? "刷新中" : formatStrategyEngine(signal.engine)}</dd>
         </div>
       </dl>
-      <p>{signal.reason || "策略命中无附加说明。"}</p>
+      <p>{formatSignalText(signal.reason, signal.direction) || "策略命中无附加说明。"}</p>
       {error && <small>{error}</small>}
     </section>
   );
@@ -471,7 +471,7 @@ function fromCached(signal: CachedSignalLike, fallbackTimeframe: LabTimeframe): 
     direction: signal.direction,
     price: parseNumber(signal.price),
     score: signal.score,
-    title: signal.title || `${normalizeLabSymbol(signal.symbol)} cached signal`,
+    title: signal.title || `${normalizeLabSymbol(signal.symbol)} 本地缓存信号`,
     reason: signal.reason || "",
     time: signal.time,
     receivedAt: signal.receivedAt
@@ -539,10 +539,108 @@ function roundSvg(value: number) {
   return Math.round(value * 10) / 10;
 }
 
+function formatConfirmationLabel(confirmation: KlineConfirmationResult) {
+  if (confirmation.state === "no-signal") return "暂无策略";
+  if (confirmation.state === "watch-next") return `${formatDirection(confirmation.direction)} · 等待K线`;
+  if (confirmation.state === "invalidated") return `${formatDirection(confirmation.direction)} · 结构失效`;
+  if (confirmation.state === "confirmed") return `${formatDirection(confirmation.direction)} · K线确认`;
+  return `${formatDirection(confirmation.direction)} · 结构预警`;
+}
+
+function formatConfirmationState(state: KlineConfirmationResult["state"]) {
+  if (state === "no-signal") return "暂无策略";
+  if (state === "watch-next") return "等待K线";
+  if (state === "confirmed") return "K线确认";
+  if (state === "warning") return "结构预警";
+  return "结构失效";
+}
+
+function formatConfirmationSummary(confirmation: KlineConfirmationResult) {
+  if (confirmation.state === "no-signal") return "暂无可复核的做多或做空策略信号。";
+  if (confirmation.state === "watch-next") return `等待更多有效K线，当前已有 ${confirmation.validCandleCount} 根。`;
+  if (confirmation.state === "invalidated") return `${formatDirection(confirmation.direction)}结构未通过价格与趋势带检查。`;
+  if (confirmation.state === "confirmed") return `${formatDirection(confirmation.direction)}结构已通过K线复核，评分 ${confirmation.score}/100。`;
+  return `${formatDirection(confirmation.direction)}结构需要谨慎观察，K线评分 ${confirmation.score}/100。`;
+}
+
+function formatEvidenceLabel(item: KlineConfirmationResult["evidence"][number]) {
+  if (item.key === "signal-presence") return "信号状态";
+  if (item.key === "trend-band") return "趋势带";
+  if (item.key === "close-stability") return "收盘稳定性";
+  if (item.key === "body-quality") return "实体质量";
+  if (item.key === "wick-risk") return "反向影线风险";
+  if (item.key === "atr-distance") return "ATR 距离";
+  return "验信指标";
+}
+
+function formatEvidenceStatus(status: KlineConfirmationResult["evidence"][number]["status"]) {
+  if (status === "pass") return "通过";
+  if (status === "warn") return "观察";
+  if (status === "fail") return "未通过";
+  return "中性";
+}
+
+function formatEvidenceDetail(item: KlineConfirmationResult["evidence"][number]) {
+  if (item.key === "signal-presence") return "当前没有可复核的做多或做空策略信号。";
+  if (item.key === "trend-band") return `近期有 ${formatEvidenceNumber(item.value)} 根K线收在 EMA 趋势带的信号侧。`;
+  if (item.key === "close-stability") return `最近2根中有 ${formatEvidenceNumber(item.value)} 根收盘守住信号价。`;
+  if (item.key === "body-quality") return `实体占近期振幅约 ${formatEvidencePercent(item.value)}，用于评估方向质量。`;
+  if (item.key === "wick-risk") return `反向影线占近期振幅约 ${formatEvidencePercent(item.value)}，用于评估拒绝风险。`;
+  if (item.key === "atr-distance") return `最新收盘价距离信号价约 ${formatEvidenceNumber(item.value)} ATR。`;
+  return "该指标已纳入当前K线评分。";
+}
+
+function formatEvidenceNumber(value: number) {
+  if (!Number.isFinite(value)) return "--";
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: 3 });
+}
+
+function formatEvidencePercent(value: number) {
+  if (!Number.isFinite(value)) return "--";
+  return `${(value * 100).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%`;
+}
+
+function formatSignalTitle(signal: SelectedSignal) {
+  return formatSignalText(signal.title, signal.direction) || `${normalizeLabSymbol(signal.symbol)} 策略信号`;
+}
+
+function formatSignalText(text: string | undefined, direction?: KlineDirection) {
+  const clean = `${text ?? ""}`.trim();
+  if (!clean) return "";
+  return clean
+    .replace(/\bLONG\s+confirmed\b/giu, "做多 · K线确认")
+    .replace(/\bSHORT\s+confirmed\b/giu, "做空 · K线确认")
+    .replace(/\bLONG\s+warning\b/giu, "做多 · 结构预警")
+    .replace(/\bSHORT\s+warning\b/giu, "做空 · 结构预警")
+    .replace(/\bLONG\s+invalidated\b/giu, "做多 · 结构失效")
+    .replace(/\bSHORT\s+invalidated\b/giu, "做空 · 结构失效")
+    .replace(/\bLONG\b/giu, "做多")
+    .replace(/\bSHORT\b/giu, "做空")
+    .replace(/\bFLAT\b/giu, "观望")
+    .replace(/\bconfirmed\b/giu, "K线确认")
+    .replace(/\bwarning\b/giu, "结构预警")
+    .replace(/\binvalidated\b/giu, "结构失效")
+    .replace(/\bwatch next candle\b/giu, "等待下一根K线")
+    .replace(/\bcached signal\b/giu, "本地缓存信号")
+    .replace(/\bstrategy inbox\b/giu, "策略信号箱")
+    .replace(/\bsignal\b/giu, direction ? `${formatDirection(direction)}信号` : "策略信号");
+}
+
+function formatStrategyEngine(engine: string | undefined) {
+  const clean = `${engine ?? ""}`.trim();
+  if (!clean || /^Yansir Strategy$/iu.test(clean)) return "Yansir 策略";
+  return clean;
+}
+
+function formatMarketSource(source: string) {
+  const clean = source.trim();
+  return clean || "--";
+}
+
 function formatDirection(direction?: KlineDirection) {
-  if (direction === "long") return "LONG";
-  if (direction === "short") return "SHORT";
-  return "FLAT";
+  if (direction === "long") return "做多";
+  if (direction === "short") return "做空";
+  return "观望";
 }
 
 function formatPrice(value: number) {
@@ -556,5 +654,5 @@ function formatSignalTime(value: string | number | undefined) {
   if (!value) return "--";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `${date.toLocaleDateString("zh-CN")} ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
