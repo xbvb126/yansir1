@@ -1,6 +1,10 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
+import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
+import { SignalEvidenceDetail } from "../features/radar/SignalEvidenceDetail";
+import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
+import { toLiveSignal } from "../features/radar/liveSignalModel";
 import { BottomNav, ViewName } from "./BottomNav";
 
 type Direction = "long" | "short" | "flat";
@@ -171,7 +175,16 @@ type SignalPerformance = {
   updatedAt?: string | null;
 } | null;
 type ScanRecord = { id: string; body: string; signature?: string; tags: string[]; time: string; timestamp?: number; title: string; tone: Tone; performance?: SignalPerformance };
-type RadarTimelineRecord = ScanRecord & { symbol: string; group: RadarGroup; category: string };
+type RadarTimelineRecord = ScanRecord & {
+  symbol: string;
+  group: RadarGroup;
+  category: string;
+  score?: number;
+  direction?: Direction;
+  strategyName?: string;
+  trigger?: string;
+  risk?: string;
+};
 type StrategyScanAlertResponse = {
   scan: {
     finishedAt: string;
@@ -886,9 +899,12 @@ function DataPage({ currentUser, entitlements, factors, onNavigate, onOpenSearch
 }
 
 function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onToast, rows, signals, stats }: { currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
-  const [trackingSection, setTrackingSection] = useState<"ai" | "strategy" | "mine">("ai");
+  const [trackingSection, setTrackingSection] = useState<"ai" | "strategy" | "mine">("strategy");
   const [signalFilter, setSignalFilter] = useState<"all" | "surge" | "opportunity" | "risk">("all");
-  const [watchlistSymbols] = useState<string[]>(readWatchlistSymbols);
+  const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
+  const [activeLiveFilter, setActiveLiveFilter] = useState<LiveSignalFilter>("now");
+  const [selectedLiveSignalId, setSelectedLiveSignalId] = useState<string | undefined>();
+  const [radarDetailSignalId, setRadarDetailSignalId] = useState<string | undefined>();
   const [ruleSettingsOpen, setRuleSettingsOpen] = useState(false);
   const [upgradePrompt, setUpgradePrompt] = useState<{ title: string; desc: string } | null>(null);
   const [radarWindow, setRadarWindow] = useState<"4H" | "8H" | "24H">("8H");
@@ -928,7 +944,12 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       title: `${symbol} ${signal.title}`,
       body: buildRadarRecordBody(signal, row),
       tags: [symbol, category.tag, row?.source === "binance" ? "合约" : "行情同步"],
-      tone: category.tone
+      tone: category.tone,
+      score: signal.score,
+      direction: signal.direction,
+      strategyName: "Yansir Radar",
+      trigger: signal.reason || signal.title,
+      risk: category.key === "risk" ? category.label : undefined
     };
   }), [rows, scanBaseTime, signals]);
 
@@ -955,11 +976,48 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     ["risk", "风险看跌监控", filterCounts.risk]
   ];
   const monitorTabs = allMonitorTabs.filter(([key, , count]) => key === "all" || count > 0);
+  const liveSignals = useMemo<LiveSignal[]>(() => filteredSignals.map((record, index) => {
+    const timestamp = record.timestamp ?? timestampFromScanTime(record.time) ?? scanBaseTime - index * 15 * 60 * 1000;
+    return toLiveSignal({
+      id: record.id,
+      symbol: record.symbol,
+      direction: record.direction ?? (record.group === "risk" ? "short" : "long"),
+      score: record.score,
+      risk: record.risk ?? (record.group === "risk" ? record.category : undefined),
+      status: trackingSection === "strategy" ? strategyStatus : "active",
+      strategyName: record.strategyName ?? record.tags[2] ?? "Yansir Strategy",
+      trigger: record.trigger ?? record.body,
+      generatedAt: new Date(timestamp).toISOString()
+    }, index);
+  }), [filteredSignals, scanBaseTime, strategyStatus, trackingSection]);
+  const selectedDetailSignal = useMemo(
+    () => liveSignals.find((signal) => signal.id === radarDetailSignalId),
+    [liveSignals, radarDetailSignalId]
+  );
+  const listeningStatus: StrategyListeningStatus = strategyStatus === "error"
+    ? "degraded"
+    : strategyStatus === "idle" || strategyStatus === "no-signal"
+      ? "paused"
+      : "live";
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlistSymbols));
+    } catch {
+      // Keep the current session usable if local storage is unavailable.
+    }
+  }, [watchlistSymbols]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setScanNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (radarDetailSignalId && !liveSignals.some((signal) => signal.id === radarDetailSignalId)) {
+      setRadarDetailSignalId(undefined);
+    }
+  }, [liveSignals, radarDetailSignalId]);
 
   useEffect(() => {
     strategyScheduleStarted.current = false;
@@ -1147,6 +1205,41 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     }
   }
 
+  function handleOpenValueClaw(signalId: string) {
+    const signal = liveSignals.find((item) => item.id === signalId);
+    if (signal) {
+      onToast(`ValueClaw context ready for ${signal.symbol}`);
+    }
+    onNavigate("claw");
+  }
+
+  function handleToggleWatchSymbol(symbol: string) {
+    const cleanSymbol = normalizeDisplaySymbol(symbol);
+    if (!cleanSymbol) return;
+
+    const normalizedItems = watchlistSymbols.map(normalizeDisplaySymbol).filter(Boolean);
+    const isWatched = normalizedItems.includes(cleanSymbol);
+    const nextItems = isWatched
+      ? normalizedItems.filter((item) => item !== cleanSymbol)
+      : [...normalizedItems, cleanSymbol];
+    setWatchlistSymbols(nextItems);
+    onToast(isWatched ? `${cleanSymbol} removed from watchlist` : `${cleanSymbol} added to watchlist`);
+  }
+
+  if (selectedDetailSignal) {
+    return (
+      <section className="view active-view polished-screen radar-tracking-screen">
+        <SignalEvidenceDetail
+          signal={selectedDetailSignal}
+          now={scanNow}
+          onBack={() => setRadarDetailSignalId(undefined)}
+          onOpenValueClaw={handleOpenValueClaw}
+          onToggleWatch={handleToggleWatchSymbol}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
       <header className="ai-track-header">
@@ -1239,23 +1332,19 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
           </section>
         </div>
       )}
-      <section className="ai-track-timeline scan-timeline">
-        {(trackingSection === "strategy" ? filteredSignals : filteredSignals.slice(0, 20)).map((record) => (
-          <button className={`scan-record ai-track-record ${record.tone}`} type="button" key={record.id} onClick={() => onOpenSymbol(record.symbol)}>
-            <span className="scan-dot" />
-            <span className="ai-track-record-head">
-              <span className="scan-record-time"><SystemIcon name="clock" />{formatScanRecordTime(record)}</span>
-              <span className="ai-track-record-category">{record.category}</span>
-            </span>
-            <strong>{record.title}</strong>
-            <p>{record.body}</p>
-            {trackingSection === "strategy" && <StrategyPerformanceStrip entitlements={entitlements} performance={record.performance} />}
-            <span className="scan-tags">
-              {record.tags.map((tag) => <span key={`${record.id}-${tag}`}>{tag}</span>)}
-            </span>
-          </button>
-        ))}
-        {!filteredSignals.length && <div className="ai-track-empty">{trackingSection === "strategy" ? strategyEmptyText(strategyStatus, strategyScanSummary) : "暂无匹配信号，切换分类或自选后再看。"}</div>}
+      <LiveSignalCommand
+        signals={liveSignals}
+        selectedSignalId={selectedLiveSignalId}
+        activeFilter={activeLiveFilter}
+        listeningStatus={listeningStatus}
+        now={scanNow}
+        onFilterChange={setActiveLiveFilter}
+        onSelectSignal={setSelectedLiveSignalId}
+        onOpenDetail={setRadarDetailSignalId}
+        onOpenValueClaw={handleOpenValueClaw}
+        onToggleWatch={handleToggleWatchSymbol}
+      />
+      <section className="live-command__history-actions">
         {trackingSection === "strategy" && strategyPagination?.hasMore && (
           <button className="scan-history-more" type="button" disabled={strategyLoadingMore} onClick={loadMoreStrategySignals}>
             {strategyLoadingMore ? "加载中..." : `加载更多历史（${strategyPagination.total - strategyRecords.length}）`}
@@ -2696,7 +2785,12 @@ function strategyInboxToRecord(signal: StrategyInboxSignal): RadarTimelineRecord
     performance: signal.performance,
     time: formatStrategyScanTime(signal.time || signal.receivedAt),
     timestamp,
-    tone: signal.direction === "short" ? "danger" : "success"
+    tone: signal.direction === "short" ? "danger" : "success",
+    score: signal.score,
+    direction: signal.direction,
+    strategyName: signal.engine || signal.signalType || "Pine V6",
+    trigger: signal.reason,
+    risk: signal.direction === "short" ? category.label : undefined
   };
 }
 
@@ -2726,7 +2820,12 @@ function strategyScanToRecords(response: { scan: StrategyScanAlertResponse["scan
         body,
         tags,
         signature: createScanSignature(title, tone, tags),
-        tone
+        tone,
+        score,
+        direction: signal.side,
+        strategyName: signal.engine,
+        trigger: body,
+        risk: signal.side === "short" ? category.label : undefined
       };
     });
   });
