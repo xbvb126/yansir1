@@ -17658,9 +17658,14 @@ body {
   padding: 0 0 16px;
 }
 
+.live-command__evidence-shell {
+  display: grid;
+  margin-top: 14px;
+}
+
 .signal-evidence {
   display: flex;
-  min-height: calc(100vh - 128px);
+  min-height: auto;
   flex-direction: column;
   gap: 14px;
   padding: 4px 0 18px;

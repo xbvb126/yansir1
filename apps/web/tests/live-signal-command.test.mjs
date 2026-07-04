@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
@@ -10,6 +10,18 @@ const outfile = join(process.cwd(), "tmp-tests", "live-signal-command.mjs");
 const componentOutfile = join(process.cwd(), "tmp-tests", "LiveSignalCommand.mjs");
 const detailOutfile = join(process.cwd(), "tmp-tests", "SignalEvidenceDetail.mjs");
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
+
+const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
+assert.doesNotMatch(
+  appShellSource,
+  /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,
+  "signal evidence should not replace the full radar page",
+);
+assert.match(
+  appShellSource,
+  /selectedDetailSignal\s*&&\s*\(/,
+  "signal evidence should render inline while keeping radar context",
+);
 
 await build({
   entryPoints: ["src/features/radar/liveSignalModel.ts"],

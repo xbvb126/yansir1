@@ -21,8 +21,8 @@ export function SignalEvidenceDetail({
   return (
     <section className="signal-evidence" aria-label={`${signal.symbol} 策略信号证据`}>
       <header className="signal-evidence__header">
-        <button type="button" className="signal-evidence__back" onClick={onBack} aria-label="返回实时雷达">
-          返回
+        <button type="button" className="signal-evidence__back" onClick={onBack} aria-label="收起信号详情">
+          收起
         </button>
         <div>
           <p>{signal.strategyName}</p>

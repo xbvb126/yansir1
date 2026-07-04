@@ -1226,20 +1226,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     onToast(isWatched ? `${cleanSymbol} 已移出观察列表` : `${cleanSymbol} 已加入观察列表`);
   }
 
-  if (selectedDetailSignal) {
-    return (
-      <section className="view active-view polished-screen radar-tracking-screen">
-        <SignalEvidenceDetail
-          signal={selectedDetailSignal}
-          now={scanNow}
-          onBack={() => setRadarDetailSignalId(undefined)}
-          onOpenValueClaw={handleOpenValueClaw}
-          onToggleWatch={handleToggleWatchSymbol}
-        />
-      </section>
-    );
-  }
-
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
       <header className="ai-track-header">
@@ -1344,6 +1330,17 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         onOpenValueClaw={handleOpenValueClaw}
         onToggleWatch={handleToggleWatchSymbol}
       />
+      {selectedDetailSignal && (
+        <section className="live-command__evidence-shell">
+          <SignalEvidenceDetail
+            signal={selectedDetailSignal}
+            now={scanNow}
+            onBack={() => setRadarDetailSignalId(undefined)}
+            onOpenValueClaw={handleOpenValueClaw}
+            onToggleWatch={handleToggleWatchSymbol}
+          />
+        </section>
+      )}
       <section className="live-command__history-actions">
         {trackingSection === "strategy" && strategyPagination?.hasMore && (
           <button className="scan-history-more" type="button" disabled={strategyLoadingMore} onClick={loadMoreStrategySignals}>
