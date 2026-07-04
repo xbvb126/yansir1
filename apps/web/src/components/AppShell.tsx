@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
+import { normalizeViewParam } from "../lib/viewRouting";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { toLiveSignal } from "../features/radar/liveSignalModel";
@@ -2597,8 +2598,8 @@ function replaceAppUrl(view: ViewName, symbol = "") {
 }
 
 function readView(): ViewName {
-  const value = new URLSearchParams(window.location.search).get("view") || "data";
-  return isViewName(value) ? value : "data";
+  const value = new URLSearchParams(window.location.search).get("view");
+  return normalizeViewParam(value);
 }
 
 function readSymbolParam() {

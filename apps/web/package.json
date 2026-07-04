@@ -9,7 +9,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test:entitlements": "node tests/plan-access.test.mjs",
-    "test:radar-live": "node tests/live-signal-command.test.mjs"
+    "test:radar-live": "node tests/live-signal-command.test.mjs",
+    "test:view-routing": "node tests/view-routing.test.mjs"
   },
   "dependencies": {
     "react": "^18.2.0",
