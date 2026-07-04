@@ -724,7 +724,7 @@ export function AppShell() {
         <PlansPage paymentProviders={paymentProviders} plans={plans} orders={orders} currentUser={currentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
       )}
       {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={teamDashboard} currentUser={currentUser} onBack={() => navigate("account")} />}
-      {dataStatus !== "loading" && canRenderKlineLab && <KlineLabView currentUser={currentUser} rows={rows} signals={safeSignals} navigate={navigate} showToast={showToast} />}
+      {dataStatus !== "loading" && canRenderKlineLab && <KlineLabView currentUser={currentUser} rows={rows} navigate={navigate} showToast={showToast} />}
       {dataStatus !== "loading" && view === "kline-lab" && !canRenderKlineLab && (
         <section className="view active-view kline-lab-view" aria-label="内部页面验证中">
           <header className="kline-lab-header">

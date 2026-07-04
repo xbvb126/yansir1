@@ -25,19 +25,6 @@ type MarketRowLike = {
   symbol: string;
 };
 
-type CachedSignalLike = {
-  id?: string;
-  symbol: string;
-  timeframe?: string;
-  direction?: KlineDirection;
-  price?: string | number;
-  score?: number;
-  title?: string;
-  reason?: string;
-  time?: string | number;
-  receivedAt?: string | number;
-};
-
 type StrategyInboxSignal = {
   id: string;
   signalEventId?: string;
@@ -55,10 +42,9 @@ type StrategyInboxSignal = {
 };
 
 type SelectedSignal = {
-  source: "strategy" | "cache";
   id?: string;
   symbol: string;
-  timeframe?: string;
+  timeframe: string;
   direction?: KlineDirection;
   price: number | null;
   score?: number;
@@ -72,7 +58,6 @@ type SelectedSignal = {
 type KlineLabViewProps = {
   currentUser: CurrentUserLike;
   rows: MarketRowLike[];
-  signals: CachedSignalLike[];
   navigate: (nextView: ViewName) => void;
   showToast: (message: string) => void;
 };
@@ -100,7 +85,7 @@ const CHART_WIDTH = 720;
 const CHART_HEIGHT = 320;
 const CHART_PAD = { top: 18, right: 24, bottom: 26, left: 54 };
 
-export function KlineLabView({ currentUser, rows, signals, navigate, showToast }: KlineLabViewProps) {
+export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLabViewProps) {
   const [symbol, setSymbol] = useState(() => readInitialSymbol());
   const [timeframe, setTimeframe] = useState<LabTimeframe>(() => readInitialTimeframe());
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -156,7 +141,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
     setSignalState("loading");
     setInboxSignals([]);
     setSignalError("");
-    apiGet<StrategySignalListResponse>(`/api/strategy/inbox?mode=all&limit=20&page=1&symbol=${encodeURIComponent(symbol)}`)
+    apiGet<StrategySignalListResponse>(`/api/strategy/inbox?mode=all&limit=20&page=1&symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`)
       .then((response) => {
         if (!alive) return;
         setInboxSignals(Array.isArray(response.signals) ? response.signals : []);
@@ -171,7 +156,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
     return () => {
       alive = false;
     };
-  }, [canRequestInbox, symbol, refreshNonce]);
+  }, [canRequestInbox, symbol, timeframe, refreshNonce]);
 
   const symbolOptions = useMemo(() => {
     const marketSymbols = rows.map((row) => normalizeLabSymbol(row.symbol)).filter(Boolean);
@@ -179,8 +164,8 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
   }, [rows, symbol]);
 
   const selectedSignal = useMemo(() => {
-    return selectLatestSignal(symbol, timeframe, inboxSignals, signals);
-  }, [symbol, timeframe, inboxSignals, signals]);
+    return selectLatestSignal(symbol, timeframe, inboxSignals);
+  }, [symbol, timeframe, inboxSignals]);
 
   const confirmation = useMemo(() => {
     return classifyKlineSignal({
@@ -191,7 +176,7 @@ export function KlineLabView({ currentUser, rows, signals, navigate, showToast }
             price: selectedSignal.price,
             time: selectedSignal.time,
             receivedAt: selectedSignal.receivedAt,
-            timeframe: selectedSignal.timeframe || timeframe,
+            timeframe: selectedSignal.timeframe,
             symbol: selectedSignal.symbol
           }
         : null
@@ -359,7 +344,7 @@ function StrategySignalPanel({ signal, status, error, canRequestInbox }: { signa
     return (
       <section className="kline-strategy-panel empty" aria-label="策略信号箱">
         <strong>策略信号箱</strong>
-        <p>暂无策略命中，当前页面不从K线生成新信号。</p>
+        <p>暂无当前周期策略命中，当前页面不从K线或市场异动生成新信号。</p>
         {!canRequestInbox && <small>非管理员不会请求策略信号箱。</small>}
         {error && <small>{error}</small>}
       </section>
@@ -371,7 +356,7 @@ function StrategySignalPanel({ signal, status, error, canRequestInbox }: { signa
       <div className="kline-panel-head">
         <div>
           <strong>{formatSignalTitle(signal)}</strong>
-          <span>{signal.source === "strategy" ? "策略信号箱" : "本地缓存信号"} · {signal.timeframe || "周期未知"}</span>
+          <span>策略信号箱 · {signal.timeframe}</span>
         </div>
         <strong>{formatDirection(signal.direction)} · {signal.score ?? "--"}</strong>
       </div>
@@ -431,23 +416,20 @@ function normalizeCandles(candles: Array<Partial<KlineCandle>>): KlineCandle[] {
     });
 }
 
-function selectLatestSignal(symbol: string, timeframe: LabTimeframe, inbox: StrategyInboxSignal[], cached: CachedSignalLike[]): SelectedSignal | null {
-  const exactInbox = latestByTime(inbox.filter((item) => normalizeLabSymbol(item.symbol) === symbol && normalizeLabTimeframe(item.timeframe) === timeframe && actionable(item.direction)));
-  if (exactInbox) return fromInbox(exactInbox);
-
-  const symbolInbox = latestByTime(inbox.filter((item) => normalizeLabSymbol(item.symbol) === symbol && actionable(item.direction)));
-  if (symbolInbox) return fromInbox(symbolInbox);
-
-  const exactCached = latestByTime(cached.filter((item) => normalizeLabSymbol(item.symbol) === symbol && item.timeframe && normalizeLabTimeframe(item.timeframe) === timeframe && actionable(item.direction)));
-  if (exactCached) return fromCached(exactCached, timeframe);
-
-  const symbolCached = latestByTime(cached.filter((item) => normalizeLabSymbol(item.symbol) === symbol && actionable(item.direction)));
-  return symbolCached ? fromCached(symbolCached, timeframe) : null;
+function selectLatestSignal(symbol: string, timeframe: LabTimeframe, inbox: StrategyInboxSignal[]): SelectedSignal | null {
+  const cleanSymbol = normalizeLabSymbol(symbol);
+  const exactInbox = latestByTime(
+    inbox.filter((item) => (
+      normalizeLabSymbol(item.symbol) === cleanSymbol
+      && isExactTimeframe(item.timeframe, timeframe)
+      && actionable(item.direction)
+    ))
+  );
+  return exactInbox ? fromInbox(exactInbox) : null;
 }
 
 function fromInbox(signal: StrategyInboxSignal): SelectedSignal {
   return {
-    source: "strategy",
     id: signal.id || signal.signalEventId,
     symbol: signal.symbol,
     timeframe: signal.timeframe,
@@ -462,20 +444,8 @@ function fromInbox(signal: StrategyInboxSignal): SelectedSignal {
   };
 }
 
-function fromCached(signal: CachedSignalLike, fallbackTimeframe: LabTimeframe): SelectedSignal {
-  return {
-    source: "cache",
-    id: signal.id,
-    symbol: signal.symbol,
-    timeframe: signal.timeframe || fallbackTimeframe,
-    direction: signal.direction,
-    price: parseNumber(signal.price),
-    score: signal.score,
-    title: signal.title || `${normalizeLabSymbol(signal.symbol)} 本地缓存信号`,
-    reason: signal.reason || "",
-    time: signal.time,
-    receivedAt: signal.receivedAt
-  };
+function isExactTimeframe(value: string | undefined, timeframe: LabTimeframe) {
+  return String(value ?? "").trim().toLowerCase() === timeframe;
 }
 
 function latestByTime<T extends { time?: string | number; receivedAt?: string | number }>(items: T[]) {
@@ -621,7 +591,6 @@ function formatSignalText(text: string | undefined, direction?: KlineDirection) 
     .replace(/\bwarning\b/giu, "结构预警")
     .replace(/\binvalidated\b/giu, "结构失效")
     .replace(/\bwatch next candle\b/giu, "等待下一根K线")
-    .replace(/\bcached signal\b/giu, "本地缓存信号")
     .replace(/\bstrategy inbox\b/giu, "策略信号箱")
     .replace(/\bsignal\b/giu, direction ? `${formatDirection(direction)}信号` : "策略信号");
 }
