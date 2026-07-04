@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+.pip-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Build outputs
+apps/api/dist/
+apps/web/dist/
+apps/web/.next/
+.next/
+*.tsbuildinfo
+
+# Runtime / logs / local data
+runtime/
+logs/
+*.log
+*.err.log
+*.out.log
+server.err.log
+server.out.log
+*.pid
+*.sqlite
+*.sqlite3
+*.db
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Archives / uploads
+yansir.rar
+*.rar
+*.zip
+*.tar
+*.tar.gz
+
+# Local visual QA captures
+artifacts/
+*.png
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Coverage / cache
+coverage/
+.nyc_output/
+.cache/

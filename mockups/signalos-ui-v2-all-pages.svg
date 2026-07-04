@@ -1,0 +1,556 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="2100" viewBox="0 0 1500 2100">
+  <defs>
+    <style>
+      .ui{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",Arial,sans-serif}
+      .board{fill:#edf3fb}
+      .phone{fill:#fbfdff;stroke:#d6dfed;stroke-width:1.25}
+      .statusText{font:700 12px "Segoe UI",Arial,sans-serif;fill:#172033}
+      .brandA{font:900 33px "Segoe UI",Arial,sans-serif;fill:#070a10}
+      .brandB{font:900 33px "Segoe UI",Arial,sans-serif;fill:#326cff}
+      .title{font:900 24px "Microsoft YaHei","Segoe UI",Arial,sans-serif;fill:#111827}
+      .h2{font:850 19px "Microsoft YaHei","Segoe UI",Arial,sans-serif;fill:#111827}
+      .h3{font:800 15px "Microsoft YaHei","Segoe UI",Arial,sans-serif;fill:#111827}
+      .body{font:500 13px "Microsoft YaHei","Segoe UI",Arial,sans-serif;fill:#667085}
+      .small{font:500 11px "Microsoft YaHei","Segoe UI",Arial,sans-serif;fill:#768196}
+      .tiny{font:600 9px "Microsoft YaHei","Segoe UI",Arial,sans-serif;fill:#8690a4}
+      .num{font:900 31px "Segoe UI",Arial,sans-serif;fill:#111827}
+      .numMid{font:900 23px "Segoe UI",Arial,sans-serif;fill:#111827}
+      .green{fill:#19aa72}.greenText{fill:#19aa72}
+      .blue{fill:#326cff}.blueText{fill:#326cff}
+      .red{fill:#f04452}.redText{fill:#f04452}
+      .orange{fill:#f59f13}.orangeText{fill:#f59f13}
+      .muted{fill:#667085}.ink{fill:#111827}
+      .card{fill:#fff;stroke:#dfe6f2;stroke-width:1.15}
+      .panel{fill:#f6f9fe;stroke:#e0e7f3;stroke-width:1}
+      .line{stroke:#e7ecf4;stroke-width:1}
+      .softLine{stroke:#edf1f7;stroke-width:.8}
+      .icon{fill:none;stroke:currentColor;stroke-width:2.45;stroke-linecap:round;stroke-linejoin:round}
+      .iconThin{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+      .caption{font:800 10px "Microsoft YaHei","Segoe UI",Arial,sans-serif}
+      .pillText{font:800 11px "Microsoft YaHei","Segoe UI",Arial,sans-serif}
+    </style>
+
+    <linearGradient id="bgGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset=".58" stop-color="#f1f6ff"/>
+      <stop offset="1" stop-color="#e8f1fc"/>
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3d78ff"/>
+      <stop offset="1" stop-color="#2457e8"/>
+    </linearGradient>
+    <linearGradient id="greenGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2cc987"/>
+      <stop offset="1" stop-color="#0f9c68"/>
+    </linearGradient>
+    <linearGradient id="orangeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb23f"/>
+      <stop offset="1" stop-color="#f17b12"/>
+    </linearGradient>
+    <linearGradient id="redGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff6875"/>
+      <stop offset="1" stop-color="#e93646"/>
+    </linearGradient>
+
+    <filter id="phoneShadow" x="-18%" y="-10%" width="136%" height="124%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#1d3152" flood-opacity=".13"/>
+    </filter>
+    <filter id="cardShadow" x="-16%" y="-18%" width="132%" height="140%">
+      <feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#2d4165" flood-opacity=".075"/>
+    </filter>
+    <filter id="buttonShadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#2457e8" flood-opacity=".22"/>
+    </filter>
+
+    <g id="statusBar">
+      <text x="26" y="25" class="statusText">9:41</text>
+      <path d="M344 18 h18" stroke="#111827" stroke-width="2" stroke-linecap="round"/>
+      <path d="M370 13 c4 5 4 10 0 15" fill="none" stroke="#111827" stroke-width="2" stroke-linecap="round"/>
+      <rect x="386" y="13" width="26" height="14" rx="4" fill="none" stroke="#111827" stroke-width="1.8"/>
+      <rect x="414" y="17" width="2.5" height="6" rx="1" fill="#111827"/>
+      <rect x="389" y="16" width="19" height="8" rx="2.5" fill="#111827"/>
+    </g>
+
+    <g id="searchIcon">
+      <circle cx="0" cy="0" r="12.5" class="icon" color="#0b0f18"/>
+      <path d="M9 9 L21 21" class="icon" color="#0b0f18"/>
+    </g>
+    <g id="chevRight"><path d="M-3 -7 L4 0 L-3 7" class="iconThin" color="currentColor"/></g>
+    <g id="filterIcon"><path d="M-12 -9 H12 L3 1 V10 L-3 13 V1 Z" class="iconThin" color="currentColor"/></g>
+    <g id="settingsIcon">
+      <circle cx="0" cy="0" r="4" class="iconThin" color="currentColor"/>
+      <path d="M0 -14 V-10 M0 10 V14 M-14 0 H-10 M10 0 H14 M-10 -10 L-7 -7 M7 7 L10 10 M10 -10 L7 -7 M-7 7 L-10 10" class="iconThin" color="currentColor"/>
+    </g>
+    <g id="eyeIcon">
+      <path d="M-17 0 C-9 -11 9 -11 17 0 C9 11 -9 11 -17 0 Z" class="icon" color="currentColor"/>
+      <circle cx="0" cy="0" r="4.5" fill="currentColor"/>
+    </g>
+    <g id="sendIcon">
+      <path d="M-15 7 L16 -14 L6 16 L0 3 Z" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="bellIcon">
+      <path d="M-12 6 C-12 -9 -5 -16 0 -16 C5 -16 12 -9 12 6 L17 14 H-17 Z" class="icon" color="currentColor"/>
+      <path d="M-4 18 C-1 21 1 21 4 18" class="icon" color="currentColor"/>
+    </g>
+    <g id="userIcon">
+      <circle cx="0" cy="-9" r="8.5" class="icon" color="currentColor"/>
+      <path d="M-17 18 C-12 4 12 4 17 18" class="icon" color="currentColor"/>
+    </g>
+    <g id="dataIcon">
+      <ellipse cx="0" cy="-12" rx="15" ry="6.5" class="icon" color="currentColor"/>
+      <path d="M-15 -12 V14 C-15 19 15 19 15 14 V-12" class="icon" color="currentColor"/>
+      <path d="M-15 1 C-11 7 11 7 15 1" class="iconThin" color="currentColor"/>
+    </g>
+    <g id="clawIcon">
+      <circle cx="0" cy="-15" r="5" fill="currentColor"/>
+      <circle cx="-16" cy="14" r="5" fill="currentColor"/>
+      <circle cx="16" cy="14" r="5" fill="currentColor"/>
+      <path d="M0 -9 L-16 9 M0 -9 L16 9 M-10 14 H10" class="iconThin" color="currentColor"/>
+    </g>
+    <g id="signalIcon">
+      <path d="M-19 17 C-19 -4 -9 -17 0 -17 C9 -17 19 -4 19 17" class="icon" color="currentColor"/>
+      <path d="M-10 17 C-10 4 -5 -4 0 -4 C5 -4 10 4 10 17" class="icon" color="currentColor"/>
+      <circle cx="0" cy="17" r="5" fill="currentColor"/>
+    </g>
+    <g id="shieldIcon">
+      <path d="M0 -33 L30 -20 L25 18 L0 34 L-25 18 L-30 -20 Z" fill="#e9f8f0" stroke="#19aa72" stroke-width="4.2"/>
+      <path d="M-13 0 L-2 12 L18 -13" fill="none" stroke="#19aa72" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="radarSymbol">
+      <circle cx="0" cy="0" r="44" fill="#eefaf6" stroke="#d5f1e8"/>
+      <circle cx="0" cy="0" r="31" fill="#dff7ee" stroke="#bde9da"/>
+      <circle cx="0" cy="0" r="18" fill="#c5eedf" stroke="#a6dfcb"/>
+      <circle cx="0" cy="0" r="7" fill="#19aa72"/>
+      <path d="M0 0 L34 -40" stroke="#19aa72" stroke-width="3.6" stroke-linecap="round"/>
+      <path d="M0 -44 A44 44 0 0 1 44 0" fill="none" stroke="#19aa72" stroke-opacity=".18" stroke-width="10"/>
+    </g>
+    <g id="clockIcon">
+      <circle cx="0" cy="0" r="11.5" class="iconThin" color="#667085"/>
+      <path d="M0 -6 V1 L6 5" class="iconThin" color="#667085"/>
+    </g>
+    <g id="sparkIcon">
+      <path d="M0 -14 L4 -4 L14 0 L4 4 L0 14 L-4 4 L-14 0 L-4 -4 Z" fill="currentColor"/>
+    </g>
+
+    <g id="coinBtc">
+      <circle cx="0" cy="0" r="15.5" fill="#ff9d18"/>
+      <text x="-6.7" y="7.2" font-family="Segoe UI,Arial" font-size="19" font-weight="900" fill="#fff">B</text>
+      <path d="M-3.5 -10 V10 M3.5 -10 V10" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <g id="coinEth">
+      <circle cx="0" cy="0" r="15.5" fill="#f1f4f8"/>
+      <path d="M0 -18 L-10 0 L0 6 L10 0 Z" fill="#111827"/>
+      <path d="M0 9 L-10 2 L0 18 L10 2 Z" fill="#6b7280"/>
+    </g>
+    <g id="coinSol">
+      <circle cx="0" cy="0" r="15.5" fill="#101827"/>
+      <path d="M-9 -6 H9" stroke="#8e5bff" stroke-width="4" stroke-linecap="round"/>
+      <path d="M-9 0 H9" stroke="#19d1aa" stroke-width="4" stroke-linecap="round"/>
+      <path d="M-9 6 H9" stroke="#7ce28d" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <g id="coinBch">
+      <circle cx="0" cy="0" r="15.5" fill="#77c043"/>
+      <text x="-7.2" y="7" font-family="Segoe UI,Arial" font-size="18" font-weight="900" fill="#fff">B</text>
+    </g>
+    <g id="coinXrp">
+      <circle cx="0" cy="0" r="15.5" fill="#2b3440"/>
+      <path d="M-9 -5 C-5 0 5 0 9 -5 M-9 6 C-5 1 5 1 9 6" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+    </g>
+    <g id="coinDoge">
+      <circle cx="0" cy="0" r="15.5" fill="#c7a033"/>
+      <text x="-7" y="7" font-family="Segoe UI,Arial" font-size="18" font-weight="900" fill="#fff">D</text>
+    </g>
+
+    <g id="miniChartBlue">
+      <polyline points="0,34 22,27 44,30 66,18 88,22 110,10 132,16" fill="none" stroke="#326cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M0 34 L22 27 L44 30 L66 18 L88 22 L110 10 L132 16 L132 48 L0 48 Z" fill="#326cff" opacity=".08"/>
+    </g>
+    <g id="miniChartGreen">
+      <polyline points="0,32 18,30 36,24 54,27 72,18 90,12 108,18" fill="none" stroke="#19aa72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M0 32 L18 30 L36 24 L54 27 L72 18 L90 12 L108 18 L108 44 L0 44 Z" fill="#19aa72" opacity=".10"/>
+    </g>
+    <g id="miniChartRed">
+      <polyline points="0,18 18,23 36,17 54,29 72,25 90,36 108,31" fill="none" stroke="#f04452" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M0 18 L18 23 L36 17 L54 29 L72 25 L90 36 L108 31 L108 48 L0 48 Z" fill="#f04452" opacity=".09"/>
+    </g>
+
+    <g id="navData">
+      <rect x="0" y="812" width="430" height="88" fill="#fff" stroke="#e4e9f1"/>
+      <rect x="34" y="820" width="42" height="42" rx="16" fill="#edf4ff"/>
+      <g transform="translate(55 843)" color="#326cff"><use href="#dataIcon"/></g>
+      <text x="42" y="879" class="caption" fill="#326cff">数据</text>
+      <g transform="translate(140 843)" color="#7b8498"><use href="#clawIcon"/></g>
+      <text x="113" y="879" class="small">ValueClaw</text>
+      <g transform="translate(215 843)" color="#7b8498"><use href="#signalIcon"/></g>
+      <text x="201" y="879" class="small">信号</text>
+      <g transform="translate(302 843)" color="#7b8498"><use href="#bellIcon"/></g>
+      <text x="289" y="879" class="small">告警</text>
+      <g transform="translate(380 843)" color="#7b8498"><use href="#userIcon"/></g>
+      <text x="367" y="879" class="small">我的</text>
+    </g>
+    <g id="navClaw">
+      <rect x="0" y="812" width="430" height="88" fill="#fff" stroke="#e4e9f1"/>
+      <g transform="translate(55 843)" color="#7b8498"><use href="#dataIcon"/></g>
+      <text x="42" y="879" class="small">数据</text>
+      <rect x="116" y="820" width="48" height="42" rx="16" fill="#edf4ff"/>
+      <g transform="translate(140 843)" color="#326cff"><use href="#clawIcon"/></g>
+      <text x="111" y="879" class="caption" fill="#326cff">ValueClaw</text>
+      <g transform="translate(215 843)" color="#7b8498"><use href="#signalIcon"/></g>
+      <text x="201" y="879" class="small">信号</text>
+      <g transform="translate(302 843)" color="#7b8498"><use href="#bellIcon"/></g>
+      <text x="289" y="879" class="small">告警</text>
+      <g transform="translate(380 843)" color="#7b8498"><use href="#userIcon"/></g>
+      <text x="367" y="879" class="small">我的</text>
+    </g>
+    <g id="navSignal">
+      <rect x="0" y="812" width="430" height="88" fill="#fff" stroke="#e4e9f1"/>
+      <g transform="translate(55 843)" color="#7b8498"><use href="#dataIcon"/></g>
+      <text x="42" y="879" class="small">数据</text>
+      <g transform="translate(140 843)" color="#7b8498"><use href="#clawIcon"/></g>
+      <text x="113" y="879" class="small">ValueClaw</text>
+      <circle cx="215" cy="825" r="28" fill="url(#blueGrad)" filter="url(#buttonShadow)"/>
+      <g transform="translate(215 839)" color="#fff"><use href="#signalIcon"/></g>
+      <text x="200" y="879" class="caption" fill="#326cff">信号</text>
+      <g transform="translate(302 843)" color="#7b8498"><use href="#bellIcon"/></g>
+      <text x="289" y="879" class="small">告警</text>
+      <g transform="translate(380 843)" color="#7b8498"><use href="#userIcon"/></g>
+      <text x="367" y="879" class="small">我的</text>
+    </g>
+    <g id="navAlert">
+      <rect x="0" y="812" width="430" height="88" fill="#fff" stroke="#e4e9f1"/>
+      <g transform="translate(55 843)" color="#7b8498"><use href="#dataIcon"/></g>
+      <text x="42" y="879" class="small">数据</text>
+      <g transform="translate(140 843)" color="#7b8498"><use href="#clawIcon"/></g>
+      <text x="113" y="879" class="small">ValueClaw</text>
+      <g transform="translate(215 843)" color="#7b8498"><use href="#signalIcon"/></g>
+      <text x="201" y="879" class="small">信号</text>
+      <rect x="280" y="820" width="44" height="42" rx="16" fill="#edf4ff"/>
+      <g transform="translate(302 843)" color="#326cff"><use href="#bellIcon"/></g>
+      <text x="289" y="879" class="caption" fill="#326cff">告警</text>
+      <g transform="translate(380 843)" color="#7b8498"><use href="#userIcon"/></g>
+      <text x="367" y="879" class="small">我的</text>
+    </g>
+    <g id="navMine">
+      <rect x="0" y="812" width="430" height="88" fill="#fff" stroke="#e4e9f1"/>
+      <g transform="translate(55 843)" color="#7b8498"><use href="#dataIcon"/></g>
+      <text x="42" y="879" class="small">数据</text>
+      <g transform="translate(140 843)" color="#7b8498"><use href="#clawIcon"/></g>
+      <text x="113" y="879" class="small">ValueClaw</text>
+      <g transform="translate(215 843)" color="#7b8498"><use href="#signalIcon"/></g>
+      <text x="201" y="879" class="small">信号</text>
+      <g transform="translate(302 843)" color="#7b8498"><use href="#bellIcon"/></g>
+      <text x="289" y="879" class="small">告警</text>
+      <rect x="358" y="820" width="44" height="42" rx="16" fill="#edf4ff"/>
+      <g transform="translate(380 843)" color="#326cff"><use href="#userIcon"/></g>
+      <text x="367" y="879" class="caption" fill="#326cff">我的</text>
+    </g>
+  </defs>
+
+  <rect width="1500" height="2100" class="board"/>
+  <circle cx="190" cy="112" r="92" fill="#dceaff" opacity=".56"/>
+  <circle cx="1370" cy="2050" r="150" fill="#d9f5ec" opacity=".62"/>
+  <text x="48" y="58" class="ui" font-size="30" font-weight="900" fill="#111827">SignalOS 高保真 UI 效果图 v2</text>
+  <text x="48" y="88" class="ui" font-size="14" font-weight="600" fill="#667085">围绕现有能力：数据监控、ValueClaw 评分、异常信号、告警推送、账户配置与币种详情；只做效果图，不改前端代码。</text>
+
+  <!-- Signal page -->
+  <g class="ui" transform="translate(48 132)">
+    <rect class="phone" width="430" height="900" rx="30" filter="url(#phoneShadow)"/>
+    <use href="#statusBar"/>
+    <text x="24" y="68" class="brandA">Signal</text><text x="131" y="68" class="brandB">OS</text>
+    <circle cx="267" cy="53" r="7" fill="#19aa72"/>
+    <text x="286" y="61" class="h3">市场正常</text>
+    <use href="#chevRight" transform="translate(360 53)" color="#111827"/>
+    <use href="#searchIcon" transform="translate(397 53) scale(.84)"/>
+
+    <rect x="20" y="92" width="390" height="202" rx="18" class="card" filter="url(#cardShadow)"/>
+    <text x="45" y="134" class="title">今日重点异常雷达</text>
+    <rect x="197" y="111" width="108" height="30" rx="8" fill="#eaf1ff"/>
+    <g transform="translate(216 126)" color="#326cff"><use href="#sparkIcon" transform="scale(.55)"/></g>
+    <text x="232" y="131" class="pillText" fill="#326cff">AI 监控中</text>
+    <text x="344" y="132" class="small">查看全部</text><use href="#chevRight" transform="translate(391 127)" color="#8b95a8"/>
+    <use href="#shieldIcon" transform="translate(78 204) scale(.82)"/>
+    <text x="125" y="178" class="body">风险姿态</text>
+    <text x="125" y="221" font-size="34" font-weight="900" fill="#19aa72">偏低</text>
+    <text x="125" y="252" class="body">市场情绪稳定</text>
+    <line x1="226" y1="154" x2="226" y2="252" class="line"/>
+    <use href="#clockIcon" transform="translate(253 175)"/>
+    <text x="278" y="182" class="body">下次扫描</text>
+    <text x="250" y="223" class="num">08:25</text>
+    <text x="251" y="253" class="body">5 分 23 秒后</text>
+    <use href="#radarSymbol" transform="translate(344 204) scale(.9)"/>
+    <line x1="44" y1="267" x2="386" y2="267" class="line"/>
+    <circle cx="47" cy="280" r="7" fill="none" stroke="#667085" stroke-width="1.8"/>
+    <text x="44" y="284" font-size="10" font-weight="900" fill="#667085">i</text>
+    <text x="63" y="285" class="small">基于链上数据、资金流向与价格行为的 8H 异常监控</text>
+    <text x="335" y="285" class="pillText" fill="#326cff">规则设置</text><use href="#chevRight" transform="translate(392 280)" color="#326cff"/>
+
+    <g transform="translate(20 316)">
+      <rect width="121" height="124" rx="14" class="card"/>
+      <rect x="10" y="8" width="26" height="26" rx="7" fill="url(#redGrad)"/><text x="18" y="28" font-size="17" font-weight="900" fill="#fff">1</text>
+      <use href="#coinBtc" transform="translate(41 54)"/>
+      <text x="73" y="60" class="h3">BTC</text>
+      <rect x="83" y="72" width="34" height="23" rx="7" fill="#fff0f0"/><text x="93" y="88" class="pillText" fill="#f04452">强</text>
+      <text x="16" y="103" font-size="30" font-weight="900" fill="#f04452">87</text><text x="61" y="104" class="body">/100</text>
+    </g>
+    <g transform="translate(154 316)">
+      <rect width="121" height="124" rx="14" class="card"/>
+      <rect x="10" y="8" width="26" height="26" rx="7" fill="url(#orangeGrad)"/><text x="18" y="28" font-size="17" font-weight="900" fill="#fff">2</text>
+      <use href="#coinEth" transform="translate(41 54)"/>
+      <text x="73" y="60" class="h3">ETH</text>
+      <rect x="83" y="72" width="34" height="23" rx="7" fill="#eaf8f1"/><text x="93" y="88" class="pillText" fill="#19aa72">活</text>
+      <text x="16" y="103" font-size="30" font-weight="900" fill="#19aa72">72</text><text x="61" y="104" class="body">/100</text>
+    </g>
+    <g transform="translate(288 316)">
+      <rect width="121" height="124" rx="14" class="card"/>
+      <rect x="10" y="8" width="26" height="26" rx="7" fill="url(#blueGrad)"/><text x="18" y="28" font-size="17" font-weight="900" fill="#fff">3</text>
+      <use href="#coinSol" transform="translate(41 54)"/>
+      <text x="73" y="60" class="h3">SOL</text>
+      <rect x="83" y="72" width="34" height="23" rx="7" fill="#fff7e8"/><text x="93" y="88" class="pillText" fill="#f59f13">关</text>
+      <text x="16" y="103" font-size="30" font-weight="900" fill="#f59f13">61</text><text x="61" y="104" class="body">/100</text>
+    </g>
+
+    <rect x="20" y="465" width="188" height="52" rx="12" fill="#fff" stroke="#326cff" stroke-width="1.6"/>
+    <g transform="translate(80 491)" color="#326cff"><use href="#eyeIcon" transform="scale(.8)"/></g>
+    <text x="107" y="498" font-size="18" font-weight="900" fill="#326cff">预览告警</text>
+    <rect x="222" y="465" width="188" height="52" rx="12" fill="url(#blueGrad)" filter="url(#buttonShadow)"/>
+    <g transform="translate(288 491)" color="#fff"><use href="#sendIcon" transform="scale(.85)"/></g>
+    <text x="317" y="498" font-size="18" font-weight="900" fill="#fff">推送飞书</text>
+
+    <rect x="20" y="540" width="390" height="257" rx="16" class="card"/>
+    <text x="44" y="578" class="h2">异常信号列表</text>
+    <text x="304" y="577" class="small">筛选</text><use href="#filterIcon" transform="translate(342 573)" color="#667085"/>
+    <text x="360" y="577" class="small">自定义</text><use href="#settingsIcon" transform="translate(399 572) scale(.75)" color="#667085"/>
+    <line x1="20" y1="604" x2="410" y2="604" class="line"/>
+    <text x="44" y="630" class="tiny">币种</text><text x="144" y="630" class="tiny">异常评分</text><text x="235" y="630" class="tiny">触发原因</text><text x="344" y="630" class="tiny">置信度</text>
+    <line x1="20" y1="644" x2="410" y2="644" class="line"/>
+    <use href="#coinBtc" transform="translate(52 672) scale(.82)"/><text x="76" y="678" class="h3">BTC</text><text x="150" y="678" font-size="22" font-weight="900" fill="#f04452">87</text><text x="232" y="677" class="body">资金流入异常</text><text x="347" y="677" font-size="16" font-weight="900" fill="#19aa72">92%</text>
+    <line x1="44" y1="697" x2="386" y2="697" class="softLine"/>
+    <use href="#coinEth" transform="translate(52 725) scale(.82)"/><text x="76" y="731" class="h3">ETH</text><text x="150" y="731" font-size="22" font-weight="900" fill="#19aa72">72</text><text x="232" y="730" class="body">合约短线拉升</text><text x="347" y="730" font-size="16" font-weight="900" fill="#19aa72">85%</text>
+    <line x1="44" y1="750" x2="386" y2="750" class="softLine"/>
+    <use href="#coinSol" transform="translate(52 778) scale(.82)"/><text x="76" y="784" class="h3">SOL</text><text x="150" y="784" font-size="22" font-weight="900" fill="#f59f13">61</text><text x="232" y="783" class="body">交易量异动</text><text x="347" y="783" font-size="16" font-weight="900" fill="#19aa72">78%</text>
+    <use href="#navSignal"/>
+  </g>
+
+  <!-- Data page -->
+  <g class="ui" transform="translate(535 132)">
+    <rect class="phone" width="430" height="900" rx="30" filter="url(#phoneShadow)"/>
+    <use href="#statusBar"/>
+    <text x="24" y="68" class="title">数据</text>
+    <rect x="88" y="41" width="166" height="32" rx="16" fill="#f2f6fc" stroke="#e2e8f3"/>
+    <circle cx="108" cy="57" r="6" fill="#19aa72"/><text x="122" y="62" class="body">实时市场流</text>
+    <use href="#searchIcon" transform="translate(396 55) scale(.82)"/>
+    <rect x="20" y="92" width="390" height="104" rx="18" fill="url(#bgGlow)" stroke="#dce5f2"/>
+    <text x="44" y="126" class="h2">市场概览</text>
+    <text x="44" y="156" class="body">多市场资金流、价格行为、成交量同步扫描</text>
+    <rect x="286" y="114" width="82" height="38" rx="14" fill="#eaf8f1"/>
+    <text x="303" y="139" font-size="18" font-weight="900" fill="#19aa72">正常</text>
+    <use href="#miniChartGreen" transform="translate(245 143) scale(.78)"/>
+
+    <g transform="translate(20 216)">
+      <rect width="121" height="82" rx="14" class="card"/>
+      <text x="15" y="27" class="small">监控币种</text><text x="15" y="60" class="numMid">128</text><text x="75" y="60" class="small">个</text>
+    </g>
+    <g transform="translate(154 216)">
+      <rect width="121" height="82" rx="14" class="card"/>
+      <text x="15" y="27" class="small">8H 异常</text><text x="15" y="60" class="numMid redText">12</text><text x="63" y="60" class="small">条</text>
+    </g>
+    <g transform="translate(288 216)">
+      <rect width="121" height="82" rx="14" class="card"/>
+      <text x="15" y="27" class="small">数据延迟</text><text x="15" y="60" class="numMid greenText">2.1s</text>
+    </g>
+
+    <rect x="20" y="318" width="390" height="176" rx="18" class="card"/>
+    <text x="44" y="354" class="h2">链上资金流</text>
+    <rect x="302" y="333" width="72" height="28" rx="14" fill="#f2f6fc"/><text x="322" y="352" class="small">8H</text>
+    <g transform="translate(47 383)">
+      <line x1="0" y1="70" x2="320" y2="70" class="softLine"/><line x1="0" y1="44" x2="320" y2="44" class="softLine"/><line x1="0" y1="18" x2="320" y2="18" class="softLine"/>
+      <path d="M0 62 C38 61 45 34 77 36 S122 57 160 41 S210 16 252 22 S292 54 320 28" fill="none" stroke="#326cff" stroke-width="4" stroke-linecap="round"/>
+      <path d="M0 62 C38 61 45 34 77 36 S122 57 160 41 S210 16 252 22 S292 54 320 28 L320 80 L0 80 Z" fill="#326cff" opacity=".09"/>
+      <circle cx="252" cy="22" r="5" fill="#326cff"/><rect x="230" y="0" width="57" height="24" rx="8" fill="#111827"/><text x="239" y="17" font-size="10" font-weight="800" fill="#fff">+1687万</text>
+    </g>
+
+    <rect x="20" y="514" width="390" height="282" rx="18" class="card"/>
+    <text x="44" y="550" class="h2">市场热度排行</text>
+    <text x="317" y="548" class="small">自选排序</text>
+    <line x1="20" y1="574" x2="410" y2="574" class="line"/>
+    <text x="44" y="601" class="tiny">币种</text><text x="140" y="601" class="tiny">价格</text><text x="224" y="601" class="tiny">24H</text><text x="322" y="601" class="tiny">热度</text>
+    <line x1="20" y1="615" x2="410" y2="615" class="line"/>
+    <use href="#coinBtc" transform="translate(52 644) scale(.84)"/><text x="76" y="650" class="h3">BTC</text><text x="136" y="649" class="body">$68,420</text><text x="226" y="649" class="greenText" font-size="13" font-weight="900">+2.31%</text><rect x="319" y="636" width="52" height="17" rx="8" fill="#eaf8f1"/><rect x="319" y="636" width="43" height="17" rx="8" fill="#19aa72"/>
+    <line x1="44" y1="667" x2="386" y2="667" class="softLine"/>
+    <use href="#coinEth" transform="translate(52 695) scale(.84)"/><text x="76" y="701" class="h3">ETH</text><text x="136" y="700" class="body">$3,760</text><text x="226" y="700" class="greenText" font-size="13" font-weight="900">+1.72%</text><rect x="319" y="687" width="52" height="17" rx="8" fill="#eaf8f1"/><rect x="319" y="687" width="38" height="17" rx="8" fill="#19aa72"/>
+    <line x1="44" y1="718" x2="386" y2="718" class="softLine"/>
+    <use href="#coinSol" transform="translate(52 746) scale(.84)"/><text x="76" y="752" class="h3">SOL</text><text x="136" y="751" class="body">$171.2</text><text x="226" y="751" class="orangeText" font-size="13" font-weight="900">+0.88%</text><rect x="319" y="738" width="52" height="17" rx="8" fill="#fff3df"/><rect x="319" y="738" width="31" height="17" rx="8" fill="#f59f13"/>
+    <use href="#navData"/>
+  </g>
+
+  <!-- ValueClaw page -->
+  <g class="ui" transform="translate(1022 132)">
+    <rect class="phone" width="430" height="900" rx="30" filter="url(#phoneShadow)"/>
+    <use href="#statusBar"/>
+    <text x="24" y="68" class="brandA">Value</text><text x="126" y="68" class="brandB">Claw</text>
+    <rect x="292" y="41" width="88" height="32" rx="16" fill="#eaf8f1"/><circle cx="310" cy="57" r="5.5" fill="#19aa72"/><text x="322" y="62" class="small">模型在线</text>
+    <rect x="20" y="92" width="390" height="188" rx="18" fill="#ffffff" stroke="#dfe6f2" filter="url(#cardShadow)"/>
+    <text x="44" y="130" class="title">ValueClaw 评分引擎</text>
+    <text x="44" y="158" class="body">价格、资金、合约、社交热度多因子融合</text>
+    <circle cx="111" cy="218" r="44" fill="#edf4ff"/><circle cx="111" cy="218" r="31" fill="#dce9ff"/><circle cx="111" cy="218" r="18" fill="url(#blueGrad)"/>
+    <g transform="translate(111 219)" color="#fff"><use href="#clawIcon" transform="scale(.74)"/></g>
+    <text x="182" y="203" class="small">综合置信度</text>
+    <text x="181" y="242" class="num blueText">86%</text>
+    <rect x="305" y="195" width="58" height="36" rx="12" fill="#eaf8f1"/><text x="320" y="219" class="pillText" fill="#19aa72">稳定</text>
+    <rect x="20" y="300" width="390" height="142" rx="18" class="card"/>
+    <text x="44" y="336" class="h2">因子权重</text>
+    <g transform="translate(45 360)">
+      <text x="0" y="15" class="small">资金流</text><rect x="76" y="4" width="240" height="12" rx="6" fill="#edf2f8"/><rect x="76" y="4" width="182" height="12" rx="6" fill="#326cff"/><text x="327" y="15" class="small">38%</text>
+      <text x="0" y="45" class="small">价格行为</text><rect x="76" y="34" width="240" height="12" rx="6" fill="#edf2f8"/><rect x="76" y="34" width="130" height="12" rx="6" fill="#19aa72"/><text x="327" y="45" class="small">27%</text>
+      <text x="0" y="75" class="small">合约热度</text><rect x="76" y="64" width="240" height="12" rx="6" fill="#edf2f8"/><rect x="76" y="64" width="101" height="12" rx="6" fill="#f59f13"/><text x="327" y="75" class="small">21%</text>
+    </g>
+    <rect x="20" y="462" width="188" height="116" rx="16" class="card"/>
+    <text x="44" y="494" class="h3">最新学习样本</text>
+    <text x="44" y="532" class="numMid">2,418</text><text x="112" y="532" class="body">条</text>
+    <text x="44" y="558" class="small">过去 24H 增量 +312</text>
+    <rect x="222" y="462" width="188" height="116" rx="16" class="card"/>
+    <text x="246" y="494" class="h3">误报回收</text>
+    <text x="246" y="532" class="numMid greenText">14.7%</text>
+    <text x="246" y="558" class="small">较上周下降 2.1%</text>
+    <rect x="20" y="598" width="390" height="198" rx="18" class="card"/>
+    <text x="44" y="634" class="h2">评分解释</text>
+    <line x1="65" y1="664" x2="65" y2="760" stroke="#e5ebf4" stroke-width="2"/>
+    <circle cx="65" cy="668" r="7" fill="#326cff"/><text x="86" y="672" class="h3">BTC 资金净流入异常</text><text x="86" y="695" class="small">大额钱包与交易所净流同步放大</text>
+    <circle cx="65" cy="720" r="7" fill="#19aa72"/><text x="86" y="724" class="h3">ETH 合约短线拉升</text><text x="86" y="747" class="small">多空比变化触发短周期观察</text>
+    <circle cx="65" cy="772" r="7" fill="#f59f13"/><text x="86" y="776" class="h3">SOL 成交量异动</text>
+    <use href="#navClaw"/>
+  </g>
+
+  <!-- Alert page -->
+  <g class="ui" transform="translate(48 1080)">
+    <rect class="phone" width="430" height="900" rx="30" filter="url(#phoneShadow)"/>
+    <use href="#statusBar"/>
+    <text x="24" y="68" class="title">告警</text>
+    <rect x="306" y="41" width="78" height="32" rx="16" fill="#edf4ff"/><text x="325" y="62" class="small" fill="#326cff">已开启</text>
+    <use href="#settingsIcon" transform="translate(400 56)" color="#111827"/>
+    <rect x="20" y="92" width="390" height="132" rx="18" fill="#ffffff" stroke="#dfe6f2" filter="url(#cardShadow)"/>
+    <text x="44" y="129" class="title">异常告警中心</text>
+    <text x="44" y="158" class="body">根据置信度、风险等级和自选币种自动推送</text>
+    <rect x="44" y="179" width="80" height="28" rx="14" fill="#fff0f0"/><text x="62" y="198" class="pillText" fill="#f04452">高风险 3</text>
+    <rect x="136" y="179" width="80" height="28" rx="14" fill="#fff7e8"/><text x="154" y="198" class="pillText" fill="#f59f13">观察 9</text>
+    <rect x="228" y="179" width="96" height="28" rx="14" fill="#eaf8f1"/><text x="248" y="198" class="pillText" fill="#19aa72">已处理 21</text>
+
+    <rect x="20" y="246" width="390" height="72" rx="16" class="card"/>
+    <rect x="43" y="269" width="28" height="28" rx="10" fill="#edf4ff"/><g transform="translate(57 283)" color="#326cff"><use href="#sendIcon" transform="scale(.55)"/></g>
+    <text x="88" y="278" class="h3">推送渠道</text><text x="88" y="300" class="small">飞书、Telegram、邮件</text>
+    <rect x="313" y="267" width="58" height="30" rx="15" fill="#326cff"/><circle cx="357" cy="282" r="12" fill="#fff"/>
+
+    <rect x="20" y="338" width="390" height="458" rx="18" class="card"/>
+    <text x="44" y="374" class="h2">告警队列</text><text x="298" y="373" class="small">全部</text><use href="#filterIcon" transform="translate(341 369)" color="#667085"/>
+    <line x1="20" y1="397" x2="410" y2="397" class="line"/>
+    <g transform="translate(44 421)">
+      <rect width="342" height="78" rx="14" fill="#fff8f8" stroke="#ffe0e3"/>
+      <use href="#coinBtc" transform="translate(24 27) scale(.86)"/><text x="48" y="30" class="h3">BTC 资金流入异常</text>
+      <rect x="252" y="13" width="60" height="25" rx="12" fill="#fff0f0"/><text x="270" y="30" class="pillText" fill="#f04452">强烈</text>
+      <text x="48" y="55" class="small">评分 87 · 置信度 92% · 2 分钟前</text>
+    </g>
+    <g transform="translate(44 514)">
+      <rect width="342" height="78" rx="14" fill="#ffffff" stroke="#e7ecf4"/>
+      <use href="#coinEth" transform="translate(24 27) scale(.86)"/><text x="48" y="30" class="h3">ETH 合约短线拉升</text>
+      <rect x="252" y="13" width="60" height="25" rx="12" fill="#eaf8f1"/><text x="270" y="30" class="pillText" fill="#19aa72">活跃</text>
+      <text x="48" y="55" class="small">评分 72 · 置信度 85% · 11 分钟前</text>
+    </g>
+    <g transform="translate(44 607)">
+      <rect width="342" height="78" rx="14" fill="#ffffff" stroke="#e7ecf4"/>
+      <use href="#coinSol" transform="translate(24 27) scale(.86)"/><text x="48" y="30" class="h3">SOL 交易量异动</text>
+      <rect x="252" y="13" width="60" height="25" rx="12" fill="#fff7e8"/><text x="270" y="30" class="pillText" fill="#f59f13">关注</text>
+      <text x="48" y="55" class="small">评分 61 · 置信度 78% · 19 分钟前</text>
+    </g>
+    <rect x="44" y="716" width="342" height="50" rx="14" fill="url(#blueGrad)" filter="url(#buttonShadow)"/>
+    <text x="158" y="748" font-size="17" font-weight="900" fill="#fff">一键发送今日摘要</text>
+    <use href="#navAlert"/>
+  </g>
+
+  <!-- Mine page -->
+  <g class="ui" transform="translate(535 1080)">
+    <rect class="phone" width="430" height="900" rx="30" filter="url(#phoneShadow)"/>
+    <use href="#statusBar"/>
+    <text x="24" y="68" class="title">我的</text>
+    <use href="#settingsIcon" transform="translate(394 56)" color="#111827"/>
+    <rect x="20" y="92" width="390" height="150" rx="20" fill="url(#blueGrad)" filter="url(#cardShadow)"/>
+    <circle cx="74" cy="151" r="34" fill="#fff" opacity=".18"/><circle cx="74" cy="151" r="24" fill="#fff"/><g transform="translate(74 157)" color="#326cff"><use href="#userIcon" transform="scale(.78)"/></g>
+    <text x="122" y="142" font-size="21" font-weight="900" fill="#fff">SignalOS 用户</text>
+    <text x="122" y="168" font-size="13" font-weight="600" fill="#dbe7ff">Pro 监控计划 · API 正常</text>
+    <rect x="122" y="187" width="88" height="28" rx="14" fill="#fff" opacity=".18"/><text x="144" y="206" class="pillText" fill="#fff">已同步</text>
+    <use href="#miniChartBlue" transform="translate(258 161) scale(.85)" opacity=".82"/>
+
+    <g transform="translate(20 262)">
+      <rect width="121" height="86" rx="16" class="card"/>
+      <text x="15" y="29" class="small">自选币种</text><text x="15" y="63" class="numMid">24</text>
+    </g>
+    <g transform="translate(154 262)">
+      <rect width="121" height="86" rx="16" class="card"/>
+      <text x="15" y="29" class="small">今日推送</text><text x="15" y="63" class="numMid blueText">8</text>
+    </g>
+    <g transform="translate(288 262)">
+      <rect width="121" height="86" rx="16" class="card"/>
+      <text x="15" y="29" class="small">命中率</text><text x="15" y="63" class="numMid greenText">71%</text>
+    </g>
+
+    <rect x="20" y="368" width="390" height="164" rx="18" class="card"/>
+    <text x="44" y="404" class="h2">监控配置</text>
+    <line x1="44" y1="427" x2="386" y2="427" class="softLine"/>
+    <text x="44" y="458" class="h3">扫描周期</text><text x="324" y="458" class="body">5 分钟</text><use href="#chevRight" transform="translate(386 453)" color="#9aa3b5"/>
+    <line x1="44" y1="480" x2="386" y2="480" class="softLine"/>
+    <text x="44" y="511" class="h3">告警阈值</text><text x="308" y="511" class="body">评分 ≥ 60</text><use href="#chevRight" transform="translate(386 506)" color="#9aa3b5"/>
+
+    <rect x="20" y="552" width="390" height="244" rx="18" class="card"/>
+    <text x="44" y="588" class="h2">连接状态</text>
+    <line x1="20" y1="611" x2="410" y2="611" class="line"/>
+    <circle cx="58" cy="642" r="14" fill="#eaf8f1"/><circle cx="58" cy="642" r="5" fill="#19aa72"/><text x="86" y="647" class="h3">市场行情源</text><text x="315" y="647" class="greenText" font-size="13" font-weight="900">正常</text>
+    <line x1="44" y1="670" x2="386" y2="670" class="softLine"/>
+    <circle cx="58" cy="701" r="14" fill="#eaf8f1"/><circle cx="58" cy="701" r="5" fill="#19aa72"/><text x="86" y="706" class="h3">链上数据源</text><text x="315" y="706" class="greenText" font-size="13" font-weight="900">正常</text>
+    <line x1="44" y1="729" x2="386" y2="729" class="softLine"/>
+    <circle cx="58" cy="760" r="14" fill="#fff7e8"/><circle cx="58" cy="760" r="5" fill="#f59f13"/><text x="86" y="765" class="h3">飞书机器人</text><text x="303" y="765" class="orangeText" font-size="13" font-weight="900">待验证</text>
+    <use href="#navMine"/>
+  </g>
+
+  <!-- Coin detail page -->
+  <g class="ui" transform="translate(1022 1080)">
+    <rect class="phone" width="430" height="900" rx="30" filter="url(#phoneShadow)"/>
+    <use href="#statusBar"/>
+    <use href="#chevRight" transform="translate(32 56) rotate(180)" color="#111827"/>
+    <use href="#coinBtc" transform="translate(67 56) scale(1.05)"/>
+    <text x="94" y="62" class="title">BTC 详情</text>
+    <rect x="306" y="41" width="78" height="32" rx="16" fill="#fff0f0"/><text x="325" y="62" class="pillText" fill="#f04452">强烈</text>
+    <rect x="20" y="92" width="390" height="188" rx="20" fill="#ffffff" stroke="#dfe6f2" filter="url(#cardShadow)"/>
+    <text x="44" y="130" class="body">异常评分</text>
+    <text x="44" y="178" font-size="47" font-weight="900" fill="#f04452">87</text><text x="104" y="178" class="body">/100</text>
+    <text x="44" y="210" class="small">资金净流入异常放大，价格短线波动同步增强</text>
+    <use href="#miniChartRed" transform="translate(230 132) scale(1.15)"/>
+    <rect x="44" y="230" width="95" height="28" rx="14" fill="#fff0f0"/><text x="62" y="249" class="pillText" fill="#f04452">资金异常</text>
+    <rect x="151" y="230" width="95" height="28" rx="14" fill="#edf4ff"/><text x="169" y="249" class="pillText" fill="#326cff">8H 监控</text>
+
+    <rect x="20" y="300" width="390" height="128" rx="18" class="card"/>
+    <text x="44" y="336" class="h2">触发证据</text>
+    <g transform="translate(45 360)">
+      <circle cx="8" cy="8" r="5" fill="#f04452"/><text x="24" y="13" class="body">主力资金 24H 净流入 +1687万</text>
+      <circle cx="8" cy="40" r="5" fill="#f59f13"/><text x="24" y="45" class="body">交易所入金速率高于 7 日均值</text>
+      <circle cx="8" cy="72" r="5" fill="#326cff"/><text x="24" y="77" class="body">价格波动与成交量出现同步放大</text>
+    </g>
+
+    <rect x="20" y="448" width="188" height="120" rx="16" class="card"/>
+    <text x="44" y="482" class="h3">置信度</text>
+    <text x="44" y="526" class="num greenText">92%</text>
+    <text x="44" y="552" class="small">模型解释充分</text>
+    <rect x="222" y="448" width="188" height="120" rx="16" class="card"/>
+    <text x="246" y="482" class="h3">下次扫描</text>
+    <text x="246" y="526" class="num">08:25</text>
+    <text x="246" y="552" class="small">5 分 23 秒后</text>
+
+    <rect x="20" y="588" width="390" height="208" rx="18" class="card"/>
+    <text x="44" y="624" class="h2">处理动作</text>
+    <rect x="44" y="647" width="342" height="46" rx="13" fill="#ffffff" stroke="#dfe6f2"/>
+    <g transform="translate(66 670)" color="#326cff"><use href="#eyeIcon" transform="scale(.65)"/></g><text x="92" y="676" class="h3">预览告警文案</text><use href="#chevRight" transform="translate(365 671)" color="#9aa3b5"/>
+    <rect x="44" y="706" width="342" height="46" rx="13" fill="#ffffff" stroke="#dfe6f2"/>
+    <g transform="translate(66 729)" color="#19aa72"><use href="#settingsIcon" transform="scale(.65)"/></g><text x="92" y="735" class="h3">调整 BTC 监控规则</text><use href="#chevRight" transform="translate(365 730)" color="#9aa3b5"/>
+    <rect x="44" y="764" width="342" height="1" fill="#eef2f7"/>
+    <text x="44" y="785" class="small">更新于 2026/06/08 08:20 · 数据来源 ValueClaw</text>
+    <use href="#navSignal"/>
+  </g>
+</svg>

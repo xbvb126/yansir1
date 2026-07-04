@@ -1,0 +1,26 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "5m",
+  "candles": [
+    { "open_time": 1710000000000, "open": 60000, "high": 60220, "low": 59880, "close": 60120, "volume": 1200 },
+    { "open_time": 1710000300000, "open": 60120, "high": 60350, "low": 60040, "close": 60280, "volume": 1410 },
+    { "open_time": 1710000600000, "open": 60280, "high": 60420, "low": 60160, "close": 60360, "volume": 1320 },
+    { "open_time": 1710000900000, "open": 60360, "high": 60580, "low": 60290, "close": 60510, "volume": 1650 },
+    { "open_time": 1710001200000, "open": 60510, "high": 60680, "low": 60440, "close": 60640, "volume": 1710 },
+    { "open_time": 1710001500000, "open": 60640, "high": 60850, "low": 60570, "close": 60790, "volume": 1840 },
+    { "open_time": 1710001800000, "open": 60790, "high": 60920, "low": 60680, "close": 60860, "volume": 1600 },
+    { "open_time": 1710002100000, "open": 60860, "high": 61050, "low": 60800, "close": 61010, "volume": 1920 },
+    { "open_time": 1710002400000, "open": 61010, "high": 61220, "low": 60930, "close": 61180, "volume": 2100 },
+    { "open_time": 1710002700000, "open": 61180, "high": 61380, "low": 61100, "close": 61310, "volume": 2260 },
+    { "open_time": 1710003000000, "open": 61310, "high": 61520, "low": 61250, "close": 61490, "volume": 2400 },
+    { "open_time": 1710003300000, "open": 61490, "high": 61610, "low": 61380, "close": 61540, "volume": 1980 },
+    { "open_time": 1710003600000, "open": 61540, "high": 61780, "low": 61480, "close": 61720, "volume": 2500 },
+    { "open_time": 1710003900000, "open": 61720, "high": 61840, "low": 61620, "close": 61780, "volume": 2160 },
+    { "open_time": 1710004200000, "open": 61780, "high": 62020, "low": 61700, "close": 61970, "volume": 2680 },
+    { "open_time": 1710004500000, "open": 61970, "high": 62150, "low": 61890, "close": 62080, "volume": 2740 },
+    { "open_time": 1710004800000, "open": 62080, "high": 62280, "low": 62000, "close": 62210, "volume": 2900 },
+    { "open_time": 1710005100000, "open": 62210, "high": 62370, "low": 62130, "close": 62320, "volume": 2550 },
+    { "open_time": 1710005400000, "open": 62320, "high": 62510, "low": 62260, "close": 62470, "volume": 3010 },
+    { "open_time": 1710005700000, "open": 62470, "high": 62650, "low": 62390, "close": 62620, "volume": 3180 }
+  ]
+}

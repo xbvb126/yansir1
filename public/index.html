@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI智能选币</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <nav class="primary-tabs" aria-label="主导航">
+          <button class="primary-tab active">AI智能选币</button>
+          <button class="primary-tab">AI大盘分析</button>
+          <button class="primary-tab">自选</button>
+        </nav>
+        <button class="search-button" aria-label="搜索">
+          <span></span>
+        </button>
+      </header>
+
+      <section id="dataView" class="view">
+        <section class="page-section">
+          <div class="section-head">
+            <h1>数据</h1>
+            <span>市场指标</span>
+          </div>
+          <div class="ops-grid">
+            <div class="metric-tile">
+              <span>监控币种</span>
+              <strong>128</strong>
+              <small>合约 + 现货</small>
+            </div>
+            <div class="metric-tile">
+              <span>高风险拥挤</span>
+              <strong>17</strong>
+              <small>Funding/OI 异常</small>
+            </div>
+          </div>
+          <div class="section-head compact">
+            <h2>核心行情</h2>
+            <span>实时扫描</span>
+          </div>
+          <div id="dataTable" class="data-table"></div>
+          <div class="section-head compact">
+            <h2>异常指标</h2>
+            <span>评分模型</span>
+          </div>
+          <div id="factorList" class="factor-list"></div>
+        </section>
+      </section>
+
+      <section id="clawView" class="view">
+        <section class="page-section">
+          <div class="claw-title">
+            <h1>像聊天一样，完成专业级分析</h1>
+            <span>行情/趋势解读；回测分析；定时任务；个人管家</span>
+          </div>
+          <div class="claw-window">
+            <div class="window-bar">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+              <strong>ValueClaw</strong>
+            </div>
+            <div class="chat-input">今天有哪些币可以买</div>
+            <div id="clawChat" class="claw-chat"></div>
+            <div class="chat-input muted">BTC 最新数据</div>
+            <div class="typing-row">
+              <span></span>
+              <em>正在分析数据</em>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="radarView" class="view active-view">
+        <section class="monitor-tabs" aria-label="监控分类">
+          <button class="monitor-tab active">异动看涨监控</button>
+          <button class="monitor-tab">机会看涨监控</button>
+          <button class="monitor-tab">风险看跌监控</button>
+          <button class="monitor-tab">自定义</button>
+        </section>
+
+        <section class="tool-row">
+          <button class="link-button">图文攻略</button>
+          <button class="circle-button" aria-label="说明">i</button>
+          <button class="circle-button" aria-label="历史">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 7v6l4 2" />
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+            </svg>
+          </button>
+        </section>
+
+        <section class="market-board" aria-label="推送监控">
+          <div class="table-head">
+            <span>币种</span>
+            <span>推送价格($)</span>
+            <span>推送后涨幅</span>
+            <span>推送时间</span>
+          </div>
+          <div id="signalRows" class="signal-rows"></div>
+        </section>
+
+        <section class="timeline-panel">
+          <div class="timeline-title">
+            <h1>实时信号流</h1>
+            <label class="switch-label">
+              显示去重
+              <input id="dedupeToggle" type="checkbox" checked />
+              <span class="switch"></span>
+            </label>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </section>
+      </section>
+
+      <section id="signalView" class="view">
+        <section class="page-section">
+          <div class="section-head">
+            <h1>信号中心</h1>
+            <span>飞书联动</span>
+          </div>
+          <div class="ops-grid">
+            <div class="metric-tile">
+              <span>今日推送</span>
+              <strong>38</strong>
+              <small>高分信号 11 条</small>
+            </div>
+            <div class="metric-tile">
+              <span>飞书状态</span>
+              <strong id="feishuStatus">检测中</strong>
+              <small>机器人 Webhook</small>
+            </div>
+          </div>
+          <div id="signalFeed" class="signal-feed"></div>
+        </section>
+      </section>
+
+      <section id="accountView" class="view">
+        <section class="page-section">
+          <div class="section-head">
+            <h1>我的</h1>
+            <span>商业化</span>
+          </div>
+          <div id="userProfile" class="profile-card"></div>
+          <div class="section-head compact">
+            <h2>会员套餐</h2>
+            <span>按月订阅</span>
+          </div>
+          <div id="planList" class="plan-list"></div>
+          <div class="section-head compact">
+            <h2>用户管理</h2>
+            <span>管理员</span>
+          </div>
+          <div id="userTable" class="user-table"></div>
+        </section>
+      </section>
+
+      <button id="sendAlert" class="float-alert" aria-label="发送飞书测试告警">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4a7 7 0 0 0-7 7" />
+          <path d="M19 11a7 7 0 0 0-7-7" />
+          <path d="M12 8a3 3 0 0 0-3 3" />
+          <path d="M15 11a3 3 0 0 0-3-3" />
+          <path d="M12 12v8" />
+          <path d="m7 20 5-5 5 5" />
+        </svg>
+      </button>
+
+      <nav class="bottom-nav" aria-label="底部导航">
+        <button data-view="data">
+          <svg viewBox="0 0 24 24"><path d="M5 4h12v16H5z" /><path d="M9 8h4" /><path d="M9 12h4" /><path d="M17 9h2v11h-2" /></svg>
+          <span>数据</span>
+        </button>
+        <button data-view="claw">
+          <svg viewBox="0 0 24 24"><path d="M12 4v4" /><path d="m6 17 6-4 6 4" /><circle cx="12" cy="10" r="2" /><circle cx="5" cy="18" r="2" /><circle cx="19" cy="18" r="2" /></svg>
+          <span>ValueClaw</span>
+        </button>
+        <button data-view="radar" class="center active">
+          <strong>AI</strong>
+          <span>AI选币</span>
+        </button>
+        <button data-view="signal">
+          <svg viewBox="0 0 24 24"><path d="M12 4a7 7 0 0 0-7 7" /><path d="M19 11a7 7 0 0 0-7-7" /><path d="M12 12v8" /><path d="m7 20 5-5 5 5" /></svg>
+          <span>信号</span>
+        </button>
+        <button data-view="account">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+          <span>我的</span>
+        </button>
+      </nav>
+
+      <div id="toast" class="toast" role="status"></div>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,235 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1960" viewBox="0 0 1500 1960">
+  <defs>
+    <style>
+      .board{fill:#eef3f8}
+      .phone{fill:#fbfcff;stroke:#d8e1ee;stroke-width:1.4}
+      .card{fill:#fff;stroke:#dbe2ef;stroke-width:1.4}
+      .soft{fill:#f5f8fd;stroke:#dbe2ef;stroke-width:1.1}
+      .ink{fill:#111827}
+      .muted{fill:#737d94}
+      .blue{fill:#326cff}
+      .green{fill:#20aa73}
+      .red{fill:#f24b55}
+      .orange{fill:#f59f13}
+      .brand{font:900 34px "Segoe UI",Arial,sans-serif}
+      .pageTitle{font:900 25px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .sectionTitle{font:800 20px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .label{font:700 16px "Microsoft YaHei",Arial,sans-serif;fill:#111827}
+      .body{font:400 14px "Microsoft YaHei",Arial,sans-serif;fill:#737d94}
+      .small{font:400 12px "Microsoft YaHei",Arial,sans-serif;fill:#737d94}
+      .tiny{font:400 10px "Microsoft YaHei",Arial,sans-serif;fill:#737d94}
+      .btn{font:800 17px "Microsoft YaHei",Arial,sans-serif}
+      .line{stroke:#e6ebf3;stroke-width:1.2}
+      .iconLine{fill:none;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+    <filter id="shadow" x="-14%" y="-14%" width="128%" height="128%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#1b2b4a" flood-opacity=".08"/>
+    </filter>
+    <g id="search">
+      <circle cx="0" cy="0" r="13" fill="none" stroke="#05070d" stroke-width="3.5"/>
+      <path d="M10 10 L23 23" stroke="#05070d" stroke-width="3.5" stroke-linecap="round"/>
+    </g>
+    <g id="radarIcon">
+      <circle cx="0" cy="0" r="34" fill="#e8f8f1" stroke="#cceee1"/>
+      <circle cx="0" cy="0" r="23" fill="#d6f3e7" stroke="#aee3d0"/>
+      <circle cx="0" cy="0" r="11" fill="#abe7ce"/>
+      <circle cx="0" cy="0" r="5" fill="#20aa73"/>
+      <path d="M0 0 L25 -31" stroke="#20aa73" stroke-width="3.5" stroke-linecap="round"/>
+    </g>
+    <g id="shieldIcon">
+      <path d="M0 -33 L31 -20 L26 20 L0 34 L-26 20 L-31 -20 Z" fill="#e5f8ee" stroke="#20aa73" stroke-width="4"/>
+      <path d="M-14 0 L-2 13 L18 -13" fill="none" stroke="#20aa73" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="clockIcon">
+      <circle cx="0" cy="0" r="11" fill="none" stroke="#6d778e" stroke-width="2.4"/>
+      <path d="M0 -6 L0 2 L6 5" stroke="#6d778e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="bellIcon">
+      <path d="M-12 7 C-10 -12 10 -12 12 7 L16 14 L-16 14 Z" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linejoin="round"/>
+      <path d="M-4 18 C-1 22 1 22 4 18" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>
+    </g>
+    <g id="dataIcon">
+      <ellipse cx="0" cy="-12" rx="15" ry="7" fill="none" stroke="currentColor" stroke-width="2.8"/>
+      <path d="M-15 -12 L-15 15 C-15 19 15 19 15 15 L15 -12" fill="none" stroke="currentColor" stroke-width="2.8"/>
+      <path d="M-15 2 C-15 7 15 7 15 2" fill="none" stroke="currentColor" stroke-width="2.2"/>
+    </g>
+    <g id="clawIcon">
+      <circle cx="0" cy="-16" r="5" fill="currentColor"/>
+      <circle cx="-17" cy="15" r="5" fill="currentColor"/>
+      <circle cx="17" cy="15" r="5" fill="currentColor"/>
+      <path d="M0 -10 L-17 10 M0 -10 L17 10 M-12 15 L12 15" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+    <g id="userIcon">
+      <circle cx="0" cy="-10" r="9" fill="none" stroke="currentColor" stroke-width="2.8"/>
+      <path d="M-17 18 C-12 3 12 3 17 18" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>
+    </g>
+    <g id="coinBtc">
+      <circle cx="0" cy="0" r="15" fill="#ff9e18"/>
+      <text x="-8" y="8" fill="#fff" font-family="Segoe UI" font-size="21" font-weight="900">₿</text>
+    </g>
+    <g id="coinEth">
+      <circle cx="0" cy="0" r="15" fill="#f1f3f6"/>
+      <path d="M0 -19 L-11 0 L0 7 L11 0 Z" fill="#111827"/>
+      <path d="M0 10 L-11 2 L0 19 L11 2 Z" fill="#555"/>
+    </g>
+    <g id="coinSol">
+      <circle cx="0" cy="0" r="15" fill="#111827"/>
+      <path d="M-10 -5 L10 -5 M-10 5 L10 5" stroke="#8e5bff" stroke-width="4" stroke-linecap="round"/>
+      <path d="M-10 0 L10 0" stroke="#19c7a8" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <g id="nav">
+      <rect x="0" y="816" width="430" height="74" fill="#fff" stroke="#e5e9f1"/>
+      <g transform="translate(55 842)" color="#808aa0"><use href="#dataIcon"/></g>
+      <text x="39" y="876" class="small">数据</text>
+      <g transform="translate(140 842)" color="#808aa0"><use href="#clawIcon"/></g>
+      <text x="112" y="876" class="small">ValueClaw</text>
+      <circle cx="215" cy="826" r="27" fill="#326cff"/>
+      <path d="M198 837 C198 822 207 812 215 812 C223 812 232 822 232 837" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="215" cy="829" r="6" fill="#fff"/>
+      <text x="195" y="877" font-family="Microsoft YaHei" font-size="15" font-weight="800" fill="#326cff">信号</text>
+      <g transform="translate(303 842)" color="#808aa0"><use href="#bellIcon"/></g>
+      <text x="289" y="876" class="small">告警</text>
+      <g transform="translate(382 842)" color="#808aa0"><use href="#userIcon"/></g>
+      <text x="368" y="876" class="small">我的</text>
+    </g>
+  </defs>
+
+  <rect class="board" width="1500" height="1960"/>
+  <text x="42" y="58" font-family="Microsoft YaHei,Arial" font-size="30" font-weight="900" fill="#111827">SignalOS 高保真 UI 效果图</text>
+  <text x="42" y="88" class="body">参考你给的精致稿：品牌顶部、核心决策卡、功能图标、Top 卡片、表格化列表、底部导航。</text>
+
+  <!-- Page 1 Radar -->
+  <g transform="translate(40 130)">
+    <rect class="phone" width="430" height="890" rx="28" filter="url(#shadow)"/>
+    <text x="20" y="54" class="brand">Signal</text><text x="128" y="54" class="brand" fill="#326cff">OS</text>
+    <circle cx="265" cy="40" r="7" fill="#20aa73"/><text x="283" y="48" class="label">市场正常</text>
+    <use href="#search" transform="translate(393 40) scale(.8)"/>
+    <rect x="20" y="90" width="390" height="198" rx="16" class="card"/>
+    <text x="45" y="132" class="sectionTitle">今日重点异常雷达</text>
+    <rect x="190" y="110" width="118" height="28" rx="6" fill="#eaf1ff"/>
+    <text x="214" y="129" font-family="Microsoft YaHei" font-size="14" font-weight="800" fill="#326cff">AI 监控中</text>
+    <text x="342" y="132" class="small">查看全部 ›</text>
+    <use href="#shieldIcon" transform="translate(78 200) scale(.82)"/>
+    <text x="123" y="178" class="body">风险姿态</text>
+    <text x="123" y="220" fill="#20aa73" font-family="Microsoft YaHei" font-size="29" font-weight="900">偏低</text>
+    <text x="123" y="251" class="body">市场情绪稳定</text>
+    <line x1="225" y1="154" x2="225" y2="250" stroke="#e4e9f2"/>
+    <use href="#clockIcon" transform="translate(252 174)"/>
+    <text x="276" y="182" class="body">下次扫描</text>
+    <text x="249" y="222" font-family="Segoe UI" font-size="30" font-weight="900" fill="#111827">08:25</text>
+    <text x="251" y="252" class="body">5 分 23 秒后</text>
+    <use href="#radarIcon" transform="translate(348 205) scale(.73)"/>
+    <line x1="42" y1="262" x2="388" y2="262" class="line"/>
+    <text x="48" y="280" class="tiny">基于链上数据、资金流向与价格行为的 8H 异常监控</text>
+    <text x="332" y="280" font-family="Microsoft YaHei" font-size="12" font-weight="800" fill="#326cff">规则设置 ›</text>
+    <g transform="translate(20 308)">
+      <rect width="124" height="132" rx="12" class="card"/><rect x="10" y="8" width="23" height="26" rx="5" fill="#f24b55"/><text x="17" y="27" fill="#fff" font-size="16" font-weight="900">1</text><use href="#coinBtc" transform="translate(42 58)"/><text x="72" y="65" class="label">BTC</text><text x="28" y="105" fill="#f24b55" font-family="Segoe UI" font-size="35" font-weight="900">87</text><text x="78" y="105" class="body">/100</text>
+      <rect x="134" width="124" height="132" rx="12" class="card"/><rect x="144" y="8" width="23" height="26" rx="5" fill="#f6a60b"/><text x="151" y="27" fill="#fff" font-size="16" font-weight="900">2</text><use href="#coinEth" transform="translate(178 58)"/><text x="207" y="65" class="label">ETH</text><text x="163" y="105" fill="#20aa73" font-family="Segoe UI" font-size="35" font-weight="900">72</text><text x="213" y="105" class="body">/100</text>
+      <rect x="268" width="122" height="132" rx="12" class="card"/><rect x="278" y="8" width="23" height="26" rx="5" fill="#326cff"/><text x="285" y="27" fill="#fff" font-size="16" font-weight="900">3</text><use href="#coinSol" transform="translate(311 58)"/><text x="340" y="65" class="label">SOL</text><text x="297" y="105" fill="#f59f13" font-family="Segoe UI" font-size="35" font-weight="900">61</text><text x="347" y="105" class="body">/100</text>
+    </g>
+    <rect x="20" y="470" width="190" height="56" rx="10" fill="#fff" stroke="#326cff" stroke-width="2"/><text x="83" y="505" class="btn" fill="#326cff">预览告警</text>
+    <rect x="224" y="470" width="186" height="56" rx="10" fill="#326cff"/><text x="291" y="505" class="btn" fill="#fff">推送飞书</text>
+    <rect x="20" y="552" width="390" height="250" rx="14" class="card"/>
+    <text x="42" y="590" class="sectionTitle">异常信号列表</text><text x="295" y="590" class="body">筛选</text><text x="348" y="590" class="body">自定义</text>
+    <line x1="20" y1="615" x2="410" y2="615" class="line"/>
+    <text x="42" y="642" class="small">币种</text><text x="126" y="642" class="small">评分</text><text x="208" y="642" class="small">原因</text><text x="300" y="642" class="small">置信度</text>
+    <g transform="translate(42 678)"><use href="#coinBtc"/><text x="28" y="7" class="label">BTC</text><text x="108" y="7" fill="#f24b55" font-size="19" font-weight="900">87</text><text x="188" y="7" class="body">资金流入</text><text x="290" y="7" fill="#20aa73" font-size="18" font-weight="900">92%</text></g>
+    <line x1="42" y1="710" x2="388" y2="710" class="line"/>
+    <g transform="translate(42 742)"><use href="#coinEth"/><text x="28" y="7" class="label">ETH</text><text x="108" y="7" fill="#20aa73" font-size="19" font-weight="900">72</text><text x="188" y="7" class="body">合约拉升</text><text x="290" y="7" fill="#20aa73" font-size="18" font-weight="900">85%</text></g>
+    <use href="#nav"/>
+  </g>
+
+  <!-- Page 2 Data -->
+  <g transform="translate(535 130)">
+    <rect class="phone" width="430" height="890" rx="28" filter="url(#shadow)"/>
+    <text x="20" y="54" class="brand">Signal</text><text x="128" y="54" class="brand" fill="#326cff">OS</text><rect x="245" y="22" width="100" height="32" rx="16" fill="#eaf1ff"/><text x="278" y="43" fill="#326cff" font-size="13" font-weight="800">数据</text><use href="#search" transform="translate(393 40) scale(.8)"/>
+    <text x="24" y="116" class="pageTitle">数据中枢</text><text x="24" y="142" class="body">行情、资金流、市场因子统一扫描</text>
+    <g transform="translate(20 165)">
+      <rect width="120" height="82" rx="14" class="card"/><g transform="translate(28 30)" color="#326cff"><use href="#dataIcon"/></g><text x="70" y="40" fill="#326cff" font-size="25" font-weight="900">128</text><text x="20" y="66" class="small">监控币种</text>
+      <rect x="135" width="120" height="82" rx="14" class="card"/><use href="#shieldIcon" transform="translate(162 36) scale(.34)"/><text x="205" y="40" fill="#f24b55" font-size="25" font-weight="900">17</text><text x="155" y="66" class="small">拥挤风险</text>
+      <rect x="270" width="120" height="82" rx="14" class="card"/><g transform="translate(298 31)" color="#20aa73"><use href="#bellIcon"/></g><text x="332" y="40" fill="#20aa73" font-size="25" font-weight="900">1616</text><text x="290" y="66" class="small">剩余额度</text>
+    </g>
+    <rect x="20" y="270" width="390" height="48" rx="16" class="card"/>
+    <rect x="31" y="279" width="82" height="30" rx="15" fill="#111827"/><text x="56" y="299" fill="#fff" font-size="13">资金</text>
+    <text x="148" y="299" class="small">链上</text><text x="234" y="299" class="small">板块</text><text x="326" y="299" class="small">比值</text>
+    <g transform="translate(20 345)">
+      <rect width="390" height="62" rx="14" class="card"/><use href="#coinBtc" transform="translate(38 31)"/><text x="72" y="25" class="label">BTC</text><text x="72" y="48" class="tiny">多头拥挤</text><text x="160" y="36" class="label">76984.71</text><text x="286" y="36" fill="#20aa73" font-size="16" font-weight="900">+1.20%</text><circle cx="363" cy="31" r="15" fill="#326cff"/><text x="358" y="38" fill="#fff" font-size="17">›</text>
+      <rect y="78" width="390" height="62" rx="14" class="card"/><use href="#coinEth" transform="translate(38 109)"/><text x="72" y="103" class="label">ETH</text><text x="72" y="126" class="tiny">趋势增强</text><text x="160" y="114" class="label">3606.80</text><text x="286" y="114" fill="#20aa73" font-size="16" font-weight="900">+3.86%</text><circle cx="363" cy="109" r="15" fill="#326cff"/><text x="358" y="116" fill="#fff" font-size="17">›</text>
+      <rect y="156" width="390" height="62" rx="14" class="card"/><circle cx="38" cy="187" r="15" fill="#656d7d"/><text x="72" y="181" class="label">UB</text><text x="72" y="204" class="tiny">首次 FOMO</text><text x="160" y="192" class="label">0.1543</text><text x="286" y="192" fill="#20aa73" font-size="16" font-weight="900">+28.78%</text><circle cx="363" cy="187" r="15" fill="#326cff"/><text x="358" y="194" fill="#fff" font-size="17">›</text>
+    </g>
+    <text x="24" y="625" class="sectionTitle">市场因子</text>
+    <rect x="20" y="650" width="390" height="76" rx="14" class="card"/><use href="#shieldIcon" transform="translate(52 688) scale(.38)"/><text x="92" y="678" class="label">OI 异常</text><text x="92" y="704" class="small">持仓量较基线明显放大</text><text x="325" y="696" fill="#20aa73" font-size="23" font-weight="900">34.2%</text>
+    <use href="#nav"/>
+  </g>
+
+  <!-- Page 3 ValueClaw -->
+  <g transform="translate(1030 130)">
+    <rect class="phone" width="430" height="890" rx="28" filter="url(#shadow)"/>
+    <text x="20" y="54" class="brand">Signal</text><text x="128" y="54" class="brand" fill="#326cff">OS</text><rect x="245" y="22" width="100" height="32" rx="16" fill="#eaf1ff"/><text x="270" y="43" fill="#326cff" font-size="13" font-weight="800">Claw</text><use href="#search" transform="translate(393 40) scale(.8)"/>
+    <text x="24" y="116" class="pageTitle" fill="#326cff">像聊天一样完成专业分析</text><text x="24" y="144" class="body">行情解读、回测分析、定时任务、个人管家</text>
+    <rect x="20" y="170" width="390" height="445" rx="18" class="card"/>
+    <circle cx="42" cy="194" r="5" fill="#f36f61"/><circle cx="60" cy="194" r="5" fill="#f7c948"/><circle cx="78" cy="194" r="5" fill="#57bd78"/>
+    <g transform="translate(158 191)" color="#326cff"><use href="#clawIcon"/></g><text x="188" y="198" class="label">ValueClaw</text>
+    <rect x="42" y="230" width="346" height="52" rx="10" class="soft"/><text x="62" y="262" class="body" fill="#111827">今天有哪些币可以买？</text>
+    <rect x="42" y="310" width="98" height="28" rx="14" fill="#e5f8ee"/><text x="67" y="329" font-size="12" fill="#20aa73" font-weight="800">已分析</text><text x="152" y="329" class="tiny">2026-06-09 12:23</text>
+    <text x="42" y="370" class="label">今日值得关注的币种</text>
+    <circle cx="50" cy="405" r="4" fill="#20aa73"/><text x="66" y="411" class="body" fill="#111827">ARC：24h +49.2%，评分 60</text>
+    <circle cx="50" cy="438" r="4" fill="#20aa73"/><text x="66" y="444" class="body" fill="#111827">RIVER：主力资金活跃，适合观察</text>
+    <circle cx="50" cy="471" r="4" fill="#20aa73"/><text x="66" y="477" class="body" fill="#111827">DOGE：15m/30m 资金回暖</text>
+    <text x="42" y="535" font-size="16" font-weight="800" fill="#20aa73">我的建议</text>
+    <text x="62" y="565" class="body">偏短线关注强势币，严格控制仓位；以上均为 AI 信号筛选。</text>
+    <rect x="42" y="642" width="346" height="58" rx="14" class="card"/><use href="#coinBtc" transform="translate(66 671)"/><text x="96" y="667" class="label">BTC 最新数据</text><text x="96" y="690" class="tiny">76984.71 · +1.20% · score 72</text>
+    <use href="#nav"/>
+  </g>
+
+  <!-- Page 4 Alert -->
+  <g transform="translate(40 1060)">
+    <rect class="phone" width="430" height="890" rx="28" filter="url(#shadow)"/>
+    <text x="20" y="54" class="brand">Signal</text><text x="128" y="54" class="brand" fill="#326cff">OS</text><rect x="245" y="22" width="100" height="32" rx="16" fill="#eaf1ff"/><text x="274" y="43" fill="#326cff" font-size="13" font-weight="800">告警</text><use href="#search" transform="translate(393 40) scale(.8)"/>
+    <text x="24" y="116" class="pageTitle">信号中心</text><text x="24" y="144" class="body">扫描任务、飞书机器人、告警规则与历史记录</text>
+    <rect x="20" y="172" width="390" height="78" rx="16" class="card"/><use href="#radarIcon" transform="translate(58 211) scale(.38)"/><text x="92" y="202" class="label">定时扫描未启动</text><text x="92" y="228" class="small">启动后按周期扫描并预览飞书告警</text><rect x="332" y="196" width="56" height="34" rx="10" fill="#326cff"/><text x="348" y="218" fill="#fff" font-size="13" font-weight="800">启动</text>
+    <rect x="20" y="275" width="390" height="110" rx="16" class="card"/><g transform="translate(58 321)" color="#20aa73"><use href="#bellIcon"/></g><text x="92" y="306" class="label">飞书机器人</text><text x="92" y="332" class="small">Webhook 保存 + 测试发送</text><rect x="42" y="350" width="242" height="28" rx="8" class="soft"/><text x="55" y="368" class="tiny">https://open.feishu.cn/...</text><rect x="296" y="350" width="44" height="28" rx="8" fill="#326cff"/><text x="306" y="368" fill="#fff" font-size="10">保存</text><rect x="348" y="350" width="42" height="28" rx="8" fill="#eaf1ff"/><text x="358" y="368" fill="#326cff" font-size="10">测试</text>
+    <rect x="20" y="412" width="390" height="178" rx="16" class="card"/><use href="#shieldIcon" transform="translate(58 454) scale(.42)"/><text x="92" y="442" class="label">告警规则</text><text x="42" y="496" class="body" fill="#111827">币种：BTC, ETH, SOL</text><text x="42" y="526" class="body" fill="#111827">周期：5m　　最低分：65</text><text x="42" y="556" class="body" fill="#111827">方向：利多 / 风险 / 观察</text>
+    <rect x="20" y="620" width="190" height="56" rx="10" fill="#fff" stroke="#326cff" stroke-width="2"/><text x="78" y="655" class="btn" fill="#326cff">预览扫描</text><rect x="224" y="620" width="186" height="56" rx="10" fill="#326cff"/><text x="284" y="655" class="btn" fill="#fff">扫描推送</text>
+    <text x="24" y="723" class="sectionTitle">候选信号</text><rect x="20" y="745" width="390" height="58" rx="14" class="card"/><circle cx="55" cy="774" r="16" fill="#eaf1ff" stroke="#326cff"/><text x="51" y="781" fill="#326cff" font-size="18">$</text><text x="85" y="780" class="label">UB</text><text x="130" y="780" class="tiny">交易活跃，首次符合 FOMO 特征</text><rect x="320" y="760" width="70" height="28" rx="14" fill="#eaf1ff"/><text x="340" y="778" fill="#326cff" font-size="11">预览</text>
+    <use href="#nav"/>
+  </g>
+
+  <!-- Page 5 Account -->
+  <g transform="translate(535 1060)">
+    <rect class="phone" width="430" height="890" rx="28" filter="url(#shadow)"/>
+    <text x="20" y="54" class="brand">Signal</text><text x="128" y="54" class="brand" fill="#326cff">OS</text><rect x="245" y="22" width="100" height="32" rx="16" fill="#eaf1ff"/><text x="274" y="43" fill="#326cff" font-size="13" font-weight="800">账户</text><use href="#search" transform="translate(393 40) scale(.8)"/>
+    <text x="24" y="116" class="pageTitle">我的</text><text x="24" y="144" class="body">商业化、权益、套餐、团队用户</text>
+    <rect x="20" y="172" width="390" height="150" rx="18" class="card"/><rect x="44" y="205" width="56" height="56" rx="16" fill="#326cff"/><text x="58" y="242" fill="#fff" font-size="22" font-weight="900">AI</text><text x="118" y="216" class="label">YanSir</text><text x="118" y="242" class="small">138****8821 · 管理员</text><rect x="326" y="205" width="54" height="28" rx="14" fill="#eaf1ff"/><text x="340" y="224" fill="#326cff" font-size="12">SVIP</text><text x="42" y="290" class="small">信号额度 384 / 2000</text><rect x="172" y="288" width="195" height="10" rx="5" fill="#e6edf5"/><rect x="172" y="288" width="82" height="10" rx="5" fill="#326cff"/>
+    <text x="24" y="374" class="sectionTitle">会员套餐</text>
+    <rect x="20" y="395" width="390" height="62" rx="14" class="card"/><g transform="translate(58 426)" color="#326cff"><use href="#dataIcon"/></g><text x="84" y="419" class="label">Free</text><text x="84" y="444" class="small">基础异常筛选</text><text x="320" y="430" fill="#326cff" font-size="17" font-weight="900">免费</text>
+    <rect x="20" y="474" width="390" height="62" rx="14" class="card"/><g transform="translate(58 505)" color="#326cff"><use href="#bellIcon"/></g><text x="84" y="498" class="label">VIP</text><text x="84" y="523" class="small">实时信号 / 飞书告警</text><text x="300" y="509" fill="#326cff" font-size="17" font-weight="900">¥199/月</text>
+    <rect x="20" y="553" width="390" height="62" rx="14" fill="#eef4ff" stroke="#dbe2ef"/><use href="#shieldIcon" transform="translate(58 584) scale(.34)"/><text x="84" y="577" class="label">SVIP</text><text x="84" y="602" class="small">全市场扫描 / API / 团队</text><text x="300" y="588" fill="#326cff" font-size="17" font-weight="900">¥699/月</text>
+    <text x="24" y="672" class="sectionTitle">账户菜单</text>
+    <rect x="20" y="694" width="390" height="36" rx="10" class="card"/><text x="52" y="717" class="body" fill="#111827">订单中心</text><text x="382" y="717" class="body">›</text>
+    <rect x="20" y="740" width="390" height="36" rx="10" class="card"/><text x="52" y="763" class="body" fill="#111827">权益中心</text><text x="382" y="763" class="body">›</text>
+    <rect x="20" y="786" width="390" height="36" rx="10" class="card"/><text x="52" y="809" class="body" fill="#111827">预警设置</text><text x="382" y="809" class="body">›</text>
+    <use href="#nav"/>
+  </g>
+
+  <!-- Page 6 Coin Detail -->
+  <g transform="translate(1030 1060)">
+    <rect class="phone" width="430" height="890" rx="28" filter="url(#shadow)"/>
+    <text x="20" y="54" class="brand">Signal</text><text x="128" y="54" class="brand" fill="#326cff">OS</text><rect x="245" y="22" width="100" height="32" rx="16" fill="#eaf1ff"/><text x="274" y="43" fill="#326cff" font-size="13" font-weight="800">详情</text><use href="#search" transform="translate(393 40) scale(.8)"/>
+    <text x="24" y="116" class="pageTitle">BTC 详情</text><text x="24" y="155" fill="#f24b55" font-family="Segoe UI" font-size="34" font-weight="900">76984.71</text><text x="24" y="182" class="body">BTCUSDT · 24h +1.20% · 多头拥挤</text>
+    <rect x="20" y="215" width="390" height="220" rx="18" class="card"/>
+    <text x="42" y="246" class="small">价格走势 / K 线区域</text>
+    <g stroke="#e7edf5" stroke-width="1"><line x1="45" y1="270" x2="45" y2="410"/><line x1="105" y1="270" x2="105" y2="410"/><line x1="165" y1="270" x2="165" y2="410"/><line x1="225" y1="270" x2="225" y2="410"/><line x1="285" y1="270" x2="285" y2="410"/><line x1="345" y1="270" x2="345" y2="410"/></g>
+    <path d="M45 382 L95 318 L145 344 L205 286 L265 309 L342 255 L392 276" fill="none" stroke="#326cff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#326cff"><circle cx="45" cy="382" r="4"/><circle cx="95" cy="318" r="4"/><circle cx="145" cy="344" r="4"/><circle cx="205" cy="286" r="4"/><circle cx="265" cy="309" r="4"/><circle cx="342" cy="255" r="4"/><circle cx="392" cy="276" r="4"/></g>
+    <rect x="20" y="465" width="390" height="48" rx="16" class="card"/><text x="55" y="495" class="label">1m</text><rect x="126" y="473" width="60" height="32" rx="16" fill="#326cff"/><text x="145" y="495" fill="#fff" font-size="16" font-weight="900">5m</text><text x="220" y="495" class="label" fill="#737d94">15m</text><text x="300" y="495" class="label" fill="#737d94">1h</text><text x="374" y="495" class="label" fill="#737d94">4h</text>
+    <text x="24" y="580" class="sectionTitle">资金数据</text>
+    <rect x="20" y="605" width="390" height="184" rx="18" class="card"/>
+    <text x="42" y="638" class="small">时间</text><text x="102" y="638" class="small">流入($)</text><text x="174" y="638" class="small">流出($)</text><text x="250" y="638" class="small">净流入($)</text>
+    <text x="42" y="674" class="small" fill="#111827">5分钟</text><text x="102" y="674" class="small" fill="#111827">18.62万</text><text x="174" y="674" class="small" fill="#111827">11.42万</text><text x="250" y="674" class="small" fill="#111827">7.20万</text>
+    <text x="42" y="704" class="small" fill="#111827">15分钟</text><text x="102" y="704" class="small" fill="#111827">42.31万</text><text x="174" y="704" class="small" fill="#111827">25.74万</text><text x="250" y="704" class="small" fill="#111827">16.57万</text>
+    <text x="42" y="734" class="small" fill="#111827">30分钟</text><text x="102" y="734" class="small" fill="#111827">66.08万</text><text x="174" y="734" class="small" fill="#111827">51.22万</text><text x="250" y="734" class="small" fill="#111827">14.86万</text>
+    <text x="42" y="764" class="small" fill="#111827">1小时</text><text x="102" y="764" class="small" fill="#111827">120.4万</text><text x="174" y="764" class="small" fill="#111827">90.8万</text><text x="250" y="764" class="small" fill="#111827">29.6万</text>
+    <use href="#nav"/>
+  </g>
+</svg>

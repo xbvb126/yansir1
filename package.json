@@ -1,0 +1,39 @@
+{
+  "name": "coin-anomaly-radar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "pg": "^8.11.0",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.8.0"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "prototype": "node server.js",
+    "env:local": "node infra/create-local-env.mjs",
+    "dev:web": "npm run dev -w apps/web -- --host 0.0.0.0 --port 3200",
+    "dev:api": "node infra/run-api.mjs",
+    "dev:strategy": ".venv\\Scripts\\python.exe -m uvicorn app.main:app --app-dir services/strategy --host 0.0.0.0 --port 8000",
+    "build:web": "npm run build -w apps/web",
+    "build:api": "npm run build -w apps/api",
+    "db:up": "docker compose -f infra/docker-compose.yml up -d",
+    "db:schema": "node infra/migrate.mjs schema",
+    "db:seed": "node infra/migrate.mjs seed",
+    "db:setup": "node infra/migrate.mjs setup",
+    "db:verify": "node infra/migrate.mjs verify",
+    "smoke": "node infra/smoke.mjs",
+    "test:entitlements": "npm run test:entitlements -w apps/api",
+    "test:web:entitlements": "npm run test:entitlements -w apps/web",
+    "test:e2e:plans": "npm run test:e2e:plans -w apps/api",
+    "test:ci-config": "node tests/ci-plan-permissions.test.mjs",
+    "test:plans:ci": "npm run test:ci-config && npm run test:entitlements && npm run test:web:entitlements && npm run build:api && npm run build:web && npm run test:e2e:plans",
+    "predeploy:check": "npm run test:plans:ci && node infra/verify-env.mjs",
+    "deploy:prod": "npm run predeploy:check && systemctl restart yansir-api yansir-web yansir-strategy",
+    "deploy:check": "node infra/verify-env.mjs"
+  }
+}
