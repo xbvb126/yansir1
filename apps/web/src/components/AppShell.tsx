@@ -1029,7 +1029,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       ? "当前自选策略信号"
       : "全部历史策略信号"
     : trackingSection === "mine"
-      ? "我的观察信号"
+      ? "我的关注信号"
       : "全市场雷达信号";
   const liveEmptyState = {
     title: strategyStatus === "error" ? "策略信号暂时延迟" : "暂无符合条件的策略信号",
@@ -1144,7 +1144,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       setStrategyStatus("error");
       setStrategyScanSummary("策略服务或 API 暂时不可用，已等待下一轮自动扫描。");
       if (!silent) {
-        onToast("策略追踪扫描失败");
+        onToast("策略信号扫描失败");
       }
     } finally {
       strategyScanInFlight.current = false;
@@ -1290,13 +1290,13 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
-      <section id="radar-tools-panel" className="radar-tools-panel" aria-label="筛选与历史追踪">
+      <section id="radar-tools-panel" className="radar-tools-panel" aria-label="信号筛选与历史">
       <header className="ai-track-header">
         <div className="ai-track-topline">
-          <div className="ai-track-sections" role="tablist" aria-label="追踪类型">
-            <button className={trackingSection === "ai" ? "active" : ""} type="button" onClick={() => setTrackingSection("ai")}>市场追踪</button>
-            <button className={trackingSection === "strategy" ? "active" : ""} type="button" onClick={() => setTrackingSection("strategy")}>策略追踪</button>
-            <button className={trackingSection === "mine" ? "active" : ""} type="button" onClick={() => setTrackingSection("mine")}>我的追踪</button>
+          <div className="ai-track-sections" role="tablist" aria-label="信号来源筛选">
+            <button className={trackingSection === "ai" ? "active" : ""} type="button" onClick={() => setTrackingSection("ai")}>市场异动</button>
+            <button className={trackingSection === "strategy" ? "active" : ""} type="button" onClick={() => setTrackingSection("strategy")}>策略信号</button>
+            <button className={trackingSection === "mine" ? "active" : ""} type="button" onClick={() => setTrackingSection("mine")}>我的关注</button>
           </div>
           <button className="ai-track-search-icon" type="button" aria-label="搜索" onClick={onOpenSearch}><SystemIcon name="search" /></button>
         </div>
@@ -2952,11 +2952,11 @@ function mergeStrategyRecords(records: RadarTimelineRecord[]) {
 }
 
 function strategyStatusText(status: "idle" | "scanning" | "ready" | "no-signal" | "error", watchlistCount: number, lastScan: string) {
-  if (!watchlistCount) return "先在我的追踪里添加币种，系统会实时监听 5m / 15m / 1h / 4h K线收盘信号。";
+  if (!watchlistCount) return "先在我的关注里添加币种，系统会实时监听 5m / 15m / 1h / 4h K线收盘信号。";
   if (status === "scanning") return `正在检查 ${watchlistCount} 个追踪币种的实时K线信号`;
   if (status === "ready") return `实时多空信号已更新${lastScan ? `，最近信号 ${lastScan}` : ""}`;
   if (status === "no-signal") return `当前暂无新的 Pine V6 标准信号${lastScan ? `，最近信号 ${lastScan}` : ""}`;
-  if (status === "error") return "策略追踪实时监听异常，请稍后重试。";
+  if (status === "error") return "策略信号实时监听异常，请稍后重试。";
   return `实时监听中，覆盖 ${watchlistCount} 个币种的 5m / 15m / 1h / 4h。`;
 }
 
@@ -2974,8 +2974,8 @@ function strategyHistorySummaryText(scans: StrategyScanAlertResponse["scan"][]) 
 }
 
 function strategyEmptyText(status: "idle" | "scanning" | "ready" | "no-signal" | "error", summary: string) {
-  if (status === "scanning") return "策略追踪正在检查实时K线事件。";
-  if (status === "error") return summary || "策略追踪实时监听异常，请检查策略服务是否运行。";
+  if (status === "scanning") return "策略信号正在检查实时K线事件。";
+  if (status === "error") return summary || "策略信号实时监听异常，请检查策略服务是否运行。";
   if (status === "no-signal") return summary || "当前暂无新的 Pine V6 标准多空信号。";
   return summary || "实时监听中，有新的多空信号才会显示。";
 }

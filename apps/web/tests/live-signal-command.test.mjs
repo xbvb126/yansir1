@@ -31,6 +31,36 @@ assert.doesNotMatch(
   /radarToolsOpen|radar-tools-disclosure|aria-expanded=\{radarToolsOpen\}/,
   "radar tracking tools should not use an extra disclosure row",
 );
+assert.match(
+  appShellSource,
+  /useState<"ai" \| "strategy" \| "mine">\("strategy"\)/,
+  "radar should default to strategy signals",
+);
+assert.match(
+  appShellSource,
+  />策略信号<\/button>/,
+  "radar should label the primary strategy source as strategy signals",
+);
+assert.match(
+  appShellSource,
+  />市场异动<\/button>/,
+  "radar should label market tracking as market movement",
+);
+assert.match(
+  appShellSource,
+  />我的关注<\/button>/,
+  "radar should label personal tracking as watchlist focus",
+);
+assert.doesNotMatch(
+  appShellSource,
+  />市场追踪<\/button>|>策略追踪<\/button>|>我的追踪<\/button>|aria-label="追踪类型"/,
+  "radar source filters should avoid duplicate tracking labels",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /策略追踪扫描失败|策略追踪实时监听|我的追踪里添加币种/,
+  "radar status copy should avoid the duplicate tracking terminology",
+);
 assert.doesNotMatch(
   appShellSource,
   /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,
