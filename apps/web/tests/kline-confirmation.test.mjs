@@ -78,6 +78,12 @@ assert.ok(confirmedLong.summary.length > 0);
 assert.equal(typeof confirmedLong.bands.at(-1).time, "number");
 assert.equal(typeof confirmedLong.bands.at(-1).mid, "number");
 assert.ok(confirmedLong.evidence.some((item) => item.key === "close-stability" && item.status === "pass"));
+assert.ok(confirmedLong.evidence.every((item) => typeof item.detail === "string" && item.detail.length > 0));
+assert.ok(confirmedLong.evidence.every((item) => !("message" in item)));
+assert.equal(
+  confirmedLong.evidence.find((item) => item.key === "close-stability")?.detail,
+  "2 of the last 2 closes held beyond the signal price"
+);
 
 const noSignal = classifyKlineSignal({ candles: upCandles(), signal: null });
 assert.equal(noSignal.state, "no-signal");

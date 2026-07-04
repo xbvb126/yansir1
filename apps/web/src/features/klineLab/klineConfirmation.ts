@@ -49,7 +49,7 @@ export type KlineEvidence = {
   weight: number;
   score: number;
   value: number;
-  message: string;
+  detail: string;
 };
 
 export type KlineConfirmationResult = {
@@ -399,7 +399,7 @@ function evidence(
   status: KlineEvidenceStatus,
   weight: number,
   value: number,
-  message: string
+  detail: string
 ): KlineEvidence {
   return {
     key,
@@ -408,7 +408,7 @@ function evidence(
     weight,
     score: statusScore(status, weight),
     value,
-    message
+    detail
   };
 }
 
