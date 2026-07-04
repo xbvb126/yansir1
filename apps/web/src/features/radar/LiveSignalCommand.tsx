@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from "react";
 import type { LiveSignal, LiveSignalFilter, SignalFact, StrategyListeningStatus } from "./liveSignalModel";
-import { buildSelectedSignalFacts, filterLiveSignals, formatSignalTime, sortLiveSignals } from "./liveSignalModel";
+import { buildSelectedSignalFacts, filterLiveSignals, formatDirectionLabel, formatSignalStatus, formatSignalTime, sortLiveSignals } from "./liveSignalModel";
 
 type LiveSignalCommandProps = {
   signals: LiveSignal[];
@@ -41,16 +41,16 @@ type SelectedSignalPanelProps = {
 };
 
 const filters: Array<{ value: LiveSignalFilter; label: string }> = [
-  { value: "now", label: "Now" },
-  { value: "long", label: "Long" },
-  { value: "risk", label: "Risk" },
-  { value: "watch", label: "Watch" },
+  { value: "now", label: "全部" },
+  { value: "long", label: "做多" },
+  { value: "risk", label: "风险" },
+  { value: "watch", label: "观察" },
 ];
 
 const statusCopy: Record<StrategyListeningStatus, { label: string; text: string }> = {
-  live: { label: "LIVE", text: "Strategy listener active" },
-  degraded: { label: "DEGRADED", text: "Using latest strategy feed" },
-  paused: { label: "PAUSED", text: "Waiting for strategy scan" },
+  live: { label: "监听中", text: "策略监听器正在运行" },
+  degraded: { label: "延迟", text: "正在使用最新策略数据" },
+  paused: { label: "暂停", text: "等待下一轮策略扫描" },
 };
 
 export function LiveSignalCommand({
@@ -80,16 +80,16 @@ export function LiveSignalCommand({
   );
 
   return (
-    <section className="live-command" aria-label="Yansir Crypto realtime signal radar">
+    <section className="live-command" aria-label="Yansir Crypto 实时信号雷达">
       <div className="live-command__header">
         <div>
           <p className="live-command__eyebrow">Yansir Crypto</p>
-          <h1>Realtime Radar</h1>
+          <h1>实时雷达</h1>
         </div>
         <StrategyStatusPanel status={listeningStatus} signalCount={signals.length} />
       </div>
 
-      <div className="live-command__filters" role="tablist" aria-label="Signal filters">
+      <div className="live-command__filters" role="tablist" aria-label="信号筛选">
         {filters.map((filter) => (
           <button
             key={filter.value}
@@ -124,9 +124,9 @@ function StrategyStatusPanel({ status, signalCount }: StrategyStatusPanelProps) 
   const copy = statusCopy[status];
 
   return (
-    <aside className={`live-command__status is-${status}`} aria-label="Strategy listener status">
+    <aside className={`live-command__status is-${status}`} aria-label="策略监听状态">
       <strong>{copy.label}</strong>
-      <span>{signalCount} strategy signals</span>
+      <span>{signalCount} 条策略信号</span>
       <small>{copy.text}</small>
     </aside>
   );
@@ -144,15 +144,15 @@ function RealtimeSignalQueue({
 }: RealtimeSignalQueueProps) {
   if (!signals.length) {
     return (
-      <section className="live-command__queue live-command__empty" aria-label="Realtime signal queue">
-        <strong>Waiting for strategy signals</strong>
-        <span>The radar will light up when the strategy engine emits a signal.</span>
+      <section className="live-command__queue live-command__empty" aria-label="实时信号队列">
+        <strong>等待策略信号</strong>
+        <span>策略引擎发出信号后，雷达会自动点亮。</span>
       </section>
     );
   }
 
   return (
-    <section className="live-command__queue" aria-label="Realtime signal queue">
+    <section className="live-command__queue" aria-label="实时信号队列">
       {signals.map((signal) => {
         const selected = signal.id === selectedSignalId;
 
@@ -165,7 +165,7 @@ function RealtimeSignalQueue({
             >
               <span className="live-command__symbol">
                 <strong>{signal.symbol}</strong>
-                <span className={`live-command__badge is-${signal.tone}`}>{signal.direction.toUpperCase()}</span>
+                <span className={`live-command__badge is-${signal.tone}`}>{formatDirectionLabel(signal.direction)}</span>
               </span>
               <span className="live-command__score">{signal.score}</span>
               <span className="live-command__meta">
@@ -200,21 +200,21 @@ function SelectedSignalPanel({
 }: SelectedSignalPanelProps) {
   if (!signal) {
     return (
-      <aside className={`live-command__selected live-command__selected-empty ${className ?? ""}`.trim()} aria-label="Selected strategy signal">
-        <strong>No signal selected</strong>
-        <span>Waiting for strategy signals</span>
+      <aside className={`live-command__selected live-command__selected-empty ${className ?? ""}`.trim()} aria-label="已选策略信号">
+        <strong>尚未选择信号</strong>
+        <span>等待策略信号</span>
       </aside>
     );
   }
 
   return (
-    <aside className={`live-command__selected ${className ?? ""}`.trim()} aria-label="Selected strategy signal">
+    <aside className={`live-command__selected ${className ?? ""}`.trim()} aria-label="已选策略信号">
       <div className="live-command__selected-head">
         <div>
           <span>{signal.strategyName}</span>
           <strong>{signal.symbol}</strong>
         </div>
-        <em>{signal.status}</em>
+        <em>{formatSignalStatus(signal.status)}</em>
       </div>
 
       <dl className="live-command__facts">
@@ -228,13 +228,13 @@ function SelectedSignalPanel({
 
       <div className="live-command__actions">
         <button type="button" onClick={() => onOpenDetail(signal.id)}>
-          Signal Detail
+          信号详情
         </button>
         <button type="button" onClick={() => onOpenValueClaw(signal.id)}>
-          ValueClaw
+          打开 ValueClaw
         </button>
         <button type="button" onClick={() => onToggleWatch(signal.symbol)}>
-          Watch
+          加入观察
         </button>
       </div>
     </aside>

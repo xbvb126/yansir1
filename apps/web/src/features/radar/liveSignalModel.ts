@@ -53,6 +53,25 @@ export type SignalFact = {
   emphasis?: boolean;
 };
 
+const directionCopy: Record<LiveSignalDirection, string> = {
+  long: "做多",
+  short: "做空",
+  neutral: "观望",
+};
+
+const statusCopy: Record<string, string> = {
+  active: "生效中",
+  ready: "已就绪",
+  scanning: "扫描中",
+  idle: "待命中",
+  "no-signal": "暂无信号",
+  error: "异常",
+  live: "监听中",
+  degraded: "延迟",
+  paused: "暂停",
+  watch: "观察中",
+};
+
 const riskWords = [
   "risk",
   "danger",
@@ -98,10 +117,10 @@ export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal 
     tone: resolveSignalTone(signal),
     score,
     confidence,
-    risk: signal.risk ?? "Strategy risk model",
+    risk: signal.risk ?? "策略风险模型",
     status: signal.status ?? "active",
-    strategyName: signal.strategyName ?? signal.strategy ?? "Yansir Strategy",
-    trigger: signal.trigger ?? signal.reason ?? signal.body ?? signal.title ?? "Strategy trigger confirmed",
+    strategyName: signal.strategyName ?? signal.strategy ?? "Yansir 策略",
+    trigger: signal.trigger ?? signal.reason ?? signal.body ?? signal.title ?? "策略触发已确认",
     generatedAt,
     price: signal.price,
     change24h: signal.change24h,
@@ -126,26 +145,35 @@ export function filterLiveSignals(signals: LiveSignal[], filter: LiveSignalFilte
 
 export function buildSelectedSignalFacts(signal: LiveSignal): SignalFact[] {
   return [
-    { label: "Signal source", value: "Yansir strategy engine", emphasis: true },
-    { label: "Symbol", value: signal.symbol, emphasis: true },
-    { label: "Direction", value: signal.direction.toUpperCase(), emphasis: signal.direction !== "neutral" },
-    { label: "Score", value: `${signal.score}/100`, emphasis: true },
-    { label: "Confidence", value: `${signal.confidence}/100` },
-    { label: "Risk", value: signal.risk },
-    { label: "Trigger", value: signal.trigger },
-    { label: "AI role", value: "Explain and review only; strategy signal remains authoritative." },
+    { label: "信号来源", value: "Yansir 策略引擎", emphasis: true },
+    { label: "币种", value: signal.symbol, emphasis: true },
+    { label: "方向", value: formatDirectionLabel(signal.direction), emphasis: signal.direction !== "neutral" },
+    { label: "策略分", value: `${signal.score}/100`, emphasis: true },
+    { label: "置信度", value: `${signal.confidence}/100` },
+    { label: "风险", value: signal.risk },
+    { label: "触发原因", value: signal.trigger },
+    { label: "AI 边界", value: "仅用于解释和复核；策略信号保持最高优先级。" },
   ];
+}
+
+export function formatDirectionLabel(direction: LiveSignalDirection): string {
+  return directionCopy[direction];
+}
+
+export function formatSignalStatus(status: string): string {
+  const cleanStatus = status.trim().toLowerCase();
+  return statusCopy[cleanStatus] ?? status;
 }
 
 export function formatSignalTime(isoTime: string, now = Date.now()): string {
   const timestamp = Date.parse(isoTime);
-  if (!Number.isFinite(timestamp)) return "time unavailable";
+  if (!Number.isFinite(timestamp)) return "时间未知";
   const diffSeconds = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  if (diffSeconds < 60) return `${diffSeconds}秒前`;
   const diffMinutes = Math.round(diffSeconds / 60);
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  if (diffMinutes < 60) return `${diffMinutes}分钟前`;
   const diffHours = Math.round(diffMinutes / 60);
-  return `${diffHours}h ago`;
+  return `${diffHours}小时前`;
 }
 
 function normalizeGeneratedAt(signal: RawRadarSignal): string {

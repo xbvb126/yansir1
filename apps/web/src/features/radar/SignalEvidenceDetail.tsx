@@ -1,5 +1,5 @@
 import type { LiveSignal, SignalFact } from "./liveSignalModel";
-import { buildSelectedSignalFacts, formatSignalTime } from "./liveSignalModel";
+import { buildSelectedSignalFacts, formatDirectionLabel, formatSignalTime } from "./liveSignalModel";
 
 type SignalEvidenceDetailProps = {
   signal: LiveSignal;
@@ -19,42 +19,41 @@ export function SignalEvidenceDetail({
   const facts = buildSelectedSignalFacts(signal);
 
   return (
-    <section className="signal-evidence" aria-label={`${signal.symbol} strategy signal evidence`}>
+    <section className="signal-evidence" aria-label={`${signal.symbol} 策略信号证据`}>
       <header className="signal-evidence__header">
-        <button type="button" className="signal-evidence__back" onClick={onBack} aria-label="Back to realtime radar">
-          Back
+        <button type="button" className="signal-evidence__back" onClick={onBack} aria-label="返回实时雷达">
+          返回
         </button>
         <div>
           <p>{signal.strategyName}</p>
           <h1>{signal.symbol}</h1>
         </div>
-        <strong>{signal.direction.toUpperCase()}</strong>
+        <strong>{formatDirectionLabel(signal.direction)}</strong>
       </header>
 
       <div className="signal-evidence__score">
         <span>{signal.score}</span>
         <div>
-          <p>Strategy score</p>
+          <p>策略评分</p>
           <small>{formatSignalTime(signal.generatedAt, now)}</small>
         </div>
       </div>
 
       <EvidenceList facts={facts} />
 
-      <section className="signal-evidence__ai-boundary" aria-label="AI role">
-        <h2>AI Review Boundary</h2>
+      <section className="signal-evidence__ai-boundary" aria-label="AI 角色边界">
+        <h2>AI 复核边界</h2>
         <p>
-          AI can summarize evidence, compare risk, and prepare ValueClaw context. It does not create or override
-          the strategy signal.
+          AI 可以汇总证据、比较风险，并准备 ValueClaw 上下文；它不会创建或覆盖策略信号。
         </p>
       </section>
 
       <footer className="signal-evidence__actions">
         <button type="button" onClick={() => onOpenValueClaw(signal.id)}>
-          Open ValueClaw
+          打开 ValueClaw
         </button>
         <button type="button" onClick={() => onToggleWatch(signal.symbol)}>
-          Watch Symbol
+          加入观察
         </button>
       </footer>
     </section>

@@ -29,10 +29,10 @@ const baseSignal = module.toLiveSignal(
     direction: "BUY",
     score: 87.2,
     confidence: 91,
-    risk: "controlled",
+    risk: "可控",
     status: "active",
-    strategyName: "Momentum Breakout",
-    trigger: "Volume breakout confirmed",
+    strategyName: "动量突破",
+    trigger: "放量突破已确认",
     generatedAt: "2026-07-04T08:00:00.000Z",
   },
   0,
@@ -49,7 +49,7 @@ const riskSignal = module.toLiveSignal(
     symbol: "ETHUSDT",
     side: "short",
     score: 76,
-    risk: "High risk stop zone",
+    risk: "高风险止损区",
     generatedAt: "2026-07-04T08:01:00.000Z",
   },
   1,
@@ -85,12 +85,13 @@ assert.deepEqual(
 );
 
 const facts = module.buildSelectedSignalFacts(baseSignal);
-assert.equal(facts[0].value, "Yansir strategy engine");
-assert.ok(facts.some((fact) => fact.value.includes("Explain and review only")));
+assert.equal(facts[0].label, "信号来源");
+assert.equal(facts[0].value, "Yansir 策略引擎");
+assert.ok(facts.some((fact) => fact.value.includes("策略信号保持最高优先级")));
 
 assert.equal(
   module.formatSignalTime("2026-07-04T08:00:00.000Z", Date.parse("2026-07-04T08:00:42.000Z")),
-  "42s ago",
+  "42秒前",
 );
 
 await build({
@@ -120,12 +121,15 @@ const markup = renderToStaticMarkup(
   }),
 );
 
-assert.match(markup, /Realtime Radar/);
+assert.match(markup, /实时雷达/);
 assert.match(markup, /Yansir Crypto/);
-assert.match(markup, /Yansir strategy engine/);
-assert.match(markup, /Signal Detail/);
-assert.match(markup, /Explain and review only/);
+assert.match(markup, /Yansir 策略引擎/);
+assert.match(markup, /信号详情/);
+assert.match(markup, /策略信号保持最高优先级/);
+assert.match(markup, /监听中/);
+assert.match(markup, /做空/);
 assert.match(markup, /live-command__row-detail/);
+assert.doesNotMatch(markup, /Realtime Radar|Signal Detail|Signal source|Direction|Confidence|Strategy listener active|strategy signals|s ago|LONG|SHORT|NEUTRAL/);
 
 const selectedRowIndex = markup.indexOf("ETHUSDT");
 const followingRowIndex = markup.indexOf("BTCUSDT");
@@ -158,8 +162,9 @@ const detailMarkup = renderToStaticMarkup(
 );
 
 assert.match(detailMarkup, /BTCUSDT/);
-assert.match(detailMarkup, /Strategy score/);
-assert.match(detailMarkup, /AI Review Boundary/);
-assert.match(detailMarkup, /does not create or override/);
+assert.match(detailMarkup, /策略评分/);
+assert.match(detailMarkup, /AI 复核边界/);
+assert.match(detailMarkup, /不会创建或覆盖策略信号/);
+assert.doesNotMatch(detailMarkup, /Strategy score|AI Review Boundary|does not create or override|Back|Watch Symbol|Open ValueClaw|LONG/);
 
 console.log("live signal command tests passed");

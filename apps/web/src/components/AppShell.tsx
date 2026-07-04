@@ -947,7 +947,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       tone: category.tone,
       score: signal.score,
       direction: signal.direction,
-      strategyName: "Yansir Radar",
+      strategyName: "Yansir 雷达",
       trigger: signal.reason || signal.title,
       risk: category.key === "risk" ? category.label : undefined
     };
@@ -985,7 +985,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       score: record.score,
       risk: record.risk ?? (record.group === "risk" ? record.category : undefined),
       status: trackingSection === "strategy" ? strategyStatus : "active",
-      strategyName: record.strategyName ?? record.tags[2] ?? "Yansir Strategy",
+      strategyName: record.strategyName ?? record.tags[2] ?? "Yansir 策略",
       trigger: record.trigger ?? record.body,
       generatedAt: new Date(timestamp).toISOString()
     }, index);
@@ -1208,7 +1208,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   function handleOpenValueClaw(signalId: string) {
     const signal = liveSignals.find((item) => item.id === signalId);
     if (signal) {
-      onToast(`ValueClaw context ready for ${signal.symbol}`);
+      onToast(`${signal.symbol} 的 ValueClaw 上下文已准备好`);
     }
     onNavigate("claw");
   }
@@ -1223,7 +1223,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       ? normalizedItems.filter((item) => item !== cleanSymbol)
       : [...normalizedItems, cleanSymbol];
     setWatchlistSymbols(nextItems);
-    onToast(isWatched ? `${cleanSymbol} removed from watchlist` : `${cleanSymbol} added to watchlist`);
+    onToast(isWatched ? `${cleanSymbol} 已移出观察列表` : `${cleanSymbol} 已加入观察列表`);
   }
 
   if (selectedDetailSignal) {
