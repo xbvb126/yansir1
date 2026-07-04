@@ -22,6 +22,8 @@ assert.equal(module.normalizeViewParam("valueclaw"), "claw");
 assert.equal(module.normalizeViewParam("alerts"), "signal");
 assert.equal(module.normalizeViewParam("signals"), "radar");
 assert.equal(module.normalizeViewParam("radar"), "radar");
+assert.equal(module.normalizeViewParam("kline-lab"), "kline-lab");
+assert.equal(module.normalizeViewParam("KLINE-LAB"), "kline-lab");
 assert.equal(module.normalizeViewParam("unknown"), "data");
 assert.equal(module.normalizeViewParam(null), "data");
 
