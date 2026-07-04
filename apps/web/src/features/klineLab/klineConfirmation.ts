@@ -1,4 +1,6 @@
-export type KlineDirection = "long" | "short";
+export type KlineDirection = "long" | "short" | "flat";
+
+type ActionableDirection = Exclude<KlineDirection, "flat">;
 
 export type KlineConfirmationState =
   | "no-signal"
@@ -7,11 +9,11 @@ export type KlineConfirmationState =
   | "warning"
   | "invalidated";
 
-export type KlineEvidenceStatus = "pass" | "watch" | "fail";
+export type KlineEvidenceStatus = "pass" | "warn" | "fail" | "neutral";
 
 export type KlineCandle = {
   open_time: number;
-  close_time: number;
+  close_time?: number | null;
   open: number;
   high: number;
   low: number;
@@ -20,16 +22,20 @@ export type KlineCandle = {
 };
 
 export type KlineSignalInput = {
-  direction: KlineDirection;
-  price: number;
+  direction?: KlineDirection | null;
+  price?: number | null;
+  time?: number | string | null;
+  receivedAt?: number | string | null;
   timeframe?: string | null;
   symbol?: string | null;
 };
 
 export type KlineBandPoint = {
+  time: number;
   open_time: number;
-  close_time: number;
+  close_time?: number | null;
   close: number;
+  mid: number;
   basis: number;
   upper: number;
   lower: number;
@@ -48,10 +54,12 @@ export type KlineEvidence = {
 
 export type KlineConfirmationResult = {
   state: KlineConfirmationState;
-  direction: KlineDirection | null;
+  direction: KlineDirection;
   timeframe: "5m" | "15m" | "1h" | "4h";
   signalPrice: number | null;
   score: number;
+  label: string;
+  summary: string;
   evidence: KlineEvidence[];
   bands: KlineBandPoint[];
   validCandleCount: number;
@@ -85,12 +93,12 @@ export function classifyKlineSignal(input: KlineConfirmationInput): KlineConfirm
   const bands = buildBands(candles);
   const signal = input.signal;
   const timeframe = normalizeLabTimeframe(signal?.timeframe);
+  const direction = normalizeSignalDirection(signal?.direction);
 
-  if (!signal || !Number.isFinite(signal.price)) {
-    return result("no-signal", null, timeframe, null, 0, [], bands, candles.length);
+  if (!signal || direction === "flat" || typeof signal.price !== "number" || !Number.isFinite(signal.price)) {
+    return result("no-signal", "flat", timeframe, null, 0, [neutralSignalEvidence()], bands, candles.length);
   }
 
-  const direction = signal.direction;
   const signalPrice = signal.price;
 
   if (candles.length < MIN_CONFIRMATION_CANDLES) {
@@ -125,7 +133,7 @@ export function classifyKlineSignal(input: KlineConfirmationInput): KlineConfirm
 
 function result(
   state: KlineConfirmationState,
-  direction: KlineDirection | null,
+  direction: KlineDirection,
   timeframe: KlineConfirmationResult["timeframe"],
   signalPrice: number | null,
   score: number,
@@ -139,15 +147,56 @@ function result(
     timeframe,
     signalPrice,
     score,
+    label: labelForState(state, direction),
+    summary: summaryForState(state, direction, score, validCandleCount),
     evidence,
     bands,
     validCandleCount
   };
 }
 
+function normalizeSignalDirection(direction: KlineSignalInput["direction"]): KlineDirection {
+  return direction === "long" || direction === "short" ? direction : "flat";
+}
+
+function neutralSignalEvidence(): KlineEvidence {
+  return evidence(
+    "signal-presence",
+    "Signal presence",
+    "neutral",
+    0,
+    0,
+    "No actionable long or short signal is available"
+  );
+}
+
+function labelForState(state: KlineConfirmationState, direction: KlineDirection): string {
+  if (state === "no-signal") return "No signal";
+  if (state === "watch-next") return "Watch next candle";
+  if (state === "invalidated") return `${direction.toUpperCase()} invalidated`;
+  if (state === "confirmed") return `${direction.toUpperCase()} confirmed`;
+  return `${direction.toUpperCase()} warning`;
+}
+
+function summaryForState(
+  state: KlineConfirmationState,
+  direction: KlineDirection,
+  score: number,
+  validCandleCount: number
+): string {
+  if (state === "no-signal") return "No actionable long or short setup is available for confirmation.";
+  if (state === "watch-next") {
+    return `Waiting for at least ${MIN_CONFIRMATION_CANDLES} valid candles; ${validCandleCount} are available.`;
+  }
+  if (state === "invalidated") return `${direction.toUpperCase()} setup failed the price and trend-band checks.`;
+  if (state === "confirmed") return `${direction.toUpperCase()} setup confirmed with a ${score}/100 candle score.`;
+  return `${direction.toUpperCase()} setup needs caution with a ${score}/100 candle score.`;
+}
+
 function validCandles(candles: KlineCandle[] | null | undefined): KlineCandle[] {
   return (candles ?? []).filter((candle) => {
-    if (!Number.isFinite(candle.open_time) || !Number.isFinite(candle.close_time)) return false;
+    if (!Number.isFinite(candle.open_time)) return false;
+    if (candle.close_time != null && !Number.isFinite(candle.close_time)) return false;
     if (!Number.isFinite(candle.open) || !Number.isFinite(candle.high)) return false;
     if (!Number.isFinite(candle.low) || !Number.isFinite(candle.close)) return false;
     if (candle.high < candle.low) return false;
@@ -175,9 +224,11 @@ function buildBands(candles: KlineCandle[]): KlineBandPoint[] {
 
     const width = atr * BAND_MULTIPLIER;
     return {
+      time: candle.open_time,
       open_time: candle.open_time,
       close_time: candle.close_time,
       close: candle.close,
+      mid: ema,
       basis: ema,
       upper: ema + width,
       lower: ema - width,
@@ -195,7 +246,7 @@ function trueRange(candle: KlineCandle, previousClose: number): number {
 }
 
 function trendBandEvidence(
-  direction: KlineDirection,
+  direction: ActionableDirection,
   candles: KlineCandle[],
   bands: KlineBandPoint[]
 ): KlineEvidence {
@@ -216,7 +267,7 @@ function trendBandEvidence(
   if (alignedSlope && alignedCount >= 4) {
     status = "pass";
   } else if (guarded && alignedCount >= 2) {
-    status = "watch";
+    status = "warn";
   }
 
   return evidence(
@@ -230,7 +281,7 @@ function trendBandEvidence(
 }
 
 function closeStabilityEvidence(
-  direction: KlineDirection,
+  direction: ActionableDirection,
   candles: KlineCandle[],
   signalPrice: number,
   atr: number
@@ -252,7 +303,7 @@ function closeStabilityEvidence(
   if (stableCount === 2 && movedForward) {
     status = "pass";
   } else if (stableCount >= 1 || adverseDistance <= 0.35) {
-    status = "watch";
+    status = "warn";
   }
 
   return evidence(
@@ -265,7 +316,7 @@ function closeStabilityEvidence(
   );
 }
 
-function bodyQualityEvidence(direction: KlineDirection, candles: KlineCandle[]): KlineEvidence {
+function bodyQualityEvidence(direction: ActionableDirection, candles: KlineCandle[]): KlineEvidence {
   const rangeTotal = candles.reduce((total, candle) => total + candle.high - candle.low, 0);
   const bodyTotal = candles.reduce((total, candle) => total + Math.abs(candle.close - candle.open), 0);
   const bodyRatio = rangeTotal > 0 ? bodyTotal / rangeTotal : 0;
@@ -277,7 +328,7 @@ function bodyQualityEvidence(direction: KlineDirection, candles: KlineCandle[]):
   if (bodyRatio >= 0.45 && directionalCount >= 3) {
     status = "pass";
   } else if (bodyRatio >= 0.32 && directionalCount >= 2) {
-    status = "watch";
+    status = "warn";
   }
 
   return evidence(
@@ -290,7 +341,7 @@ function bodyQualityEvidence(direction: KlineDirection, candles: KlineCandle[]):
   );
 }
 
-function wickRiskEvidence(direction: KlineDirection, candles: KlineCandle[]): KlineEvidence {
+function wickRiskEvidence(direction: ActionableDirection, candles: KlineCandle[]): KlineEvidence {
   const rangeTotal = candles.reduce((total, candle) => total + candle.high - candle.low, 0);
   const riskyWickTotal = candles.reduce((total, candle) => {
     if (direction === "long") return total + candle.high - Math.max(candle.open, candle.close);
@@ -302,7 +353,7 @@ function wickRiskEvidence(direction: KlineDirection, candles: KlineCandle[]): Kl
   if (wickRatio <= 0.25) {
     status = "pass";
   } else if (wickRatio <= 0.4) {
-    status = "watch";
+    status = "warn";
   }
 
   return evidence(
@@ -316,7 +367,7 @@ function wickRiskEvidence(direction: KlineDirection, candles: KlineCandle[]): Kl
 }
 
 function atrDistanceEvidence(
-  direction: KlineDirection,
+  direction: ActionableDirection,
   lastClose: number,
   signalPrice: number,
   atr: number
@@ -329,7 +380,7 @@ function atrDistanceEvidence(
   if (distance >= 0 && distance <= 1.5) {
     status = "pass";
   } else if (distance > -0.25 && distance <= 2.5) {
-    status = "watch";
+    status = "warn";
   }
 
   return evidence(
@@ -363,12 +414,12 @@ function evidence(
 
 function statusScore(status: KlineEvidenceStatus, weight: number): number {
   if (status === "pass") return weight;
-  if (status === "watch") return weight * 0.55;
+  if (status === "warn") return weight * 0.55;
   return 0;
 }
 
 function isInvalidated(
-  direction: KlineDirection,
+  direction: ActionableDirection,
   lastClose: number,
   previousClose: number,
   signalPrice: number,

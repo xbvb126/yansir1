@@ -71,11 +71,43 @@ const confirmedLong = classifyKlineSignal({
 assert.equal(confirmedLong.state, "confirmed");
 assert.equal(confirmedLong.direction, "long");
 assert.ok(confirmedLong.score >= 75);
+assert.equal(typeof confirmedLong.label, "string");
+assert.equal(typeof confirmedLong.summary, "string");
+assert.ok(confirmedLong.label.length > 0);
+assert.ok(confirmedLong.summary.length > 0);
+assert.equal(typeof confirmedLong.bands.at(-1).time, "number");
+assert.equal(typeof confirmedLong.bands.at(-1).mid, "number");
 assert.ok(confirmedLong.evidence.some((item) => item.key === "close-stability" && item.status === "pass"));
 
 const noSignal = classifyKlineSignal({ candles: upCandles(), signal: null });
 assert.equal(noSignal.state, "no-signal");
+assert.equal(noSignal.direction, "flat");
 assert.equal(noSignal.score, 0);
+assert.ok(noSignal.evidence.some((item) => item.status === "neutral"));
+
+const flatSignal = classifyKlineSignal({
+  candles: upCandles(),
+  signal: { direction: "flat", price: 121.5, timeframe: "5m", time: null, receivedAt: null }
+});
+assert.equal(flatSignal.state, "no-signal");
+assert.equal(flatSignal.direction, "flat");
+assert.equal(flatSignal.score, 0);
+assert.ok(flatSignal.evidence.every((item) => item.status === "neutral"));
+
+const missingPrice = classifyKlineSignal({
+  candles: upCandles(),
+  signal: { direction: "long", timeframe: "5m" }
+});
+assert.equal(missingPrice.state, "no-signal");
+assert.equal(missingPrice.direction, "flat");
+
+const optionalCloseTime = classifyKlineSignal({
+  candles: upCandles().map(({ close_time, ...item }) => item),
+  signal: { direction: "long", price: 121.5, timeframe: "5m" }
+});
+assert.equal(optionalCloseTime.validCandleCount, 20);
+assert.equal(optionalCloseTime.state, "confirmed");
+assert.ok(optionalCloseTime.bands.every((item) => Number.isFinite(item.time) && Number.isFinite(item.mid)));
 
 const weakLong = classifyKlineSignal({
   candles: [
@@ -88,6 +120,7 @@ const weakLong = classifyKlineSignal({
 });
 assert.equal(weakLong.state, "warning");
 assert.ok(weakLong.evidence.some((item) => item.key === "body-quality" && item.status === "fail"));
+assert.ok(weakLong.evidence.every((item) => ["pass", "warn", "fail", "neutral"].includes(item.status)));
 
 const waitingLong = classifyKlineSignal({
   candles: upCandles().slice(0, 4),
