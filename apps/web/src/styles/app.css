@@ -17658,11 +17658,6 @@ body {
   padding: 0 0 16px;
 }
 
-.live-command__evidence-shell {
-  display: grid;
-  margin-top: 14px;
-}
-
 .signal-evidence {
   display: flex;
   min-height: auto;

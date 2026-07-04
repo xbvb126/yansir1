@@ -10,7 +10,7 @@ type LiveSignalCommandProps = {
   now?: number;
   onFilterChange: (filter: LiveSignalFilter) => void;
   onSelectSignal: (signalId?: string) => void;
-  onOpenDetail: (signalId: string) => void;
+  onOpenDetail: (symbol: string) => void;
   onOpenValueClaw: (signalId: string) => void;
   onToggleWatch: (symbol: string) => void;
 };
@@ -26,7 +26,7 @@ type RealtimeSignalQueueProps = {
   selectedFacts: SignalFact[];
   now: number;
   onSelectSignal: (signalId?: string) => void;
-  onOpenDetail: (signalId: string) => void;
+  onOpenDetail: (symbol: string) => void;
   onOpenValueClaw: (signalId: string) => void;
   onToggleWatch: (symbol: string) => void;
 };
@@ -35,7 +35,7 @@ type SelectedSignalPanelProps = {
   className?: string;
   signal?: LiveSignal;
   facts: SignalFact[];
-  onOpenDetail: (signalId: string) => void;
+  onOpenDetail: (symbol: string) => void;
   onOpenValueClaw: (signalId: string) => void;
   onToggleWatch: (symbol: string) => void;
 };
@@ -232,8 +232,8 @@ function SelectedSignalPanel({
       </dl>
 
       <div className="live-command__actions">
-        <button type="button" onClick={() => onOpenDetail(signal.id)}>
-          信号详情
+        <button type="button" onClick={() => onOpenDetail(signal.symbol)}>
+          币种详情
         </button>
         <button type="button" onClick={() => onOpenValueClaw(signal.id)}>
           打开 ValueClaw

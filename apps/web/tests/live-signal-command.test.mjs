@@ -12,15 +12,26 @@ const detailOutfile = join(process.cwd(), "tmp-tests", "SignalEvidenceDetail.mjs
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
+const liveSignalCommandSource = readFileSync(join(process.cwd(), "src/features/radar/LiveSignalCommand.tsx"), "utf8");
 assert.doesNotMatch(
   appShellSource,
   /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,
   "signal evidence should not replace the full radar page",
 );
+assert.doesNotMatch(
+  appShellSource,
+  /radarDetailSignalId|selectedDetailSignal|live-command__evidence-shell|SignalEvidenceDetail/,
+  "signal detail action should open the symbol detail page instead of a separate evidence panel",
+);
 assert.match(
   appShellSource,
-  /selectedDetailSignal\s*&&\s*\(/,
-  "signal evidence should render inline while keeping radar context",
+  /function handleOpenSignalDetail\(symbol: string\)[\s\S]*onOpenSymbol\(signal\.symbol\)/,
+  "radar signal detail action should route through the existing symbol detail page",
+);
+assert.match(
+  liveSignalCommandSource,
+  /onOpenDetail\(signal\.symbol\)/,
+  "inline signal detail button should pass the signal symbol",
 );
 
 await build({
@@ -139,7 +150,7 @@ const collapsedMarkup = renderToStaticMarkup(
 assert.match(collapsedMarkup, /实时雷达/);
 assert.match(collapsedMarkup, /ETHUSDT/);
 assert.doesNotMatch(collapsedMarkup, /live-command__row-detail/);
-assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|信号详情/);
+assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|币种详情/);
 
 const markup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
@@ -159,7 +170,7 @@ const markup = renderToStaticMarkup(
 assert.match(markup, /实时雷达/);
 assert.match(markup, /Yansir Crypto/);
 assert.match(markup, /Yansir 策略引擎/);
-assert.match(markup, /信号详情/);
+assert.match(markup, /币种详情/);
 assert.match(markup, /策略信号保持最高优先级/);
 assert.match(markup, /监听中/);
 assert.match(markup, /做空/);

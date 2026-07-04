@@ -2,7 +2,6 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
-import { SignalEvidenceDetail } from "../features/radar/SignalEvidenceDetail";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { toLiveSignal } from "../features/radar/liveSignalModel";
 import { BottomNav, ViewName } from "./BottomNav";
@@ -904,7 +903,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
   const [activeLiveFilter, setActiveLiveFilter] = useState<LiveSignalFilter>("now");
   const [selectedLiveSignalId, setSelectedLiveSignalId] = useState<string | undefined>();
-  const [radarDetailSignalId, setRadarDetailSignalId] = useState<string | undefined>();
   const [ruleSettingsOpen, setRuleSettingsOpen] = useState(false);
   const [upgradePrompt, setUpgradePrompt] = useState<{ title: string; desc: string } | null>(null);
   const [radarWindow, setRadarWindow] = useState<"4H" | "8H" | "24H">("8H");
@@ -990,10 +988,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       generatedAt: new Date(timestamp).toISOString()
     }, index);
   }), [filteredSignals, scanBaseTime, strategyStatus, trackingSection]);
-  const selectedDetailSignal = useMemo(
-    () => liveSignals.find((signal) => signal.id === radarDetailSignalId),
-    [liveSignals, radarDetailSignalId]
-  );
   const listeningStatus: StrategyListeningStatus = strategyStatus === "error"
     ? "degraded"
     : strategyStatus === "idle" || strategyStatus === "no-signal"
@@ -1012,12 +1006,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     const timer = window.setInterval(() => setScanNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (radarDetailSignalId && !liveSignals.some((signal) => signal.id === radarDetailSignalId)) {
-      setRadarDetailSignalId(undefined);
-    }
-  }, [liveSignals, radarDetailSignalId]);
 
   useEffect(() => {
     strategyScheduleStarted.current = false;
@@ -1213,6 +1201,13 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     onNavigate("claw");
   }
 
+  function handleOpenSignalDetail(symbol: string) {
+    const signal = liveSignals.find((item) => item.symbol === symbol);
+    if (signal) {
+      onOpenSymbol(signal.symbol);
+    }
+  }
+
   function handleToggleWatchSymbol(symbol: string) {
     const cleanSymbol = normalizeDisplaySymbol(symbol);
     if (!cleanSymbol) return;
@@ -1326,21 +1321,10 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         now={scanNow}
         onFilterChange={setActiveLiveFilter}
         onSelectSignal={setSelectedLiveSignalId}
-        onOpenDetail={setRadarDetailSignalId}
+        onOpenDetail={handleOpenSignalDetail}
         onOpenValueClaw={handleOpenValueClaw}
         onToggleWatch={handleToggleWatchSymbol}
       />
-      {selectedDetailSignal && (
-        <section className="live-command__evidence-shell">
-          <SignalEvidenceDetail
-            signal={selectedDetailSignal}
-            now={scanNow}
-            onBack={() => setRadarDetailSignalId(undefined)}
-            onOpenValueClaw={handleOpenValueClaw}
-            onToggleWatch={handleToggleWatchSymbol}
-          />
-        </section>
-      )}
       <section className="live-command__history-actions">
         {trackingSection === "strategy" && strategyPagination?.hasMore && (
           <button className="scan-history-more" type="button" disabled={strategyLoadingMore} onClick={loadMoreStrategySignals}>
