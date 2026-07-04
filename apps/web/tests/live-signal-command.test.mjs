@@ -20,6 +20,21 @@ assert.ok(
   liveCommandIndex < trackingHeaderIndex,
   "realtime strategy radar should render before tracking filters",
 );
+assert.match(
+  appShellSource,
+  /const \[radarToolsOpen, setRadarToolsOpen\] = useState\(false\)/,
+  "radar tracking tools should be collapsed by default",
+);
+assert.match(
+  appShellSource,
+  /aria-expanded=\{radarToolsOpen\}/,
+  "radar tracking disclosure should expose expanded state",
+);
+assert.match(
+  appShellSource,
+  /\{radarToolsOpen && \(\s*<section id="radar-tools-panel" className="radar-tools-panel"/,
+  "radar tracking tools should render only after expansion",
+);
 assert.doesNotMatch(
   appShellSource,
   /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,

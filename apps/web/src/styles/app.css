@@ -17492,6 +17492,59 @@ body {
   margin-top: 12px;
 }
 
+.radar-tools-disclosure {
+  margin-top: 10px;
+}
+
+.radar-tools-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  color: #1d2b44;
+  background: #ffffff;
+  border: 1px solid #dbe6f4;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(20, 41, 70, 0.06);
+  text-align: left;
+}
+
+.radar-tools-toggle span,
+.radar-tools-toggle strong {
+  min-width: 0;
+}
+
+.radar-tools-toggle span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.radar-tools-toggle strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radar-tools-toggle .system-icon {
+  width: 18px;
+  height: 18px;
+  color: #7b8aa3;
+  transform: rotate(90deg);
+}
+
+.radar-tools-toggle[aria-expanded="true"] .system-icon {
+  transform: rotate(270deg);
+}
+
 .radar-tools-panel .ai-track-header {
   margin-top: 0;
 }
