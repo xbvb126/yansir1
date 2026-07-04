@@ -1297,19 +1297,6 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
-      <LiveSignalCommand
-        signals={liveSignals}
-        selectedSignalId={selectedLiveSignalId}
-        activeFilter={activeLiveFilter}
-        listeningStatus={listeningStatus}
-        emptyState={liveEmptyState}
-        now={scanNow}
-        onFilterChange={setActiveLiveFilter}
-        onSelectSignal={setSelectedLiveSignalId}
-        onOpenDetail={handleOpenSignalDetail}
-        onOpenValueClaw={handleOpenValueClaw}
-        onToggleWatch={handleToggleWatchSymbol}
-      />
       <section className="radar-tools-disclosure" aria-label="筛选与历史追踪入口">
         <button
           className="radar-tools-toggle"
@@ -1426,6 +1413,19 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         )}
       </section>
       )}
+      <LiveSignalCommand
+        signals={liveSignals}
+        selectedSignalId={selectedLiveSignalId}
+        activeFilter={activeLiveFilter}
+        listeningStatus={listeningStatus}
+        emptyState={liveEmptyState}
+        now={scanNow}
+        onFilterChange={setActiveLiveFilter}
+        onSelectSignal={setSelectedLiveSignalId}
+        onOpenDetail={handleOpenSignalDetail}
+        onOpenValueClaw={handleOpenValueClaw}
+        onToggleWatch={handleToggleWatchSymbol}
+      />
       {upgradePrompt && <UpgradeModal title={upgradePrompt.title} desc={upgradePrompt.desc} onClose={() => setUpgradePrompt(null)} onUpgrade={() => { setUpgradePrompt(null); onNavigate(currentUser.id ? "plans" : "login"); }} actionLabel={currentUser.id ? "查看会员套餐" : "去登录"} />}
     </section>
   );
