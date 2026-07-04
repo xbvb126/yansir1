@@ -17463,6 +17463,33 @@ body {
   color: var(--text);
 }
 
+.live-command__empty ul {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-command__empty li {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.live-command__empty-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.live-command__empty-actions button:first-child {
+  color: #ffffff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
 .live-command__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

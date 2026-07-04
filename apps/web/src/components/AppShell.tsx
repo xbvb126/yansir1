@@ -994,6 +994,46 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     : strategyStatus === "idle" || strategyStatus === "no-signal"
       ? "paused"
       : "live";
+  const liveFilterLabels: Record<LiveSignalFilter, string> = {
+    now: "全部",
+    long: "做多",
+    risk: "风险",
+    watch: "观察"
+  };
+  const latestScanLabel = strategyLastScan || formatClockTime(scanBaseTime);
+  const activeScopeLabel = trackingSection === "strategy"
+    ? strategyHistoryMode === "current"
+      ? "当前自选策略信号"
+      : "全部历史策略信号"
+    : trackingSection === "mine"
+      ? "我的观察信号"
+      : "全市场雷达信号";
+  const liveEmptyState = {
+    title: strategyStatus === "error" ? "策略信号暂时延迟" : "暂无符合条件的策略信号",
+    description:
+      strategyStatus === "error"
+        ? "正在使用最近一次策略数据，新的信号恢复后会自动更新。"
+        : "策略引擎没有发现满足当前筛选条件的信号，这不是 AI 判断缺席。",
+    meta: [
+      "信号来源：Yansir 策略引擎",
+      `最近扫描：${latestScanLabel}`,
+      `当前范围：${activeScopeLabel}`,
+      `当前筛选：${liveFilterLabels[activeLiveFilter]}`
+    ],
+    primaryAction: {
+      label: "放宽筛选",
+      onClick: () => {
+        setActiveLiveFilter("now");
+        setSignalFilter("all");
+        setStrategyFilterDirection("all");
+        setStrategyFilterMinScore("all");
+      }
+    },
+    secondaryAction: {
+      label: "查看扫描记录",
+      onClick: () => setTrackingSection("strategy")
+    }
+  };
 
   useEffect(() => {
     try {
@@ -1229,6 +1269,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         selectedSignalId={selectedLiveSignalId}
         activeFilter={activeLiveFilter}
         listeningStatus={listeningStatus}
+        emptyState={liveEmptyState}
         now={scanNow}
         onFilterChange={setActiveLiveFilter}
         onSelectSignal={setSelectedLiveSignalId}

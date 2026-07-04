@@ -140,11 +140,37 @@ assert.equal(componentModule.resolveNextSelectedSignalId(undefined, riskSignal.i
 assert.equal(componentModule.resolveNextSelectedSignalId(riskSignal.id, riskSignal.id), undefined);
 assert.equal(componentModule.resolveNextSelectedSignalId(baseSignal.id, riskSignal.id), riskSignal.id);
 
+const emptyState = {
+  title: "暂无符合条件的策略信号",
+  description: "策略引擎没有发现满足当前筛选条件的信号，这不是 AI 判断缺席。",
+  meta: ["信号来源：Yansir 策略引擎", "最近扫描：14:30"],
+};
+
+const emptyMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: [],
+    activeFilter: "now",
+    listeningStatus: "paused",
+    emptyState,
+    now: Date.parse("2026-07-04T08:03:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(emptyMarkup, /暂无符合条件的策略信号/);
+assert.match(emptyMarkup, /Yansir 策略引擎/);
+assert.doesNotMatch(emptyMarkup, /AI 生成|AI 发出信号/);
+
 const collapsedMarkup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
     signals: [baseSignal, riskSignal, watchSignal],
     activeFilter: "now",
     listeningStatus: "live",
+    emptyState,
     now: Date.parse("2026-07-04T08:03:00.000Z"),
     onFilterChange: () => undefined,
     onSelectSignal: () => undefined,
@@ -165,6 +191,7 @@ const markup = renderToStaticMarkup(
     selectedSignalId: riskSignal.id,
     activeFilter: "now",
     listeningStatus: "live",
+    emptyState,
     now: Date.parse("2026-07-04T08:03:00.000Z"),
     onFilterChange: () => undefined,
     onSelectSignal: () => undefined,

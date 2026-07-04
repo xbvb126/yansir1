@@ -7,12 +7,27 @@ type LiveSignalCommandProps = {
   selectedSignalId?: string;
   activeFilter: LiveSignalFilter;
   listeningStatus: StrategyListeningStatus;
+  emptyState: LiveSignalEmptyState;
   now?: number;
   onFilterChange: (filter: LiveSignalFilter) => void;
   onSelectSignal: (signalId?: string) => void;
   onOpenDetail: (symbol: string) => void;
   onOpenValueClaw: (signalId: string) => void;
   onToggleWatch: (symbol: string) => void;
+};
+
+type LiveSignalEmptyState = {
+  title: string;
+  description: string;
+  meta: string[];
+  primaryAction?: {
+    label: string;
+    onClick: () => void;
+  };
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+  };
 };
 
 type StrategyStatusPanelProps = {
@@ -24,6 +39,7 @@ type RealtimeSignalQueueProps = {
   signals: LiveSignal[];
   selectedSignalId?: string;
   selectedFacts: SignalFact[];
+  emptyState: LiveSignalEmptyState;
   now: number;
   onSelectSignal: (signalId?: string) => void;
   onOpenDetail: (symbol: string) => void;
@@ -58,6 +74,7 @@ export function LiveSignalCommand({
   selectedSignalId,
   activeFilter,
   listeningStatus,
+  emptyState,
   now = Date.now(),
   onFilterChange,
   onSelectSignal,
@@ -110,6 +127,7 @@ export function LiveSignalCommand({
           signals={visibleSignals}
           selectedSignalId={selectedSignal?.id}
           selectedFacts={selectedFacts}
+          emptyState={emptyState}
           now={now}
           onSelectSignal={onSelectSignal}
           onOpenDetail={onOpenDetail}
@@ -137,6 +155,7 @@ function RealtimeSignalQueue({
   signals,
   selectedSignalId,
   selectedFacts,
+  emptyState,
   now,
   onSelectSignal,
   onOpenDetail,
@@ -145,9 +164,28 @@ function RealtimeSignalQueue({
 }: RealtimeSignalQueueProps) {
   if (!signals.length) {
     return (
-      <section className="live-command__queue live-command__empty" aria-label="实时信号队列">
-        <strong>等待策略信号</strong>
-        <span>策略引擎发出信号后，雷达会自动点亮。</span>
+      <section className="live-command__queue live-command__empty" aria-label="实时信号队列" aria-live="polite">
+        <strong>{emptyState.title}</strong>
+        <span>{emptyState.description}</span>
+        <ul>
+          {emptyState.meta.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+        {(emptyState.primaryAction || emptyState.secondaryAction) && (
+          <div className="live-command__empty-actions">
+            {emptyState.primaryAction && (
+              <button type="button" onClick={emptyState.primaryAction.onClick}>
+                {emptyState.primaryAction.label}
+              </button>
+            )}
+            {emptyState.secondaryAction && (
+              <button type="button" onClick={emptyState.secondaryAction.onClick}>
+                {emptyState.secondaryAction.label}
+              </button>
+            )}
+          </div>
+        )}
       </section>
     );
   }
