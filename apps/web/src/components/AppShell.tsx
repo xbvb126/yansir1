@@ -1545,6 +1545,7 @@ function AlertsPage({ entitlements, onNavigate, onOpenSearch, onOpenSymbol, onTo
   const dailyPushLimit = Number(entitlements.maxPushPerDay ?? entitlements.dailySignalQuota ?? 0);
   const remainingDailyPushes = Math.max(0, Number(entitlements.remainingDailyPushes ?? dailyPushLimit - dailyPushUsed));
   const dailyPushPct = dailyPushLimit > 0 ? Math.min(100, Math.round((dailyPushUsed / dailyPushLimit) * 100)) : 0;
+  const alertMinScore = Number(entitlements.minAlertScore || 80);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookMasked, setWebhookMasked] = useState("");
   const [pushEnabled, setPushEnabled] = useState(Boolean(entitlements.feishuAlerts));
@@ -1631,7 +1632,15 @@ function AlertsPage({ entitlements, onNavigate, onOpenSearch, onOpenSymbol, onTo
           {signals.slice(0, 5).map((signal) => (
             <article className={`alert-queue-row ${signal.score >= 70 ? "long" : ""}`} key={signal.id || signal.symbol}>
               <CoinIcon symbol={signal.symbol} />
-              <div><strong>{signal.symbol} {signal.title}</strong><span>评分 {signal.score} · {signal.confidence || "实时行情"} · {signal.time || "--"}</span></div>
+              <div>
+                <strong>{signal.symbol} {signal.title}</strong>
+                <span>评分 {signal.score} · {signal.confidence || "实时行情"} · {signal.time || "--"}</span>
+                <div className="alert-source-row">
+                  <span>实时雷达</span>
+                  <span>Yansir 策略引擎</span>
+                  <span>{signal.score >= alertMinScore ? "已同步" : "观察中"}</span>
+                </div>
+              </div>
               <em>{scoreLabel(signal.score)}</em>
             </article>
           ))}
