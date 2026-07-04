@@ -40,6 +40,21 @@ assert.match(
   /onOpenDetail\(signal\.symbol\)/,
   "inline signal detail button should pass the signal symbol",
 );
+assert.match(
+  appShellSource,
+  /valueClawSignalContext/,
+  "ValueClaw should receive selected radar signal context",
+);
+assert.match(
+  appShellSource,
+  /onOpenValueClawSignal\(signal\)/,
+  "radar ValueClaw action should pass the selected strategy signal",
+);
+assert.match(
+  appShellSource,
+  /ValueClaw 仅解释和复核该策略信号/,
+  "ValueClaw context copy should preserve the strategy-signal boundary",
+);
 
 await build({
   entryPoints: ["src/features/radar/liveSignalModel.ts"],

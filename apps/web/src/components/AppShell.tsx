@@ -4,7 +4,7 @@ import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { normalizeViewParam } from "../lib/viewRouting";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
-import { toLiveSignal } from "../features/radar/liveSignalModel";
+import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
 import { BottomNav, ViewName } from "./BottomNav";
 
 type Direction = "long" | "short" | "flat";
@@ -408,6 +408,7 @@ export function AppShell() {
   const [paymentProviders, setPaymentProviders] = useState<PaymentProviderSummary>(() => initialCache?.paymentProviders || emptyPaymentProviders);
   const [searchOpen, setSearchOpen] = useState(false);
   const [routePrompt, setRoutePrompt] = useState<RouteAccessPrompt | null>(null);
+  const [valueClawSignalContext, setValueClawSignalContext] = useState<LiveSignal | null>(null);
 
   useEffect(() => {
     void refreshAll();
@@ -539,6 +540,7 @@ export function AppShell() {
   }
 
   function navigate(nextView: ViewName) {
+    setValueClawSignalContext(null);
     const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
     if (prompt) {
       setRoutePrompt(prompt);
@@ -554,8 +556,15 @@ export function AppShell() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function openValueClawFromSignal(signal: LiveSignal) {
+    navigate("claw");
+    setValueClawSignalContext(signal);
+    showToast(`${signal.symbol} 的 ValueClaw 复核上下文已准备好`);
+  }
+
   function openSymbol(symbol: string) {
     const clean = normalizeDisplaySymbol(symbol);
+    setValueClawSignalContext(null);
     setView("data");
     setSelectedSymbol(clean);
     replaceAppUrl("data", clean);
@@ -642,13 +651,13 @@ export function AppShell() {
         <DataPage currentUser={currentUser} entitlements={entitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "radar" && (
-        <RadarPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        <RadarPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
-        <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "account" && (
         <AccountPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} onLogout={logout} onOpenSearch={() => setSearchOpen(true)} onNavigate={navigate} />
@@ -898,7 +907,7 @@ function DataPage({ currentUser, entitlements, factors, onNavigate, onOpenSearch
   );
 }
 
-function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onToast, rows, signals, stats }: { currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
+function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onOpenValueClawSignal, onToast, rows, signals, stats }: { currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
   const [trackingSection, setTrackingSection] = useState<"ai" | "strategy" | "mine">("strategy");
   const [signalFilter, setSignalFilter] = useState<"all" | "surge" | "opportunity" | "risk">("all");
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
@@ -1237,7 +1246,8 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   function handleOpenValueClaw(signalId: string) {
     const signal = liveSignals.find((item) => item.id === signalId);
     if (signal) {
-      onToast(`${signal.symbol} 的 ValueClaw 上下文已准备好`);
+      onOpenValueClawSignal(signal);
+      return;
     }
     onNavigate("claw");
   }
@@ -1715,7 +1725,7 @@ function PushPerformanceCard({ onOpenSymbol, signals }: { onOpenSymbol: (symbol:
   );
 }
 
-function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, onToast, rows, signals }: { currentUser: CurrentUser; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[] }) {
+function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, onToast, rows, signalContext, signals }: { currentUser: CurrentUser; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signalContext?: LiveSignal | null; signals: Signal[] }) {
   const [input, setInput] = useState("帮我分析 BTC 当前有没有机会，风险点在哪里");
   const [loading, setLoading] = useState(false);
   const [clawStatus, setClawStatus] = useState<ClawStatus | null>(null);
@@ -1730,6 +1740,11 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
     }
   ]);
   const llmOnline = Boolean(clawStatus?.llmConfigured);
+
+  useEffect(() => {
+    if (!signalContext) return;
+    setInput(`复核 ${signalContext.symbol} 这条 Yansir 策略信号：方向 ${formatDirectionLabel(signalContext.direction)}，策略分 ${signalContext.score}/100，主要风险 ${signalContext.risk}`);
+  }, [signalContext]);
 
   useEffect(() => {
     if (!signedIn) return;
@@ -1789,6 +1804,18 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
         <button type="button" onClick={() => setInput("今天有哪些机会币？")}>今天有哪些机会币？</button>
         <button type="button" onClick={() => setInput("哪些信号风险最高？")}>哪些信号风险最高？</button>
       </div>
+      {signalContext && (
+        <section className="polished-card claw-signal-context" aria-label="当前策略信号上下文">
+          <div className="claw-signal-context__head">
+            <span>来自实时雷达</span>
+            <strong>{signalContext.symbol}</strong>
+            <em>{formatDirectionLabel(signalContext.direction)} · {signalContext.score}/100</em>
+          </div>
+          <p>{signalContext.trigger}</p>
+          <small>ValueClaw 仅解释和复核该策略信号，不创建或覆盖交易方向；策略信号仍保持最高优先级。</small>
+          <button type="button" onClick={() => onOpenSymbol(signalContext.symbol)}>查看币种详情</button>
+        </section>
+      )}
       <section className="polished-card claw-chat-card">
         {messages.map((message, index) =>
           message.role === "user" ? (

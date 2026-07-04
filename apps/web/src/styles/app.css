@@ -15708,6 +15708,75 @@ body {
   color: var(--pd-red);
 }
 
+.claw-signal-context {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-color: #bfd1ea;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f9ff 100%);
+}
+
+.claw-signal-context__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.claw-signal-context span,
+.claw-signal-context small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.claw-signal-context strong {
+  color: var(--pd-ink);
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.claw-signal-context em {
+  justify-self: end;
+  color: var(--blue);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.claw-signal-context p {
+  margin: 0;
+  color: #1f2a3a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.claw-signal-context button {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--blue);
+  background: #ffffff;
+  border: 1px solid #cbdaf0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+@media (max-width: 420px) {
+  .claw-signal-context__head {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .claw-signal-context__head span {
+    grid-column: 1 / -1;
+  }
+}
+
 .radar-filter-rail {
   padding: 2px 0;
 }
