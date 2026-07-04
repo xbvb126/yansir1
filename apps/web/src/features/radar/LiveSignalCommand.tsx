@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import type { LiveSignal, LiveSignalFilter, SignalFact, StrategyListeningStatus } from "./liveSignalModel";
 import { buildSelectedSignalFacts, filterLiveSignals, formatSignalTime, sortLiveSignals } from "./liveSignalModel";
 
@@ -23,11 +23,16 @@ type StrategyStatusPanelProps = {
 type RealtimeSignalQueueProps = {
   signals: LiveSignal[];
   selectedSignalId?: string;
+  selectedFacts: SignalFact[];
   now: number;
   onSelectSignal: (signalId: string) => void;
+  onOpenDetail: (signalId: string) => void;
+  onOpenValueClaw: (signalId: string) => void;
+  onToggleWatch: (symbol: string) => void;
 };
 
 type SelectedSignalPanelProps = {
+  className?: string;
   signal?: LiveSignal;
   facts: SignalFact[];
   onOpenDetail: (signalId: string) => void;
@@ -103,13 +108,9 @@ export function LiveSignalCommand({
         <RealtimeSignalQueue
           signals={visibleSignals}
           selectedSignalId={selectedSignal?.id}
+          selectedFacts={selectedFacts}
           now={now}
           onSelectSignal={onSelectSignal}
-        />
-
-        <SelectedSignalPanel
-          signal={selectedSignal}
-          facts={selectedFacts}
           onOpenDetail={onOpenDetail}
           onOpenValueClaw={onOpenValueClaw}
           onToggleWatch={onToggleWatch}
@@ -131,7 +132,16 @@ function StrategyStatusPanel({ status, signalCount }: StrategyStatusPanelProps) 
   );
 }
 
-function RealtimeSignalQueue({ signals, selectedSignalId, now, onSelectSignal }: RealtimeSignalQueueProps) {
+function RealtimeSignalQueue({
+  signals,
+  selectedSignalId,
+  selectedFacts,
+  now,
+  onSelectSignal,
+  onOpenDetail,
+  onOpenValueClaw,
+  onToggleWatch,
+}: RealtimeSignalQueueProps) {
   if (!signals.length) {
     return (
       <section className="live-command__queue live-command__empty" aria-label="Realtime signal queue">
@@ -143,29 +153,45 @@ function RealtimeSignalQueue({ signals, selectedSignalId, now, onSelectSignal }:
 
   return (
     <section className="live-command__queue" aria-label="Realtime signal queue">
-      {signals.map((signal) => (
-        <button
-          key={signal.id}
-          type="button"
-          className={`live-command__row is-${signal.tone} ${signal.id === selectedSignalId ? "is-active" : ""}`.trim()}
-          onClick={() => onSelectSignal(signal.id)}
-        >
-          <span className="live-command__symbol">
-            <strong>{signal.symbol}</strong>
-            <span className={`live-command__badge is-${signal.tone}`}>{signal.direction.toUpperCase()}</span>
-          </span>
-          <span className="live-command__score">{signal.score}</span>
-          <span className="live-command__meta">
-            {signal.strategyName} · {formatSignalTime(signal.generatedAt, now)}
-          </span>
-          <p className="live-command__trigger">{signal.trigger}</p>
-        </button>
-      ))}
+      {signals.map((signal) => {
+        const selected = signal.id === selectedSignalId;
+
+        return (
+          <Fragment key={signal.id}>
+            <button
+              type="button"
+              className={`live-command__row is-${signal.tone} ${selected ? "is-active" : ""}`.trim()}
+              onClick={() => onSelectSignal(signal.id)}
+            >
+              <span className="live-command__symbol">
+                <strong>{signal.symbol}</strong>
+                <span className={`live-command__badge is-${signal.tone}`}>{signal.direction.toUpperCase()}</span>
+              </span>
+              <span className="live-command__score">{signal.score}</span>
+              <span className="live-command__meta">
+                {signal.strategyName} · {formatSignalTime(signal.generatedAt, now)}
+              </span>
+              <p className="live-command__trigger">{signal.trigger}</p>
+            </button>
+            {selected && (
+              <SelectedSignalPanel
+                className="live-command__row-detail"
+                signal={signal}
+                facts={selectedFacts}
+                onOpenDetail={onOpenDetail}
+                onOpenValueClaw={onOpenValueClaw}
+                onToggleWatch={onToggleWatch}
+              />
+            )}
+          </Fragment>
+        );
+      })}
     </section>
   );
 }
 
 function SelectedSignalPanel({
+  className,
   signal,
   facts,
   onOpenDetail,
@@ -174,7 +200,7 @@ function SelectedSignalPanel({
 }: SelectedSignalPanelProps) {
   if (!signal) {
     return (
-      <aside className="live-command__selected live-command__selected-empty" aria-label="Selected strategy signal">
+      <aside className={`live-command__selected live-command__selected-empty ${className ?? ""}`.trim()} aria-label="Selected strategy signal">
         <strong>No signal selected</strong>
         <span>Waiting for strategy signals</span>
       </aside>
@@ -182,7 +208,7 @@ function SelectedSignalPanel({
   }
 
   return (
-    <aside className="live-command__selected" aria-label="Selected strategy signal">
+    <aside className={`live-command__selected ${className ?? ""}`.trim()} aria-label="Selected strategy signal">
       <div className="live-command__selected-head">
         <div>
           <span>{signal.strategyName}</span>

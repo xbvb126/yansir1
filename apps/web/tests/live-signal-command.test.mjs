@@ -108,7 +108,7 @@ const componentModule = await import(pathToFileURL(componentOutfile).href);
 const markup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
     signals: [baseSignal, riskSignal, watchSignal],
-    selectedSignalId: "sig-btc",
+    selectedSignalId: riskSignal.id,
     activeFilter: "now",
     listeningStatus: "live",
     now: Date.parse("2026-07-04T08:03:00.000Z"),
@@ -125,6 +125,15 @@ assert.match(markup, /Yansir Crypto/);
 assert.match(markup, /Yansir strategy engine/);
 assert.match(markup, /Signal Detail/);
 assert.match(markup, /Explain and review only/);
+assert.match(markup, /live-command__row-detail/);
+
+const selectedRowIndex = markup.indexOf("ETHUSDT");
+const followingRowIndex = markup.indexOf("BTCUSDT");
+const inlineDetailIndex = markup.indexOf("live-command__row-detail");
+assert.ok(selectedRowIndex > -1, "selected signal row should render");
+assert.ok(followingRowIndex > -1, "following signal row should render");
+assert.ok(inlineDetailIndex > selectedRowIndex, "signal detail should render after the selected row");
+assert.ok(inlineDetailIndex < followingRowIndex, "signal detail should render before the next signal row");
 
 await build({
   entryPoints: ["src/features/radar/SignalEvidenceDetail.tsx"],

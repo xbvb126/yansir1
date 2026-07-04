@@ -17480,6 +17480,35 @@ body {
   background: #fff3f5;
 }
 
+.live-command__row.is-active {
+  border-bottom-color: transparent;
+}
+
+.live-command__row-detail {
+  margin: 0;
+  border-width: 0 0 1px;
+  border-color: #edf1f6;
+  border-radius: 0;
+  box-shadow: none;
+  animation: live-row-detail-slide 180ms ease-out;
+}
+
+.live-command__row-detail:last-child {
+  border-bottom: 0;
+}
+
+@keyframes live-row-detail-slide {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .live-command__symbol {
   display: flex;
   align-items: center;
