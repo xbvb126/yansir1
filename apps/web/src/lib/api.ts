@@ -27,7 +27,7 @@ export function setAuthToken(token: string) {
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     headers: apiHeaders()
   });
   if (!response.ok) {
@@ -37,7 +37,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     headers: apiHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(body)
@@ -49,7 +49,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "PATCH",
     headers: apiHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(body)
@@ -61,7 +61,7 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "PUT",
     headers: apiHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(body)
@@ -70,6 +70,10 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
     throw new Error(`PUT ${path} failed: ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+export function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
 }
 
 function apiHeaders(baseHeaders: Record<string, string> = {}) {

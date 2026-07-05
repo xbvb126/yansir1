@@ -40,6 +40,7 @@ export type KlineBandPoint = {
   upper: number;
   lower: number;
   atr: number;
+  candleIndex?: number;
 };
 
 export type KlineEvidence = {
@@ -162,20 +163,20 @@ function normalizeSignalDirection(direction: KlineSignalInput["direction"]): Kli
 function neutralSignalEvidence(): KlineEvidence {
   return evidence(
     "signal-presence",
-    "Signal presence",
+    "K线质量参考",
     "neutral",
     0,
     0,
-    "No actionable long or short signal is available"
+    "未提供后端策略输出上下文，仅展示K线质量参考"
   );
 }
 
 function labelForState(state: KlineConfirmationState, direction: KlineDirection): string {
-  if (state === "no-signal") return "No signal";
-  if (state === "watch-next") return "Watch next candle";
-  if (state === "invalidated") return `${direction.toUpperCase()} invalidated`;
-  if (state === "confirmed") return `${direction.toUpperCase()} confirmed`;
-  return `${direction.toUpperCase()} warning`;
+  if (state === "no-signal") return "K线质量参考";
+  if (state === "watch-next") return "K线质量样本不足";
+  if (state === "invalidated") return `${directionLabel(direction)} K线质量偏弱`;
+  if (state === "confirmed") return `${directionLabel(direction)} K线质量较好`;
+  return `${directionLabel(direction)} K线质量观察`;
 }
 
 function summaryForState(
@@ -184,13 +185,19 @@ function summaryForState(
   score: number,
   validCandleCount: number
 ): string {
-  if (state === "no-signal") return "No actionable long or short setup is available for confirmation.";
+  if (state === "no-signal") return "暂无后端策略输出上下文，当前结果仅作为K线质量参考。";
   if (state === "watch-next") {
-    return `Waiting for at least ${MIN_CONFIRMATION_CANDLES} valid candles; ${validCandleCount} are available.`;
+    return `至少需要 ${MIN_CONFIRMATION_CANDLES} 根有效K线，当前已有 ${validCandleCount} 根。`;
   }
-  if (state === "invalidated") return `${direction.toUpperCase()} setup failed the price and trend-band checks.`;
-  if (state === "confirmed") return `${direction.toUpperCase()} setup confirmed with a ${score}/100 candle score.`;
-  return `${direction.toUpperCase()} setup needs caution with a ${score}/100 candle score.`;
+  if (state === "invalidated") return `${directionLabel(direction)}方向K线质量偏弱，价格与趋势带结构需要复核。`;
+  if (state === "confirmed") return `${directionLabel(direction)}方向K线质量较好，K线评分 ${score}/100。`;
+  return `${directionLabel(direction)}方向K线质量需要观察，K线评分 ${score}/100。`;
+}
+
+function directionLabel(direction: KlineDirection): string {
+  if (direction === "long") return "做多";
+  if (direction === "short") return "做空";
+  return "观望";
 }
 
 function validCandles(candles: KlineCandle[] | null | undefined): KlineCandle[] {
@@ -272,7 +279,7 @@ function trendBandEvidence(
 
   return evidence(
     "trend-band",
-    "Trend band",
+    "K线趋势带",
     status,
     25,
     alignedCount,
@@ -308,7 +315,7 @@ function closeStabilityEvidence(
 
   return evidence(
     "close-stability",
-    "Close stability",
+    "收盘稳定性",
     status,
     25,
     stableCount,
@@ -333,7 +340,7 @@ function bodyQualityEvidence(direction: ActionableDirection, candles: KlineCandl
 
   return evidence(
     "body-quality",
-    "Body quality",
+    "K线实体质量",
     status,
     20,
     round(bodyRatio),
@@ -358,7 +365,7 @@ function wickRiskEvidence(direction: ActionableDirection, candles: KlineCandle[]
 
   return evidence(
     "wick-risk",
-    "Opposite wick risk",
+    "反向影线风险",
     status,
     15,
     round(wickRatio),
@@ -385,7 +392,7 @@ function atrDistanceEvidence(
 
   return evidence(
     "atr-distance",
-    "ATR distance",
+    "ATR 距离",
     status,
     15,
     round(distance),
