@@ -20,14 +20,9 @@ class PineLayer:
 
 class PinePositionState:
     def __init__(self) -> None:
-        self.layers: list[PineLayer] = []
-        self.position_size = 0.0
-        self.position_avg_price = 0.0
         self.consecutive_losses = 0
         self.last_loss_bar: int | None = None
-        self.long_weak_reduce_done = False
-        self.short_weak_reduce_done = False
-        self.position_peak_size = 0.0
+        self._reset_flat_state()
 
     @property
     def open_trades(self) -> int:
@@ -58,6 +53,14 @@ class PinePositionState:
             raise ValueError("no open position")
         if current_side != side:
             raise ValueError("requested side does not match current position")
+
+    def _reset_flat_state(self) -> None:
+        self.layers: list[PineLayer] = []
+        self.position_size = 0.0
+        self.position_avg_price = 0.0
+        self.position_peak_size = 0.0
+        self.long_weak_reduce_done = False
+        self.short_weak_reduce_done = False
 
     def entry(
         self,
@@ -94,10 +97,7 @@ class PinePositionState:
             side == "short" and exit_price > self.position_avg_price
         )
         self.consecutive_losses = self.consecutive_losses + 1 if is_loss else 0
-        self.layers = []
-        self.position_size = 0.0
-        self.position_avg_price = 0.0
-        self.position_peak_size = 0.0
+        self._reset_flat_state()
         return PineOrderEvent(action=f"close_{side}", side=side, price=exit_price)
 
     def reduce(self, action: str, side: str, price: float, reduce_pct: float) -> PineOrderEvent:
@@ -125,6 +125,5 @@ class PinePositionState:
             if layer.qty * remaining_factor > 0
         ]
         if self.position_size == 0:
-            self.position_avg_price = 0.0
-            self.position_peak_size = 0.0
+            self._reset_flat_state()
         return PineOrderEvent(action=action, side=side, price=price, reduce_pct=reduce_pct)

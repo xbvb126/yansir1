@@ -82,6 +82,25 @@ class PinePositionStateTest(unittest.TestCase):
         self.assertEqual(state.position_avg_price, 0)
         self.assertEqual(state.position_peak_size, 0)
         self.assertEqual(state.current_position, "空仓")
+        self.assertFalse(state.long_weak_reduce_done)
+
+    def test_partial_reduce_then_close_clears_weak_reduce_flag(self):
+        state = PinePositionState()
+        state.entry("base long", "long", price=100.0, qty_pct=10.0, atr=2.0)
+        state.reduce("reduce_long", side="long", price=106.0, reduce_pct=25.0)
+
+        state.close_side("long", exit_price=107.0)
+
+        self.assertEqual(state.position_size, 0)
+        self.assertFalse(state.long_weak_reduce_done)
+
+    def test_full_short_reduce_clears_weak_reduce_flag(self):
+        state = self._short_state()
+
+        state.reduce("reduce_short", side="short", price=104.0, reduce_pct=100.0)
+
+        self.assertEqual(state.position_size, 0)
+        self.assertFalse(state.short_weak_reduce_done)
 
     def test_opposite_side_entry_without_close_raises_value_error(self):
         state = PinePositionState()
