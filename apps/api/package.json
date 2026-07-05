@@ -8,6 +8,7 @@
     "start": "node dist/main.js",
     "lint": "eslint src --ext .ts",
     "test:entitlements": "npm run build && node tests/plan-entitlements.test.mjs",
+    "test:strategy-contract": "node tests/strategy-contract.test.mjs",
     "test:e2e:plans": "node tests/plan-e2e.test.mjs"
   },
   "dependencies": {

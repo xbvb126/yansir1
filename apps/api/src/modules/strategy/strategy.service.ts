@@ -2173,32 +2173,40 @@ function nextRunAt(intervalSeconds: number) {
 function mapStrategySignals(result: StrategyRunResult) {
   const emittedAt = result.bar_time ? new Date(result.bar_time) : new Date();
 
-  return result.signals.map((signal) => ({
-    symbol: normalizeOneSymbol(result.symbol),
-    timeframe: result.timeframe,
-    direction: signal.side,
-    signalType: signal.type,
-    title: signal.title,
-    reason: buildReason(result, signal),
-    price: signal.price,
-    score: scoreFromSignal(signal.score_impact),
-    source: "strategy-service",
-    dedupeKey: [
-      result.symbol,
-      result.timeframe,
-      result.bar_time ?? emittedAt.getTime(),
-      signal.type,
-      signal.side
-    ].join(":"),
-    emittedAt,
-    payload: {
-      engine: signal.engine,
-      marketState: result.market_state,
-      metrics: result.metrics,
-      stopPrice: signal.stop_price ?? null,
-      takeProfitPrice: signal.take_profit_price ?? null
-    }
-  }));
+  return result.signals.map((signal) => {
+    const reducePct = signal.reduce_pct ?? (signal as { reducePct?: number | null }).reducePct ?? null;
+
+    return {
+      symbol: normalizeOneSymbol(result.symbol),
+      timeframe: result.timeframe,
+      direction: signal.side,
+      signalType: signal.type,
+      title: signal.title,
+      reason: buildReason(result, signal),
+      price: signal.price,
+      score: scoreFromSignal(signal.score_impact),
+      source: "strategy-service",
+      dedupeKey: [
+        result.symbol,
+        result.timeframe,
+        result.bar_time ?? emittedAt.getTime(),
+        signal.type,
+        signal.side,
+        signal.action ?? signal.side
+      ].join(":"),
+      emittedAt,
+      payload: {
+        engine: signal.engine,
+        action: signal.action ?? null,
+        reducePct,
+        marketState: result.market_state,
+        diagnostics: result.diagnostics ?? null,
+        metrics: result.metrics,
+        stopPrice: signal.stop_price ?? null,
+        takeProfitPrice: signal.take_profit_price ?? null
+      }
+    };
+  });
 }
 
 function extractAlertCandidates(scan: ScanResult, minScore: number) {
@@ -2213,6 +2221,8 @@ function extractAlertCandidates(scan: ScanResult, minScore: number) {
         price: String(signal.price),
         score: scoreFromSignal(signal.score_impact),
         direction: signal.side,
+        action: signal.action ?? undefined,
+        signalType: signal.type,
         title: signal.title,
         reason: buildReason(item.result, signal),
         time: formatBarTime(item.result.bar_time),
@@ -2231,12 +2241,20 @@ function buildReason(result: StrategyRunResult, signal: StrategyRunResult["signa
   const atrPct = result.metrics.atr_pct;
   const rsi = result.metrics.rsi;
   const stateText = strategyStateLabel(result.market_state);
+  const action = signal.action ?? "";
   const directionText = signal.side === "short" ? "多头趋势切换为空头趋势" : "空头趋势切换为多头趋势";
   const details = [
     `状态：${stateText}`,
     typeof atrPct === "number" ? `ATR波动：${atrPct.toFixed(2)}%` : null,
     typeof rsi === "number" ? `RSI：${rsi.toFixed(2)}` : null
   ].filter(Boolean);
+
+  if (action === "reduce_long") {
+    return `${signal.title}: reduce_long reduce long exposure, not a fresh short entry; ${details.join("; ")}`;
+  }
+  if (action === "reduce_short") {
+    return `${signal.title}: reduce_short reduce short exposure, not a fresh long entry; ${details.join("; ")}`;
+  }
 
   return `${signal.title}：${directionText}，由连续两根K线突破 EMD 趋势带并通过实体、影线、RSI 和 ATR 过滤确认。${details.join("，")}。`;
 }
