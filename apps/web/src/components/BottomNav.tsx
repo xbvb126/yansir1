@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type ViewName = "data" | "claw" | "radar" | "signal" | "account" | "login" | "register" | "admin" | "plans" | "team";
+export type ViewName = "data" | "claw" | "radar" | "signal" | "account" | "login" | "register" | "admin" | "plans" | "team" | "kline-lab";
 
 const items: Array<{ label: string; view: Extract<ViewName, "data" | "claw" | "radar" | "signal" | "account"> }> = [
   { label: "数据", view: "data" },

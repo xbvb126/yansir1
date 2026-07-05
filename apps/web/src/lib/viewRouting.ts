@@ -18,6 +18,7 @@ const canonicalViews = new Set<ViewName>([
   "admin",
   "plans",
   "team",
+  "kline-lab",
 ]);
 
 export function normalizeViewParam(value: string | null | undefined): ViewName {

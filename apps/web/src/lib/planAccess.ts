@@ -106,6 +106,16 @@ export function routeAccessPrompt<View extends string>(view: View, user: Fronten
     }
   }
 
+  if (view === "kline-lab" && user.role !== "admin") {
+    return {
+      title: signedIn ? "当前账号无内部验信权限" : "登录管理员账号",
+      desc: signedIn ? "内部验信实验室仅管理员可访问。请切换管理员账号，或返回账号中心。" : "内部验信实验室仅管理员账号可访问，请先登录。",
+      targetView: (signedIn ? "account" : "login") as View,
+      fallbackView: "account" as View,
+      actionLabel: signedIn ? "返回我的" : "去登录"
+    };
+  }
+
   if (view === "admin" && user.role !== "admin") {
     return {
       title: signedIn ? "当前账号无后台权限" : "登录管理员账号",

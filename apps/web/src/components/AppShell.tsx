@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { normalizeViewParam } from "../lib/viewRouting";
+import { KlineLabView } from "../features/klineLab/KlineLabView";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
@@ -389,6 +390,15 @@ function writeAppDataCache(cache: AppDataCache) {
   }
 }
 
+function clearAppDataCache() {
+  try {
+    window.localStorage.removeItem(APP_DATA_CACHE_KEY);
+    initialAppDataCache = null;
+  } catch {
+    // Local cache is best-effort only.
+  }
+}
+
 export function AppShell() {
   const initialCache = getInitialAppDataCache();
   const [view, setView] = useState<ViewName>(() => readView());
@@ -401,6 +411,8 @@ export function AppShell() {
   const [factors, setFactors] = useState<Factor[]>(() => initialCache?.factors || []);
   const [marketStats, setMarketStats] = useState<MarketStats>(() => initialCache?.marketStats || { monitoredSymbols: 0, crowdedRisks: 0, liveSources: 0 });
   const [currentUser, setCurrentUser] = useState<CurrentUser>(() => initialCache?.currentUser || emptyUser);
+  const [currentUserVerified, setCurrentUserVerified] = useState(false);
+  const [currentUserVerificationReady, setCurrentUserVerificationReady] = useState(false);
   const [entitlements, setEntitlements] = useState<Entitlements>(() => initialCache?.entitlements || emptyEntitlements);
   const [plans, setPlans] = useState<Plan[]>(() => initialCache?.plans || []);
   const [orders, setOrders] = useState<BillingOrder[]>(() => initialCache?.orders || []);
@@ -410,6 +422,7 @@ export function AppShell() {
   const [routePrompt, setRoutePrompt] = useState<RouteAccessPrompt | null>(null);
   const [valueClawSignalContext, setValueClawSignalContext] = useState<LiveSignal | null>(null);
   const [symbolSignalContext, setSymbolSignalContext] = useState<LiveSignal | null>(null);
+  const authGenerationRef = useRef(0);
 
   useEffect(() => {
     void refreshAll();
@@ -419,6 +432,11 @@ export function AppShell() {
     const onPop = () => {
       const nextView = readView();
       const nextSymbol = readSymbolParam();
+      if (nextView === "kline-lab" && !currentUserVerificationReady) {
+        setView(nextView);
+        setSelectedSymbol(nextSymbol);
+        return;
+      }
       const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
       if (prompt) {
         setRoutePrompt(prompt);
@@ -432,18 +450,20 @@ export function AppShell() {
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [currentUser, entitlements]);
+  }, [currentUser, currentUserVerificationReady, entitlements]);
 
   useEffect(() => {
+    if (view === "kline-lab" && !currentUserVerificationReady) return;
     const prompt = routeAccessPrompt(view, currentUser, entitlements);
     if (!prompt) return;
     setRoutePrompt(prompt);
     setView(prompt.fallbackView);
     setSelectedSymbol("");
     replaceAppUrl(prompt.fallbackView);
-  }, [view, currentUser, entitlements]);
+  }, [view, currentUser, currentUserVerificationReady, entitlements]);
 
   async function refreshAll() {
+    const refreshGeneration = authGenerationRef.current;
     const failed: string[] = [];
     const [signalsRes, marketRes, meRes, plansRes, teamRes, paymentRes] = await Promise.allSettled([
       withClientTimeout(apiGet<{ signals: Signal[] }>("/api/signals"), "signals"),
@@ -483,13 +503,22 @@ export function AppShell() {
       failed.push("行情");
     }
 
-    const nextOrderUser = meRes.status === "fulfilled" ? meRes.value.user : currentUser;
+    const canApplyMeResult = refreshGeneration === authGenerationRef.current;
+    const nextOrderUser = canApplyMeResult && meRes.status === "fulfilled" ? meRes.value.user : currentUser;
     if (meRes.status === "fulfilled") {
       nextCurrentUser = meRes.value.user || emptyUser;
       nextEntitlements = meRes.value.entitlements || emptyEntitlements;
-      setCurrentUser(nextCurrentUser);
-      setEntitlements(nextEntitlements);
+      if (canApplyMeResult) {
+        setCurrentUser(nextCurrentUser);
+        setEntitlements(nextEntitlements);
+        setCurrentUserVerified(true);
+        setCurrentUserVerificationReady(true);
+      }
     } else {
+      if (canApplyMeResult) {
+        setCurrentUserVerified(false);
+        setCurrentUserVerificationReady(true);
+      }
       failed.push("账户");
     }
 
@@ -523,19 +552,21 @@ export function AppShell() {
       failed.push("订单");
     }
 
-    writeAppDataCache({
-      timestamp: Date.now(),
-      signals: nextSignals,
-      marketRows: nextMarketRows,
-      factors: nextFactors,
-      marketStats: nextMarketStats,
-      currentUser: nextCurrentUser,
-      entitlements: nextEntitlements,
-      plans: nextPlans,
-      orders: nextOrders,
-      teamDashboard: nextTeamDashboard,
-      paymentProviders: nextPaymentProviders
-    });
+    if (refreshGeneration === authGenerationRef.current) {
+      writeAppDataCache({
+        timestamp: Date.now(),
+        signals: nextSignals,
+        marketRows: nextMarketRows,
+        factors: nextFactors,
+        marketStats: nextMarketStats,
+        currentUser: nextCurrentUser,
+        entitlements: nextEntitlements,
+        plans: nextPlans,
+        orders: nextOrders,
+        teamDashboard: nextTeamDashboard,
+        paymentProviders: nextPaymentProviders
+      });
+    }
     setDataStatus("ready");
     setDataError(failed.length ? `部分接口连接失败：${failed.join("、")}，已展示本地缓存。` : "");
   }
@@ -597,6 +628,9 @@ export function AppShell() {
   }
 
   async function handleLogin(phone: string, password: string) {
+    authGenerationRef.current += 1;
+    setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/login", { phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
@@ -607,6 +641,9 @@ export function AppShell() {
   }
 
   async function handleRegister(name: string, phone: string, password: string) {
+    authGenerationRef.current += 1;
+    setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/register", { name, phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
@@ -617,10 +654,14 @@ export function AppShell() {
   }
 
   function logout() {
+    authGenerationRef.current += 1;
     setAuthToken("");
     setActiveUserId("");
+    setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     setCurrentUser(emptyUser);
     setEntitlements(emptyEntitlements);
+    clearAppDataCache();
     showToast("已退出当前账号");
     navigate("account");
   }
@@ -645,6 +686,8 @@ export function AppShell() {
   async function payOrder(order: BillingOrder) {
     const response = await apiPost<{ order: BillingOrder; user: CurrentUser }>(`/api/billing/orders/${order.id}/pay`, {});
     setOrders((items) => items.map((item) => (item.id === response.order.id ? response.order : item)));
+    setCurrentUserVerified(false);
+    setCurrentUserVerificationReady(false);
     setCurrentUser(response.user);
     showToast("支付成功，会员权益已更新");
     await refreshAll();
@@ -652,9 +695,10 @@ export function AppShell() {
 
   const rows = marketRows;
   const safeSignals = signals;
-  const isSubPage = ["plans", "team", "admin", "login", "register"].includes(view);
+  const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
   const showBottomNav = !isSubPage;
   const showSymbolDetail = view === "data" && selectedSymbol;
+  const canRenderKlineLab = view === "kline-lab" && currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
 
   return (
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : view}`}>
@@ -680,6 +724,25 @@ export function AppShell() {
         <PlansPage paymentProviders={paymentProviders} plans={plans} orders={orders} currentUser={currentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
       )}
       {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={teamDashboard} currentUser={currentUser} onBack={() => navigate("account")} />}
+      {dataStatus !== "loading" && canRenderKlineLab && <KlineLabView currentUser={currentUser} rows={rows} navigate={navigate} showToast={showToast} />}
+      {dataStatus !== "loading" && view === "kline-lab" && !canRenderKlineLab && (
+        <section className="view active-view kline-lab-view" aria-label="内部页面验证中">
+          <header className="kline-lab-header">
+            <button className="kline-lab-back" type="button" onClick={() => navigate("radar")} aria-label="返回">
+              返回
+            </button>
+            <div className="kline-lab-title">
+              <span>Yansir Internal</span>
+              <h1>K线验信室</h1>
+            </div>
+            <span className="kline-confirmation-badge">验证中</span>
+          </header>
+          <section className="kline-strategy-panel empty" aria-label="管理员权限验证">
+            <strong>内部页面验证中</strong>
+            <p>正在验证管理员权限，验证完成前不会请求策略 inbox。</p>
+          </section>
+        </section>
+      )}
       {dataStatus !== "loading" && view === "login" && <LoginPage onBack={() => navigate("account")} onLogin={handleLogin} onRegister={() => navigate("register")} />}
       {dataStatus !== "loading" && view === "register" && <RegisterPage onBack={() => navigate("login")} onRegister={handleRegister} />}
       {dataError && dataStatus === "ready" && <div className="toast subtle-toast">{dataError}</div>}
@@ -3091,7 +3154,7 @@ function buildScanRecord(symbol: string, row: MarketRow, signal: Signal | undefi
 }
 
 function isViewName(value: string): value is ViewName {
-  return ["data", "claw", "radar", "signal", "account", "login", "register", "admin", "plans", "team"].includes(value);
+  return ["data", "claw", "radar", "signal", "account", "login", "register", "admin", "plans", "team", "kline-lab"].includes(value);
 }
 
 function normalizeDisplaySymbol(symbol: string) {

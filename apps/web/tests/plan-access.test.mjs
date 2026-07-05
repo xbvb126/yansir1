@@ -94,6 +94,9 @@ assert.equal(routeAccessPrompt('team', adminUser, svipEntitlements), null);
 assert.equal(routeAccessPrompt('admin', guest, freeEntitlements)?.targetView, 'login');
 assert.equal(routeAccessPrompt('admin', vipUser, vipEntitlements)?.title, '当前账号无后台权限');
 assert.equal(routeAccessPrompt('admin', adminUser, svipEntitlements), null);
+assert.equal(routeAccessPrompt('kline-lab', guest, freeEntitlements)?.targetView, 'login');
+assert.equal(routeAccessPrompt('kline-lab', vipUser, vipEntitlements)?.title, '当前账号无内部验信权限');
+assert.equal(routeAccessPrompt('kline-lab', adminUser, svipEntitlements), null);
 assert.equal(routeAccessPrompt('claw', guest, freeEntitlements)?.targetView, 'login');
 assert.equal(routeAccessPrompt('claw', freeUser, freeEntitlements), null);
 
