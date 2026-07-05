@@ -43,13 +43,13 @@ class IndicatorParityTest(unittest.TestCase):
         self.assertAlmostEqual(rsi[2], 100 / 3)
         self.assertAlmostEqual(rsi[3], 900 / 11)
 
-    def test_bollinger_width_and_pivots_are_available(self):
+    def test_bollinger_width_and_pivots_emit_on_confirmation_bar(self):
         closes = [10, 11, 12, 13, 14]
         widths = bollinger_width_pct_series(closes, 3, 2)
         self.assertIsNone(widths[1])
         self.assertAlmostEqual(widths[-1], 400 * ((2 / 3) ** 0.5) / 13)
-        self.assertEqual(pivot_high_series([1, 3, 2, 5, 4], 1), [None, 3, None, 5, None])
-        self.assertEqual(pivot_low_series([5, 3, 4, 2, 3], 1), [None, 3, None, 2, None])
+        self.assertEqual(pivot_high_series([1, 3, 2, 5, 4], 1), [None, None, 3, None, 5])
+        self.assertEqual(pivot_low_series([5, 3, 4, 2, 3], 1), [None, None, 3, None, 2])
 
 
 if __name__ == "__main__":

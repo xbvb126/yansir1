@@ -118,17 +118,17 @@ def bollinger_width_pct_series(values: Sequence[float], length: int, mult: float
 
 def pivot_high_series(values: Sequence[float], pivot_len: int) -> list[float | None]:
     output: list[float | None] = [None] * len(values)
-    for index in range(pivot_len, len(values) - pivot_len):
-        window = values[index - pivot_len:index + pivot_len + 1]
-        if values[index] >= max(window):
-            output[index] = values[index]
+    for center in range(pivot_len, len(values) - pivot_len):
+        window = values[center - pivot_len:center + pivot_len + 1]
+        if values[center] >= max(window):
+            output[center + pivot_len] = values[center]
     return output
 
 
 def pivot_low_series(values: Sequence[float], pivot_len: int) -> list[float | None]:
     output: list[float | None] = [None] * len(values)
-    for index in range(pivot_len, len(values) - pivot_len):
-        window = values[index - pivot_len:index + pivot_len + 1]
-        if values[index] <= min(window):
-            output[index] = values[index]
+    for center in range(pivot_len, len(values) - pivot_len):
+        window = values[center - pivot_len:center + pivot_len + 1]
+        if values[center] <= min(window):
+            output[center + pivot_len] = values[center]
     return output
