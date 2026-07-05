@@ -64,3 +64,65 @@ def rsi_series(closes: Sequence[float], length: int) -> list[float | None]:
             rs = gain / loss
             output.append(100 - (100 / (1 + rs)))
     return output
+
+
+def dmi_adx_series(highs, lows, closes, length: int, smooth: int):
+    plus_dm = [0.0]
+    minus_dm = [0.0]
+    for index in range(1, len(highs)):
+        up = highs[index] - highs[index - 1]
+        down = lows[index - 1] - lows[index]
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+    tr = true_ranges(highs, lows, closes)
+    tr_rma = rma_series(tr, length)
+    plus_rma = rma_series(plus_dm, length)
+    minus_rma = rma_series(minus_dm, length)
+    plus_di = []
+    minus_di = []
+    dx = []
+    for tr_value, plus_value, minus_value in zip(tr_rma, plus_rma, minus_rma, strict=True):
+        if not tr_value:
+            plus_di.append(0.0)
+            minus_di.append(0.0)
+            dx.append(0.0)
+            continue
+        plus = 100 * (plus_value or 0.0) / tr_value
+        minus = 100 * (minus_value or 0.0) / tr_value
+        denom = plus + minus
+        plus_di.append(plus)
+        minus_di.append(minus)
+        dx.append(0.0 if denom == 0 else 100 * abs(plus - minus) / denom)
+    return plus_di, minus_di, rma_series(dx, smooth)
+
+
+def bollinger_width_pct_series(values, length: int, mult: float):
+    output = []
+    for index in range(len(values)):
+        window = values[max(0, index - length + 1): index + 1]
+        if len(window) < length:
+            output.append(None)
+            continue
+        basis = sum(window) / length
+        variance = sum((item - basis) ** 2 for item in window) / length
+        dev = variance ** 0.5 * mult
+        output.append(None if basis == 0 else (2 * dev) / basis * 100)
+    return output
+
+
+def pivot_high_series(values, pivot_len: int):
+    output = [None] * len(values)
+    for index in range(pivot_len, len(values) - pivot_len):
+        window = values[index - pivot_len:index + pivot_len + 1]
+        if values[index] >= max(window):
+            output[index] = values[index]
+    return output
+
+
+def pivot_low_series(values, pivot_len: int):
+    output = [None] * len(values)
+    for index in range(pivot_len, len(values) - pivot_len):
+        window = values[index - pivot_len:index + pivot_len + 1]
+        if values[index] <= min(window):
+            output[index] = values[index]
+    return output
