@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yansir Radar Expanded UI Comparison</title>
+    <style>
+      :root {
+        --bg: #eaf2fb;
+        --surface: #fbfdff;
+        --line: #dce6f1;
+        --text: #12233a;
+        --muted: #64748b;
+        --blue: #2f6df6;
+        --blue-soft: #eaf2ff;
+        --red: #c7284e;
+        --red-soft: #fff0f4;
+        --green: #04966f;
+        --green-soft: #eafaf4;
+        --amber: #b8860b;
+        --amber-soft: #fff8df;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at 50% 0, #f8fbff 0, var(--bg) 58%, #dce8f5 100%);
+        color: var(--text);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          "Microsoft YaHei",
+          sans-serif;
+        letter-spacing: 0;
+      }
+
+      .comparison {
+        display: grid;
+        grid-template-columns: repeat(2, 390px);
+        gap: 30px;
+        justify-content: center;
+        align-items: start;
+        min-width: 900px;
+        padding: 28px 36px;
+      }
+
+      .phone {
+        position: relative;
+        overflow: hidden;
+        width: 390px;
+        height: 844px;
+        border: 1px solid #cfdae8;
+        border-radius: 28px 28px 0 0;
+        background: var(--surface);
+        box-shadow: 0 28px 60px rgba(31, 52, 76, 0.14);
+      }
+
+      .content {
+        height: calc(100% - 66px);
+        padding: 28px 16px 18px;
+        overflow: hidden;
+      }
+
+      .source-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        align-items: end;
+        height: 48px;
+        margin-bottom: 12px;
+        color: #74839a;
+        font-size: 18px;
+        font-weight: 950;
+      }
+
+      .source-tabs span {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+        border-bottom: 3px solid transparent;
+      }
+
+      .source-tabs .active {
+        color: #0f2440;
+        border-bottom-color: var(--blue);
+      }
+
+      .filter-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .filter-row span {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: #fff;
+        color: #132944;
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .filter-row .active {
+        color: var(--blue);
+        border-color: #b9cef7;
+        background: #edf4ff;
+      }
+
+      .notice {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 66px;
+        gap: 10px;
+        align-items: center;
+        min-height: 66px;
+        margin-bottom: 18px;
+        padding: 12px 12px;
+        border: 1px solid #d6e2f0;
+        background: #eef5ff;
+      }
+
+      .notice strong,
+      .notice span {
+        display: block;
+      }
+
+      .notice strong {
+        margin-bottom: 4px;
+        font-size: 13px;
+        font-weight: 950;
+      }
+
+      .notice span {
+        color: #61728c;
+        font-size: 12px;
+        font-weight: 760;
+        line-height: 1.45;
+      }
+
+      .notice button {
+        min-width: 66px;
+        height: 42px;
+        border: 0;
+        border-radius: 6px;
+        color: #fff;
+        background: var(--blue);
+        font-weight: 950;
+      }
+
+      .list {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .row {
+        position: relative;
+        border-bottom: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .row:last-child {
+        border-bottom: 0;
+      }
+
+      .row-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        padding: 14px 14px 12px;
+      }
+
+      .expanded.strategy {
+        border-left: 4px solid var(--blue);
+      }
+
+      .expanded.market {
+        border-left: 4px solid var(--green);
+      }
+
+      .symbol-line {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .symbol {
+        font-size: 22px;
+        font-weight: 950;
+        line-height: 1;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        height: 18px;
+        padding: 0 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 950;
+        white-space: nowrap;
+      }
+
+      .pill.blue {
+        color: #1358d8;
+        background: var(--blue-soft);
+      }
+
+      .pill.red {
+        color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .pill.green {
+        color: var(--green);
+        background: var(--green-soft);
+      }
+
+      .pill.amber {
+        color: var(--amber);
+        background: var(--amber-soft);
+      }
+
+      .meta {
+        display: block;
+        margin-top: 7px;
+        color: #556982;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .desc {
+        margin: 8px 0 0;
+        color: #253852;
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 1.52;
+      }
+
+      .score,
+      .price-block {
+        min-width: 62px;
+        text-align: right;
+      }
+
+      .score strong,
+      .price-block strong {
+        display: block;
+        color: #111827;
+        font-size: 24px;
+        font-weight: 950;
+        line-height: 1;
+      }
+
+      .score span,
+      .price-block em {
+        display: block;
+        margin-top: 6px;
+        color: #607189;
+        font-size: 11px;
+        font-style: normal;
+        font-weight: 850;
+      }
+
+      .price-block .positive {
+        color: var(--green);
+      }
+
+      .detail {
+        margin: 0 12px 14px;
+        padding: 12px;
+        border: 1px solid #dbe7f5;
+        background: #f8fbff;
+      }
+
+      .detail.strategy-detail {
+        background: linear-gradient(90deg, #f7fbff 0, #fff 66%);
+      }
+
+      .detail.market-detail {
+        background: linear-gradient(90deg, #f4fffa 0, #fff 70%);
+      }
+
+      .detail-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .detail-head strong {
+        font-size: 14px;
+        font-weight: 950;
+      }
+
+      .detail-head button {
+        border: 0;
+        background: transparent;
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .field-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 11px;
+      }
+
+      .field {
+        min-height: 48px;
+        padding: 8px 9px;
+        border: 1px solid #e2eaf4;
+        background: #fff;
+      }
+
+      .field small,
+      .note small {
+        display: block;
+        margin-bottom: 4px;
+        color: #77869a;
+        font-size: 10px;
+        font-weight: 900;
+      }
+
+      .field strong,
+      .note strong {
+        display: block;
+        color: #10233d;
+        font-size: 13px;
+        font-weight: 950;
+        line-height: 1.25;
+      }
+
+      .field strong.blue {
+        color: var(--blue);
+      }
+
+      .field strong.red {
+        color: var(--red);
+      }
+
+      .field strong.green {
+        color: var(--green);
+      }
+
+      .note {
+        margin-bottom: 10px;
+        padding: 9px 10px;
+        border: 1px solid #e3ebf5;
+        background: #fff;
+      }
+
+      .note p {
+        margin: 0;
+        color: #263a53;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.48;
+      }
+
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+      }
+
+      .actions button {
+        min-height: 38px;
+        border: 1px solid #d8e3ef;
+        border-radius: 7px;
+        background: #fff;
+        color: #132944;
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .actions .primary {
+        border-color: var(--blue);
+        background: var(--blue);
+        color: #fff;
+      }
+
+      .actions .market-primary {
+        border-color: var(--green);
+        background: var(--green);
+        color: #fff;
+      }
+
+      .collapsed {
+        opacity: 0.72;
+      }
+
+      .bottom-nav {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        height: 66px;
+        border-top: 1px solid #dce6f1;
+        background: rgba(255, 255, 255, 0.94);
+      }
+
+      .bottom-nav span {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #8292a8;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .bottom-nav .active {
+        color: var(--blue);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="comparison">
+      <section class="phone" aria-label="策略信号展开态">
+        <div class="content">
+          <nav class="source-tabs">
+            <span>市场异动</span>
+            <span class="active">策略信号</span>
+            <span>我的关注</span>
+          </nav>
+
+          <div class="filter-row">
+            <span class="active">全部 648</span>
+            <span>命中 12</span>
+            <span>等待 636</span>
+            <span>风险 3</span>
+          </div>
+
+          <section class="notice">
+            <div>
+              <strong>策略引擎覆盖全市场</strong>
+              <span>命中策略置顶，未命中保持弱化观察</span>
+            </div>
+            <button>规则</button>
+          </section>
+
+          <section class="list">
+            <article class="row expanded strategy">
+              <div class="row-main">
+                <div>
+                  <div class="symbol-line">
+                    <strong class="symbol">BTC</strong>
+                    <span class="pill blue">命中策略</span>
+                    <span class="pill red">做空</span>
+                  </div>
+                  <span class="meta">Yansir 策略引擎 · 5m / 15m 共振</span>
+                  <p class="desc">资金费率偏高，价格突破失败，短线存在多头拥挤风险。</p>
+                </div>
+                <div class="score">
+                  <strong>82</strong>
+                  <span>策略分</span>
+                </div>
+              </div>
+
+              <section class="detail strategy-detail">
+                <div class="detail-head">
+                  <strong>策略信号详情</strong>
+                  <button>收起</button>
+                </div>
+                <div class="field-grid">
+                  <div class="field">
+                    <small>信号来源</small>
+                    <strong class="blue">Yansir 策略引擎</strong>
+                  </div>
+                  <div class="field">
+                    <small>方向</small>
+                    <strong class="red">做空</strong>
+                  </div>
+                  <div class="field">
+                    <small>策略分</small>
+                    <strong>82/100</strong>
+                  </div>
+                  <div class="field">
+                    <small>置信度</small>
+                    <strong>82/100</strong>
+                  </div>
+                </div>
+                <div class="note">
+                  <small>触发原因</small>
+                  <p>资金费率偏高，价格突破失败，短线存在多头拥挤风险。</p>
+                </div>
+                <div class="note">
+                  <small>AI 边界</small>
+                  <p>仅用于解释和复核，策略信号保持最高优先级。</p>
+                </div>
+                <div class="actions">
+                  <button class="primary">信号详情</button>
+                  <button>ValueClaw</button>
+                  <button>加入观察</button>
+                </div>
+              </section>
+            </article>
+
+            <article class="row collapsed">
+              <div class="row-main">
+                <div>
+                  <div class="symbol-line">
+                    <strong class="symbol">ETH</strong>
+                    <span class="pill blue">命中策略</span>
+                    <span class="pill green">做多</span>
+                  </div>
+                  <span class="meta">Yansir 策略引擎 · 1h 趋势同步</span>
+                </div>
+                <div class="score">
+                  <strong>78</strong>
+                  <span>策略分</span>
+                </div>
+              </div>
+            </article>
+          </section>
+        </div>
+        <nav class="bottom-nav">
+          <span>数据</span><span>ValueClaw</span><span class="active">信号</span><span>告警</span><span>我的</span>
+        </nav>
+      </section>
+
+      <section class="phone" aria-label="市场异动展开态">
+        <div class="content">
+          <nav class="source-tabs">
+            <span class="active">市场异动</span>
+            <span>策略信号</span>
+            <span>我的关注</span>
+          </nav>
+
+          <div class="filter-row">
+            <span class="active">全部 648</span>
+            <span>急涨 44</span>
+            <span>风险 167</span>
+            <span>观察 437</span>
+          </div>
+
+          <section class="notice">
+            <div>
+              <strong>全市场行情监控</strong>
+              <span>价格、波动和风险先动，策略信号另行置顶</span>
+            </div>
+            <button>筛选</button>
+          </section>
+
+          <section class="list">
+            <article class="row expanded market">
+              <div class="row-main">
+                <div>
+                  <div class="symbol-line">
+                    <strong class="symbol">LAB</strong>
+                    <span class="pill green">市场急涨</span>
+                  </div>
+                  <span class="meta">24H +90.67% · 成交活跃</span>
+                  <p class="desc">价格快速拉升，需观察成交量延续和资金费率变化。</p>
+                </div>
+                <div class="price-block">
+                  <strong>13.51</strong>
+                  <em class="positive">+90.67%</em>
+                </div>
+              </div>
+
+              <section class="detail market-detail">
+                <div class="detail-head">
+                  <strong>市场异动详情</strong>
+                  <button>收起</button>
+                </div>
+                <div class="field-grid">
+                  <div class="field">
+                    <small>异动类型</small>
+                    <strong class="green">市场急涨</strong>
+                  </div>
+                  <div class="field">
+                    <small>现价</small>
+                    <strong>13.51</strong>
+                  </div>
+                  <div class="field">
+                    <small>24H 涨跌</small>
+                    <strong class="green">+90.67%</strong>
+                  </div>
+                  <div class="field">
+                    <small>成交状态</small>
+                    <strong>活跃放大</strong>
+                  </div>
+                </div>
+                <div class="note">
+                  <small>观察重点</small>
+                  <p>确认成交量能否延续，同时跟踪资金费率和下一轮策略扫描。</p>
+                </div>
+                <div class="note">
+                  <small>策略状态</small>
+                  <p>暂未触发 Yansir 策略信号，不生成交易方向。</p>
+                </div>
+                <div class="actions">
+                  <button class="market-primary">策略追踪</button>
+                  <button>ValueClaw</button>
+                  <button>加入观察</button>
+                </div>
+              </section>
+            </article>
+
+            <article class="row collapsed">
+              <div class="row-main">
+                <div>
+                  <div class="symbol-line">
+                    <strong class="symbol">BTC</strong>
+                    <span class="pill red">拥挤风险</span>
+                  </div>
+                  <span class="meta">资金费率偏高 · 突破失败</span>
+                </div>
+                <div class="price-block">
+                  <strong>58,986</strong>
+                  <em>-1.42%</em>
+                </div>
+              </div>
+            </article>
+          </section>
+        </div>
+        <nav class="bottom-nav">
+          <span>数据</span><span>ValueClaw</span><span class="active">信号</span><span>告警</span><span>我的</span>
+        </nav>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yansir Radar Source UI Comparison</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #10233d;
+        --muted: #73839a;
+        --line: #dfe8f4;
+        --blue: #2f6df6;
+        --green: #14a36d;
+        --red: #d7445d;
+        --amber: #b67912;
+        --panel: #ffffff;
+        --soft-blue: #edf5ff;
+        --soft-red: #fff1f4;
+        --soft-green: #effaf4;
+        --soft-amber: #fff8ea;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #eef4fb;
+        color: var(--ink);
+        font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      }
+
+      .comparison {
+        display: grid;
+        grid-template-columns: repeat(2, 390px);
+        gap: 30px;
+        align-items: start;
+        justify-content: center;
+        padding: 28px;
+      }
+
+      .phone {
+        overflow: hidden;
+        width: 390px;
+        height: 844px;
+        background: #f8fbff;
+        border: 1px solid #d7e3f2;
+        border-radius: 26px;
+        box-shadow: 0 20px 50px rgba(35, 58, 90, 0.16);
+      }
+
+      .screen {
+        height: 100%;
+        overflow: hidden;
+        padding: 18px 16px 78px;
+        background: linear-gradient(180deg, #f7fbff 0%, #ffffff 46%, #f8fbff 100%);
+      }
+
+      .source-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .source-tabs span {
+        display: grid;
+        min-height: 46px;
+        place-items: center;
+        color: #6f7f97;
+        font-size: 17px;
+        font-weight: 900;
+      }
+
+      .source-tabs .active {
+        color: #101f36;
+        border-bottom: 3px solid var(--blue);
+      }
+
+      .filter-row {
+        display: flex;
+        gap: 8px;
+        overflow: hidden;
+        margin: 0 -1px 14px;
+      }
+
+      .filter-row span {
+        min-width: 78px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        color: #173250;
+        background: #ffffff;
+        font-size: 13px;
+        font-weight: 850;
+        text-align: center;
+      }
+
+      .filter-row .active {
+        color: var(--blue);
+        border-color: #bcd2ff;
+        background: #eef5ff;
+      }
+
+      .notice {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 58px;
+        margin-bottom: 18px;
+        padding: 12px 14px;
+        background: #e9f1ff;
+        border: 1px solid #d5e4ff;
+      }
+
+      .notice strong {
+        font-size: 13px;
+      }
+
+      .notice span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .notice button {
+        min-width: 66px;
+        height: 42px;
+        border: 0;
+        border-radius: 6px;
+        color: #ffffff;
+        background: var(--blue);
+        font-weight: 900;
+      }
+
+      .list {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        background: #ffffff;
+      }
+
+      .row {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        min-height: 88px;
+        padding: 13px 14px;
+        border-bottom: 1px solid #e6edf6;
+      }
+
+      .row:last-child {
+        border-bottom: 0;
+      }
+
+      .row.hit {
+        background: linear-gradient(90deg, rgba(47, 109, 246, 0.08), #ffffff 38%);
+      }
+
+      .row.hit::before {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 4px;
+        background: var(--blue);
+        content: "";
+      }
+
+      .row.market-hot {
+        background: linear-gradient(90deg, rgba(20, 163, 109, 0.08), #ffffff 42%);
+      }
+
+      .row.market-risk {
+        background: linear-gradient(90deg, rgba(215, 68, 93, 0.08), #ffffff 42%);
+      }
+
+      .symbol-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .symbol {
+        color: #111827;
+        font-size: 20px;
+        font-weight: 950;
+        line-height: 1;
+      }
+
+      .pill {
+        padding: 4px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 950;
+      }
+
+      .pill.blue {
+        color: #1f5df2;
+        background: #edf4ff;
+      }
+
+      .pill.green {
+        color: #0c8a59;
+        background: var(--soft-green);
+      }
+
+      .pill.red {
+        color: var(--red);
+        background: var(--soft-red);
+      }
+
+      .pill.amber {
+        color: var(--amber);
+        background: var(--soft-amber);
+      }
+
+      .meta {
+        display: block;
+        margin-top: 8px;
+        color: #536986;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .desc {
+        margin: 8px 0 0;
+        color: #253952;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .score,
+      .price-block {
+        min-width: 72px;
+        text-align: right;
+      }
+
+      .score strong {
+        display: block;
+        color: #0f172a;
+        font-size: 28px;
+        line-height: 1;
+      }
+
+      .score span,
+      .price-block span {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .price-block strong {
+        display: block;
+        color: #0f172a;
+        font-size: 17px;
+        line-height: 1.1;
+      }
+
+      .price-block em {
+        display: block;
+        margin-top: 6px;
+        font-size: 12px;
+        font-style: normal;
+        font-weight: 950;
+      }
+
+      .positive {
+        color: var(--green);
+      }
+
+      .negative {
+        color: var(--red);
+      }
+
+      .waiting {
+        background: #fbfdff;
+      }
+
+      .waiting .symbol,
+      .waiting .score strong,
+      .waiting .price-block strong {
+        color: #344762;
+      }
+
+      .bottom-nav {
+        position: absolute;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        width: 390px;
+        height: 66px;
+        margin-top: -66px;
+        align-items: center;
+        background: rgba(248, 251, 255, 0.96);
+        border-top: 1px solid #e0e9f5;
+      }
+
+      .bottom-nav span {
+        color: #8aa0bb;
+        font-size: 11px;
+        font-weight: 900;
+        text-align: center;
+      }
+
+      .bottom-nav .active {
+        color: var(--blue);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="comparison" aria-label="Yansir radar UI source comparison">
+      <section class="phone" aria-label="策略信号视图">
+        <div class="screen">
+          <nav class="source-tabs">
+            <span>市场异动</span>
+            <span class="active">策略信号</span>
+            <span>我的关注</span>
+          </nav>
+
+          <div class="filter-row">
+            <span class="active">全部 648</span>
+            <span>命中 12</span>
+            <span>等待 636</span>
+            <span>风险 3</span>
+          </div>
+
+          <section class="notice">
+            <div>
+              <strong>策略引擎覆盖全市场</strong>
+              <span>命中策略置顶，未命中保持弱化观察</span>
+            </div>
+            <button>规则</button>
+          </section>
+
+          <section class="list">
+            <article class="row hit">
+              <div>
+                <div class="symbol-line"><strong class="symbol">BTC</strong><span class="pill blue">命中策略</span><span class="pill red">做空</span></div>
+                <span class="meta">Yansir 策略引擎 · 5m / 15m 共振</span>
+                <p class="desc">资金费率偏高，价格突破失败，短线存在多头拥挤风险。</p>
+              </div>
+              <div class="score"><strong>82</strong><span>策略分</span></div>
+            </article>
+            <article class="row hit">
+              <div>
+                <div class="symbol-line"><strong class="symbol">ETH</strong><span class="pill blue">命中策略</span><span class="pill green">做多</span></div>
+                <span class="meta">Yansir 策略引擎 · 1h 趋势同步</span>
+                <p class="desc">ADX 上行且 ATR 放大，多周期趋势开始同步。</p>
+              </div>
+              <div class="score"><strong>78</strong><span>策略分</span></div>
+            </article>
+            <article class="row waiting">
+              <div>
+                <div class="symbol-line"><strong class="symbol">SOL</strong><span class="pill amber">等待信号</span></div>
+                <span class="meta">已纳入全市场策略扫描</span>
+                <p class="desc">当前暂未触发 Yansir 策略信号，继续等待下一轮 K 线收盘。</p>
+              </div>
+              <div class="score"><strong>--</strong><span>未命中</span></div>
+            </article>
+            <article class="row waiting">
+              <div>
+                <div class="symbol-line"><strong class="symbol">LAB</strong><span class="pill amber">等待信号</span></div>
+                <span class="meta">已纳入全市场策略扫描</span>
+                <p class="desc">行情波动较大，但策略条件尚未闭合，不生成方向信号。</p>
+              </div>
+              <div class="score"><strong>--</strong><span>未命中</span></div>
+            </article>
+          </section>
+        </div>
+        <nav class="bottom-nav"><span>数据</span><span>ValueClaw</span><span class="active">信号</span><span>告警</span><span>我的</span></nav>
+      </section>
+
+      <section class="phone" aria-label="市场异动视图">
+        <div class="screen">
+          <nav class="source-tabs">
+            <span class="active">市场异动</span>
+            <span>策略信号</span>
+            <span>我的关注</span>
+          </nav>
+
+          <div class="filter-row">
+            <span class="active">全部 648</span>
+            <span>急涨 44</span>
+            <span>风险 167</span>
+            <span>观察 437</span>
+          </div>
+
+          <section class="notice">
+            <div>
+              <strong>全市场行情监控</strong>
+              <span>价格、波动和风险先动，策略信号另行置顶</span>
+            </div>
+            <button>筛选</button>
+          </section>
+
+          <section class="list">
+            <article class="row market-hot">
+              <div>
+                <div class="symbol-line"><strong class="symbol">LAB</strong><span class="pill green">市场急涨</span></div>
+                <span class="meta">24H +90.67% · 成交活跃</span>
+                <p class="desc">价格快速拉升，需观察成交量延续和资金费率变化。</p>
+              </div>
+              <div class="price-block"><strong>13.51</strong><em class="positive">+90.67%</em></div>
+            </article>
+            <article class="row market-risk">
+              <div>
+                <div class="symbol-line"><strong class="symbol">BTC</strong><span class="pill red">拥挤风险</span></div>
+                <span class="meta">资金费率偏高 · 突破失败</span>
+                <p class="desc">价格冲高回落，短线多头拥挤，建议等待二次确认。</p>
+              </div>
+              <div class="price-block"><strong>58,986</strong><em class="negative">-1.42%</em></div>
+            </article>
+            <article class="row market-hot">
+              <div>
+                <div class="symbol-line"><strong class="symbol">UB</strong><span class="pill green">量能放大</span></div>
+                <span class="meta">OI 同步放大 · 合约活跃</span>
+                <p class="desc">交易量激增但波动较大，关注回撤后的承接强度。</p>
+              </div>
+              <div class="price-block"><strong>0.1543</strong><em class="positive">+18.8%</em></div>
+            </article>
+            <article class="row waiting">
+              <div>
+                <div class="symbol-line"><strong class="symbol">SOL</strong><span class="pill amber">市场观察</span></div>
+                <span class="meta">24H +0.86% · 波动正常</span>
+                <p class="desc">暂未出现强异动，继续观察成交额和下一轮雷达信号。</p>
+              </div>
+              <div class="price-block"><strong>81.82</strong><em class="positive">+0.86%</em></div>
+            </article>
+          </section>
+        </div>
+        <nav class="bottom-nav"><span>数据</span><span>ValueClaw</span><span class="active">信号</span><span>告警</span><span>我的</span></nav>
+      </section>
+    </main>
+  </body>
+</html>
