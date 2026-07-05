@@ -41,6 +41,24 @@ class PinePositionState:
             return "空单"
         return "空仓"
 
+    def _validate_side(self, side: str) -> None:
+        if side not in {"long", "short"}:
+            raise ValueError("side must be 'long' or 'short'")
+
+    def _current_side(self) -> str | None:
+        if self.position_size > 0:
+            return "long"
+        if self.position_size < 0:
+            return "short"
+        return None
+
+    def _require_current_side(self, side: str) -> None:
+        current_side = self._current_side()
+        if current_side is None:
+            raise ValueError("no open position")
+        if current_side != side:
+            raise ValueError("requested side does not match current position")
+
     def entry(
         self,
         name: str,
@@ -49,9 +67,12 @@ class PinePositionState:
         qty_pct: float,
         atr: float | None,
     ) -> PineOrderEvent:
+        self._validate_side(side)
+        if qty_pct <= 0:
+            raise ValueError("qty_pct must be greater than 0")
         if (side == "long" and self.position_size < 0) or (side == "short" and self.position_size > 0):
             raise ValueError("opposite-side entry requires closing the current position first")
-        qty = abs(qty_pct)
+        qty = qty_pct
         signed_qty = qty if side == "long" else -qty
         previous_abs = abs(self.position_size)
         next_abs = previous_abs + qty
@@ -66,9 +87,9 @@ class PinePositionState:
         self.layers.append(PineLayer(name=name, side=side, price=price, qty=qty, atr=atr))
         return PineOrderEvent(action="open_long" if side == "long" else "open_short", side=side, price=price)
 
-    def close_side(self, side: str, exit_price: float) -> None:
-        if not self.layers:
-            return
+    def close_side(self, side: str, exit_price: float) -> PineOrderEvent:
+        self._validate_side(side)
+        self._require_current_side(side)
         is_loss = (side == "long" and exit_price < self.position_avg_price) or (
             side == "short" and exit_price > self.position_avg_price
         )
@@ -77,8 +98,11 @@ class PinePositionState:
         self.position_size = 0.0
         self.position_avg_price = 0.0
         self.position_peak_size = 0.0
+        return PineOrderEvent(action=f"close_{side}", side=side, price=exit_price)
 
     def reduce(self, action: str, side: str, price: float, reduce_pct: float) -> PineOrderEvent:
+        self._validate_side(side)
+        self._require_current_side(side)
         if not 0 <= reduce_pct <= 100:
             raise ValueError("reduce_pct must be between 0 and 100")
         if side == "long":

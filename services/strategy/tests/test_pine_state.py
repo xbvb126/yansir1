@@ -16,8 +16,11 @@ class PinePositionStateTest(unittest.TestCase):
     def test_manual_close_allows_opposite_side_entry(self):
         state = PinePositionState()
         state.entry("趋势买入", "long", price=100.0, qty_pct=10.0, atr=2.0)
-        state.close_side("long", exit_price=98.0)
+        close_event = state.close_side("long", exit_price=98.0)
         state.entry("趋势开空", "short", price=98.0, qty_pct=10.0, atr=2.0)
+        self.assertEqual(close_event.action, "close_long")
+        self.assertEqual(close_event.side, "long")
+        self.assertEqual(close_event.price, 98.0)
         self.assertLess(state.position_size, 0)
         self.assertEqual(state.consecutive_losses, 1)
         self.assertEqual(state.current_position, "空单")
@@ -62,6 +65,21 @@ class PinePositionStateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             state.entry("opposite short", "short", price=98.0, qty_pct=10.0, atr=2.0)
 
+    def test_entry_rejects_invalid_side(self):
+        state = PinePositionState()
+
+        with self.assertRaises(ValueError):
+            state.entry("bad side", "buy", price=100.0, qty_pct=10.0, atr=2.0)
+
+    def test_entry_rejects_non_positive_quantity(self):
+        state = PinePositionState()
+
+        with self.assertRaises(ValueError):
+            state.entry("zero long", "long", price=100.0, qty_pct=0.0, atr=2.0)
+
+        with self.assertRaises(ValueError):
+            state.entry("negative long", "long", price=100.0, qty_pct=-10.0, atr=2.0)
+
     def test_reduce_rejects_invalid_percent(self):
         state = PinePositionState()
         state.entry("base long", "long", price=100.0, qty_pct=10.0, atr=2.0)
@@ -71,6 +89,46 @@ class PinePositionStateTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             state.reduce("reduce_long", side="long", price=106.0, reduce_pct=101.0)
+
+    def test_reduce_rejects_invalid_side(self):
+        state = PinePositionState()
+        state.entry("base long", "long", price=100.0, qty_pct=10.0, atr=2.0)
+
+        with self.assertRaises(ValueError):
+            state.reduce("reduce_long", side="buy", price=106.0, reduce_pct=25.0)
+
+    def test_reduce_rejects_flat_position(self):
+        state = PinePositionState()
+
+        with self.assertRaises(ValueError):
+            state.reduce("reduce_long", side="long", price=106.0, reduce_pct=25.0)
+
+    def test_reduce_rejects_opposite_side(self):
+        state = PinePositionState()
+        state.entry("base long", "long", price=100.0, qty_pct=10.0, atr=2.0)
+
+        with self.assertRaises(ValueError):
+            state.reduce("reduce_short", side="short", price=106.0, reduce_pct=25.0)
+
+    def test_close_side_rejects_invalid_side(self):
+        state = PinePositionState()
+        state.entry("base long", "long", price=100.0, qty_pct=10.0, atr=2.0)
+
+        with self.assertRaises(ValueError):
+            state.close_side("buy", exit_price=98.0)
+
+    def test_close_side_rejects_flat_position(self):
+        state = PinePositionState()
+
+        with self.assertRaises(ValueError):
+            state.close_side("long", exit_price=98.0)
+
+    def test_close_side_rejects_mismatched_side(self):
+        state = PinePositionState()
+        state.entry("base long", "long", price=100.0, qty_pct=10.0, atr=2.0)
+
+        with self.assertRaises(ValueError):
+            state.close_side("short", exit_price=98.0)
 
 
 if __name__ == "__main__":
