@@ -10,7 +10,7 @@ on:
 jobs:
   plan-permissions:
     name: Run plan permission tests before deploy
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       E2E_API_BASE_URL: ${{ vars.E2E_API_BASE_URL || 'http://127.0.0.1:3101/api' }}
