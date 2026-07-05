@@ -43,12 +43,41 @@ class StrategyRunRequest(BaseModel):
     config: StrategyConfig = Field(default_factory=StrategyConfig)
 
 
+class StrategyBandPoint(BaseModel):
+    open_time: int
+    avg: float | None = None
+    upper: float | None = None
+    lower: float | None = None
+    direction: int = 0
+
+
+class StrategyZone(BaseModel):
+    top: float | None = None
+    bottom: float | None = None
+    strength: int = 0
+    touched: bool = False
+
+
+class StrategyDiagnostics(BaseModel):
+    market_state_text: str = "unknown"
+    risk_status: str = "unknown"
+    active_engine: str = "无"
+    current_position: str = "空仓"
+    current_r: float | None = None
+    remaining_position_pct: float | None = None
+    bands: list[StrategyBandPoint] = Field(default_factory=list)
+    support: StrategyZone = Field(default_factory=StrategyZone)
+    resistance: StrategyZone = Field(default_factory=StrategyZone)
+
+
 class StrategySignal(BaseModel):
     type: str
     title: str
     engine: str
     side: str
+    action: str | None = None
     price: float
+    reduce_pct: float | None = None
     stop_price: float | None = None
     take_profit_price: float | None = None
     score_impact: int = 0
@@ -68,4 +97,5 @@ class StrategyRunResponse(BaseModel):
     bar_time: int | None = None
     market_state: str
     signals: list[StrategySignal]
+    diagnostics: StrategyDiagnostics = Field(default_factory=StrategyDiagnostics)
     metrics: StrategyMetrics
