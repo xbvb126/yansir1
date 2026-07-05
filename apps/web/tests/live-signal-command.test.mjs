@@ -81,15 +81,20 @@ assert.doesNotMatch(
   /trackingSection === "strategy"\s*\?\s*strategyRecords\s*:\s*trackingSection === "mine"\s*\?\s*radarRecords\.filter/,
   "strategy and market radar sources should not be limited to triggered signals only",
 );
-assert.match(
-  liveSignalCommandSource,
-  /\{signalCount\} 条雷达币种/,
-  "radar status count should describe market-wide coin rows instead of triggered strategy signals",
-);
 assert.doesNotMatch(
   liveSignalCommandSource,
-  /\{signalCount\} 条策略信号/,
-  "radar status count should not label backfilled market rows as strategy signals",
+  /live-command__header|live-command__status|<h1>实时雷达<\/h1>|StrategyStatusPanel/,
+  "radar list component should not render the duplicate title/status block",
+);
+assert.match(
+  liveSignalCommandSource,
+  /add_long|add_short/,
+  "radar list should explicitly label add actions",
+);
+assert.match(
+  liveSignalCommandSource,
+  /reduce_long|reduce_short/,
+  "radar list should explicitly label reduce actions",
 );
 assert.doesNotMatch(
   appShellSource,
@@ -141,6 +146,26 @@ assert.match(
   /onOpenValueClawSignal\(radarSignalContext\)/,
   "symbol detail radar context should keep the ValueClaw handoff",
 );
+assert.match(
+  appShellSource,
+  /action:\s*signal\.action\s*\?\?\s*signal\.payload\?\.action\s*\?\?\s*null/,
+  "strategy inbox records should preserve action before radar normalization",
+);
+assert.match(
+  appShellSource,
+  /action:\s*signal\.action\s*\?\?\s*null/,
+  "strategy scan records should preserve action before radar normalization",
+);
+assert.match(
+  appShellSource,
+  /action:\s*record\.action\s*\?\?\s*record\.payload\?\.action\s*\?\?\s*null/,
+  "AppShell toLiveSignal handoff should pass action into the radar model",
+);
+assert.match(
+  appShellSource,
+  /payload:\s*record\.payload/,
+  "AppShell toLiveSignal handoff should keep radar signal payload available",
+);
 
 await build({
   entryPoints: ["src/features/radar/liveSignalModel.ts"],
@@ -175,6 +200,43 @@ assert.equal(baseSignal.source, "strategy");
 assert.equal(baseSignal.score, 87);
 assert.equal(baseSignal.confidence, 91);
 
+const addSignal = module.toLiveSignal(
+  {
+    id: "sig-add",
+    symbol: "ADAUSDT",
+    action: "add_long",
+    score: 82,
+    confidence: 84,
+    risk: "鍙帶",
+    status: "active",
+    strategyName: "EMD V6",
+    trigger: "瓒嬪娍鍥炶踩鍔犱粨",
+    generatedAt: "2026-07-04T08:00:30.000Z",
+  },
+  5,
+);
+
+const reduceSignal = module.toLiveSignal(
+  {
+    id: "sig-reduce",
+    symbol: "BNBUSDT",
+    payload: { action: "reduce_short", reducePct: 25 },
+    score: 79,
+    confidence: 80,
+    risk: "瓒嬪娍杞急",
+    status: "active",
+    strategyName: "EMD V6",
+    trigger: "瓒嬪娍杞急鍑忎粨",
+    generatedAt: "2026-07-04T08:00:35.000Z",
+  },
+  6,
+);
+
+assert.equal(addSignal.action, "add_long");
+assert.equal(addSignal.direction, "long");
+assert.equal(reduceSignal.action, "reduce_short");
+assert.equal(reduceSignal.direction, "short");
+
 const riskSignal = module.toLiveSignal(
   {
     symbol: "ETHUSDT",
@@ -202,6 +264,43 @@ const watchSignal = module.toLiveSignal(
 
 assert.equal(watchSignal.direction, "neutral");
 assert.equal(watchSignal.tone, "watch");
+
+const marketSignal = module.toLiveSignal(
+  {
+    id: "market-lab",
+    symbol: "LAB",
+    source: "market",
+    direction: "flat",
+    score: 91,
+    status: "active",
+    strategyName: "市场观察池",
+    trigger: "价格快速拉升，需观察成交量延续和资金费率变化。",
+    price: "13.51",
+    change24h: "+90.67%",
+    generatedAt: "2026-07-04T08:03:00.000Z",
+  },
+  3,
+);
+
+assert.equal(marketSignal.source, "market");
+assert.equal(marketSignal.price, "13.51");
+assert.equal(marketSignal.change24h, "+90.67%");
+
+const waitingStrategySignal = module.toLiveSignal(
+  {
+    id: "wait-lab",
+    symbol: "LAB",
+    source: "strategy",
+    direction: "flat",
+    score: 96,
+    confidence: 96,
+    status: "no-signal",
+    strategyName: "已纳入全市场策略扫描",
+    trigger: "LAB 已纳入全市场策略扫描，当前暂未触发 Yansir 策略信号。",
+    generatedAt: "2026-07-04T08:03:00.000Z",
+  },
+  4,
+);
 
 const filteredLong = module.filterLiveSignals([baseSignal, riskSignal, watchSignal], "long");
 assert.deepEqual(
@@ -281,10 +380,11 @@ const collapsedMarkup = renderToStaticMarkup(
   }),
 );
 
-assert.match(collapsedMarkup, /实时雷达/);
 assert.match(collapsedMarkup, /ETHUSDT/);
+assert.match(collapsedMarkup, /命中策略/);
+assert.doesNotMatch(collapsedMarkup, /实时雷达|Yansir Crypto/);
 assert.doesNotMatch(collapsedMarkup, /live-command__row-detail/);
-assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|币种详情/);
+assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|信号详情|市场异动详情/);
 
 const markup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
@@ -302,15 +402,34 @@ const markup = renderToStaticMarkup(
   }),
 );
 
-assert.match(markup, /实时雷达/);
-assert.match(markup, /Yansir Crypto/);
+assert.match(markup, /策略信号详情/);
 assert.match(markup, /Yansir 策略引擎/);
-assert.match(markup, /币种详情/);
+assert.match(markup, /信号详情/);
 assert.match(markup, /策略信号保持最高优先级/);
-assert.match(markup, /监听中/);
 assert.match(markup, /做空/);
 assert.match(markup, /live-command__row-detail/);
+assert.doesNotMatch(markup, /市场异动详情|策略状态|实时雷达|Yansir Crypto|币种详情/);
 assert.doesNotMatch(markup, /Realtime Radar|Signal Detail|Signal source|Direction|Confidence|Strategy listener active|strategy signals|s ago|LONG|SHORT|NEUTRAL/);
+
+const actionMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: [addSignal, reduceSignal],
+    selectedSignalId: reduceSignal.id,
+    activeFilter: "now",
+    listeningStatus: "live",
+    emptyState,
+    now: Date.parse("2026-07-04T08:03:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(actionMarkup, /\u52a0\u591a/);
+assert.match(actionMarkup, /\u51cf\u7a7a/);
+assert.doesNotMatch(actionMarkup, /\u547d\u4e2d\u7b56\u7565/);
 
 const selectedRowIndex = markup.indexOf("ETHUSDT");
 const followingRowIndex = markup.indexOf("BTCUSDT");
@@ -319,6 +438,86 @@ assert.ok(selectedRowIndex > -1, "selected signal row should render");
 assert.ok(followingRowIndex > -1, "following signal row should render");
 assert.ok(inlineDetailIndex > selectedRowIndex, "signal detail should render after the selected row");
 assert.ok(inlineDetailIndex < followingRowIndex, "signal detail should render before the next signal row");
+
+const marketMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: [marketSignal, baseSignal],
+    selectedSignalId: marketSignal.id,
+    activeFilter: "now",
+    listeningStatus: "live",
+    emptyState,
+    now: Date.parse("2026-07-04T08:04:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(marketMarkup, /市场异动详情/);
+assert.match(marketMarkup, /异动类型/);
+assert.match(marketMarkup, /13\.51/);
+assert.match(marketMarkup, /\+90\.67%/);
+assert.match(marketMarkup, /策略状态/);
+assert.match(marketMarkup, /策略追踪/);
+assert.doesNotMatch(marketMarkup, /策略信号详情|AI 边界|信号详情/);
+
+const waitingMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: [waitingStrategySignal],
+    selectedSignalId: waitingStrategySignal.id,
+    activeFilter: "now",
+    listeningStatus: "paused",
+    emptyState,
+    now: Date.parse("2026-07-04T08:04:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(waitingMarkup, /等待信号/);
+assert.match(waitingMarkup, /策略分<\/dt><dd>--<\/dd>/);
+assert.match(waitingMarkup, /置信度<\/dt><dd>--<\/dd>/);
+assert.doesNotMatch(waitingMarkup, /96\/100/);
+
+const manySignals = Array.from({ length: 35 }, (_, index) =>
+  module.toLiveSignal(
+    {
+      id: `many-${index}`,
+      symbol: `SYM${index}`,
+      direction: "BUY",
+      score: 70 + (index % 10),
+      strategyName: "Yansir 策略引擎",
+      trigger: `第 ${index} 个策略信号`,
+      generatedAt: new Date(Date.parse("2026-07-04T08:00:00.000Z") + index * 60_000).toISOString(),
+    },
+    index,
+  ),
+);
+
+const pagedMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: manySignals,
+    activeFilter: "now",
+    listeningStatus: "live",
+    emptyState,
+    now: Date.parse("2026-07-04T09:00:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.equal((pagedMarkup.match(/live-command__row is-/g) || []).length, 30);
+assert.match(pagedMarkup, /继续下滑加载更多 · 已显示 30\/35/);
+assert.match(pagedMarkup, /SYM34/);
+assert.doesNotMatch(pagedMarkup, /SYM4<\/strong>/);
 
 
 console.log("live signal command tests passed");

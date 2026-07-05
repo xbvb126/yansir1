@@ -1961,6 +1961,7 @@ function parseQueryDate(value: string | undefined) {
 }
 
 function mapInboxRow(row: InboxRow, entitlements?: UserEntitlements) {
+  const payload = normalizeSignalPayload(row.payload);
   return {
     id: row.inbox_id,
     signalEventId: row.id,
@@ -1977,11 +1978,14 @@ function mapInboxRow(row: InboxRow, entitlements?: UserEntitlements) {
     time: new Date(row.emitted_at).toISOString(),
     receivedAt: new Date(row.inbox_created_at).toISOString(),
     status: row.inbox_status,
+    action: signalActionFromPayload(payload),
+    payload,
     performance: mapSignalPerformance(row, entitlements?.signalOutcomes ?? false)
   };
 }
 
 function mapSignalEventRow(row: SignalEventRow, fullPerformance = true) {
+  const payload = normalizeSignalPayload(row.payload);
   return {
     id: row.id,
     signalEventId: row.id,
@@ -1998,6 +2002,8 @@ function mapSignalEventRow(row: SignalEventRow, fullPerformance = true) {
     time: new Date(row.emitted_at).toISOString(),
     receivedAt: new Date(row.emitted_at).toISOString(),
     status: "public_delayed",
+    action: signalActionFromPayload(payload),
+    payload,
     performance: mapSignalPerformance(row, fullPerformance)
   };
 }
@@ -2055,6 +2061,16 @@ function jsonParse(value: string) {
   } catch {
     return {};
   }
+}
+
+function normalizeSignalPayload(payload: SignalEventRow["payload"]) {
+  if (!payload) return {};
+  if (typeof payload === "string") return jsonParse(payload);
+  return payload;
+}
+
+function signalActionFromPayload(payload: Record<string, unknown>) {
+  return typeof payload.action === "string" ? payload.action : null;
 }
 
 function buildSingleScan(symbol: string, timeframe: string, item: ScanItem): ScanResult {

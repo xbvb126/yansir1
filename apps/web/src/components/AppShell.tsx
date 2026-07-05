@@ -182,9 +182,15 @@ type RadarTimelineRecord = ScanRecord & {
   category: string;
   score?: number;
   direction?: Direction;
+  action?: string | null;
   strategyName?: string;
   trigger?: string;
   risk?: string;
+  payload?: {
+    action?: string | null;
+    reducePct?: number | null;
+    reduce_pct?: number | null;
+  };
 };
 type StrategyScanAlertResponse = {
   scan: {
@@ -205,6 +211,9 @@ type StrategyScanAlertResponse = {
           title: string;
           engine: string;
           side: Direction;
+          action?: string | null;
+          reduce_pct?: number | null;
+          reducePct?: number | null;
           price: number;
           score_impact: number;
         }>;
@@ -221,6 +230,7 @@ type StrategyInboxSignal = {
   rawSymbol?: string;
   timeframe: string;
   direction: Direction;
+  action?: string | null;
   signalType?: string;
   engine?: string;
   price: number;
@@ -230,6 +240,11 @@ type StrategyInboxSignal = {
   time: string;
   receivedAt: string;
   status: string;
+  payload?: {
+    action?: string | null;
+    reducePct?: number | null;
+    reduce_pct?: number | null;
+  };
   performance?: SignalPerformance;
 };
 
@@ -1056,37 +1071,60 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     : trackingSection === "mine"
       ? marketSectionRecords.filter((record) => watchlistSet.has(record.symbol))
       : marketSectionRecords;
-  const filteredSignals = sectionRecords.filter((record) => {
-    if (signalFilter !== "all" && record.group !== signalFilter) return false;
-    return true;
-  });
+  const isStrategySource = trackingSection === "strategy";
+  const isStrategyWaitingRecord = (record: RadarTimelineRecord) => record.category === "等待策略信号";
+  const matchesSectionFilter = (record: RadarTimelineRecord, filter: typeof signalFilter) => {
+    if (filter === "all") return true;
+    if (isStrategySource) {
+      if (filter === "surge") return !isStrategyWaitingRecord(record);
+      if (filter === "opportunity") return isStrategyWaitingRecord(record);
+      return record.group === "risk";
+    }
+    return record.group === filter;
+  };
+  const filteredSignals = sectionRecords.filter((record) => matchesSectionFilter(record, signalFilter));
   const filterCounts = {
     all: sectionRecords.length,
-    surge: sectionRecords.filter((record) => record.group === "surge").length,
-    opportunity: sectionRecords.filter((record) => record.group === "opportunity").length,
-    risk: sectionRecords.filter((record) => record.group === "risk").length
+    surge: sectionRecords.filter((record) => matchesSectionFilter(record, "surge")).length,
+    opportunity: sectionRecords.filter((record) => matchesSectionFilter(record, "opportunity")).length,
+    risk: sectionRecords.filter((record) => matchesSectionFilter(record, "risk")).length
   };
-  const allMonitorTabs: Array<[typeof signalFilter, string, number]> = [
-    ["all", "全部", filterCounts.all],
-    ["surge", "异动看涨监控", filterCounts.surge],
-    ["opportunity", "机会看涨监控", filterCounts.opportunity],
-    ["risk", "风险看跌监控", filterCounts.risk]
-  ];
+  const allMonitorTabs: Array<[typeof signalFilter, string, number]> = isStrategySource
+    ? [
+      ["all", "全部", filterCounts.all],
+      ["surge", "命中", filterCounts.surge],
+      ["opportunity", "等待", filterCounts.opportunity],
+      ["risk", "风险", filterCounts.risk]
+    ]
+    : [
+      ["all", "全部", filterCounts.all],
+      ["surge", "急涨", filterCounts.surge],
+      ["risk", "风险", filterCounts.risk],
+      ["opportunity", "观察", filterCounts.opportunity]
+    ];
   const monitorTabs = allMonitorTabs.filter(([key, , count]) => key === "all" || count > 0);
   const liveSignals = useMemo<LiveSignal[]>(() => filteredSignals.map((record, index) => {
     const timestamp = record.timestamp ?? timestampFromScanTime(record.time) ?? scanBaseTime - index * 15 * 60 * 1000;
+    const row = rows.find((item) => normalizeDisplaySymbol(item.symbol) === normalizeDisplaySymbol(record.symbol));
+    const source = trackingSection === "strategy" ? "strategy" : "market";
+    const waitingStrategySignal = source === "strategy" && record.category === "等待策略信号";
     return toLiveSignal({
       id: record.id,
       symbol: record.symbol,
-      direction: record.direction ?? (record.group === "risk" ? "short" : "long"),
+      direction: waitingStrategySignal ? "flat" : record.direction ?? (record.group === "risk" ? "short" : "long"),
+      action: record.action ?? record.payload?.action ?? null,
       score: record.score,
       risk: record.risk ?? (record.group === "risk" ? record.category : undefined),
-      status: trackingSection === "strategy" ? strategyStatus : "active",
-      strategyName: record.strategyName ?? record.tags[2] ?? "Yansir 策略",
+      status: waitingStrategySignal ? "no-signal" : "active",
+      strategyName: waitingStrategySignal ? "已纳入全市场策略扫描" : record.strategyName ?? record.tags[2] ?? "Yansir 策略",
       trigger: record.trigger ?? record.body,
-      generatedAt: new Date(timestamp).toISOString()
+      generatedAt: new Date(timestamp).toISOString(),
+      price: row?.price,
+      change24h: row?.change,
+      source,
+      payload: record.payload
     }, index);
-  }), [filteredSignals, scanBaseTime, strategyStatus, trackingSection]);
+  }), [filteredSignals, rows, scanBaseTime, trackingSection]);
   const listeningStatus: StrategyListeningStatus = strategyStatus === "error"
     ? "degraded"
     : strategyStatus === "idle" || strategyStatus === "no-signal"
@@ -1101,7 +1139,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   const latestScanLabel = strategyLastScan || formatClockTime(scanBaseTime);
   const activeScopeLabel = trackingSection === "strategy"
     ? strategyHistoryMode === "current"
-      ? "当前自选策略信号"
+      ? "全市场策略信号"
       : "全部历史策略信号"
     : trackingSection === "mine"
       ? "我的关注信号"
@@ -2610,7 +2648,7 @@ function ClawBlockCard({ block, onOpenSymbol }: { block: ClawBlock; onOpenSymbol
 
 function MiniSparkline({ values, variant = "green" }: { values: number[]; variant?: "green" | "red" | "dual" }) {
   const source = values.length ? values : [1, 2, 4, 3, 6, 5, 7, 6];
-  const safe = source.map(Number).filter(Number.isFinite);
+  const safe = smoothMiniSeries(source.map(Number).filter(Number.isFinite));
   const min = Math.min(...safe);
   const max = Math.max(...safe);
   const range = max - min || 1;
@@ -2621,7 +2659,7 @@ function MiniSparkline({ values, variant = "green" }: { values: number[]; varian
     x: 4 + index * (96 / Math.max(safe.length - 1, 1)),
     y: 4 + (1 - (value - min) / range) * 32
   }));
-  const path = smoothChartPath(points);
+  const path = smoothChartPath(points, 0.22);
   return (
     <svg className={`sparkline mini-sparkline ${variant}`} viewBox="0 0 100 44" aria-hidden="true">
       <path className="area" d={`${path} L 96 40 L 4 40 Z`} />
@@ -2672,13 +2710,29 @@ function sampleSeries(values: number[], targetLength: number) {
   });
 }
 
-function smoothChartPath(points: Array<{ x: number; y: number }>) {
+function smoothMiniSeries(values: number[]) {
+  if (values.length <= 8) {
+    return values;
+  }
+
+  const windowSize = values.length > 120 ? 9 : 5;
+  const radius = Math.floor(windowSize / 2);
+  const averaged = values.map((_, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length, index + radius + 1);
+    const slice = values.slice(start, end);
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+  });
+
+  return sampleSeries(averaged, Math.min(52, averaged.length));
+}
+
+function smoothChartPath(points: Array<{ x: number; y: number }>, smoothing = 0.14) {
   if (!points.length) return "";
   if (points.length < 3) {
     return points.map((point, index) => `${index ? "L" : "M"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
   }
 
-  const smoothing = 0.14;
   const segments = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
 
   for (let index = 0; index < points.length - 1; index += 1) {
@@ -3017,6 +3071,8 @@ function strategyInboxToRecord(signal: StrategyInboxSignal): RadarTimelineRecord
     tone: signal.direction === "short" ? "danger" : "success",
     score: signal.score,
     direction: signal.direction,
+    action: signal.action ?? signal.payload?.action ?? null,
+    payload: signal.payload,
     strategyName: signal.engine || signal.signalType || "Pine V6",
     trigger: signal.reason,
     risk: signal.direction === "short" ? category.label : undefined
@@ -3052,6 +3108,12 @@ function strategyScanToRecords(response: { scan: StrategyScanAlertResponse["scan
         tone,
         score,
         direction: signal.side,
+        action: signal.action ?? null,
+        payload: {
+          action: signal.action ?? null,
+          reducePct: signal.reducePct ?? signal.reduce_pct ?? null,
+          reduce_pct: signal.reduce_pct ?? signal.reducePct ?? null
+        },
         strategyName: signal.engine,
         trigger: body,
         risk: signal.side === "short" ? category.label : undefined

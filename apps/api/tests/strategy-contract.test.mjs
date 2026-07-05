@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -11,6 +11,12 @@ const outDir = path.join(testDir, ".tmp-strategy-contract");
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, "strategy.service.mjs");
 const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
+const serviceSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.service.ts"), "utf8");
+
+assert.match(serviceSource, /function normalizeSignalPayload/);
+assert.match(serviceSource, /function signalActionFromPayload/);
+assert.match(serviceSource, /action:\s*signalActionFromPayload\(payload\)/);
+assert.match(serviceSource, /payload,\s*\n\s*performance:/);
 
 execFileSync(process.execPath, [
   esbuildBin,

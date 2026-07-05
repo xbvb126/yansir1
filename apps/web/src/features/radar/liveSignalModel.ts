@@ -2,13 +2,14 @@ export type LiveSignalDirection = "long" | "short" | "neutral";
 export type LiveSignalTone = "opportunity" | "risk" | "watch";
 export type LiveSignalFilter = "now" | "long" | "risk" | "watch";
 export type StrategyListeningStatus = "live" | "degraded" | "paused";
+export type LiveSignalSource = "strategy" | "market";
 
 export type RawRadarSignal = {
   id?: string;
   symbol?: string;
   name?: string;
   direction?: string;
-  action?: string;
+  action?: string | null;
   side?: string;
   score?: number;
   confidence?: number | string;
@@ -27,6 +28,12 @@ export type RawRadarSignal = {
   time?: string;
   price?: number | string;
   change24h?: number | string;
+  source?: LiveSignalSource;
+  payload?: {
+    action?: string | null;
+    reducePct?: number | null;
+    reduce_pct?: number | null;
+  };
 };
 
 export type LiveSignal = {
@@ -37,6 +44,7 @@ export type LiveSignal = {
   tone: LiveSignalTone;
   score: number;
   confidence: number;
+  action?: string | null;
   risk: string;
   status: string;
   strategyName: string;
@@ -44,7 +52,7 @@ export type LiveSignal = {
   generatedAt: string;
   price?: number | string;
   change24h?: number | string;
-  source: "strategy";
+  source: LiveSignalSource;
 };
 
 export type SignalFact = {
@@ -83,7 +91,7 @@ const riskWords = [
 ];
 
 export function normalizeDirection(signal: RawRadarSignal): LiveSignalDirection {
-  const raw = `${signal.direction ?? signal.action ?? signal.side ?? ""}`.toLowerCase();
+  const raw = `${signal.direction ?? resolveSignalAction(signal) ?? signal.side ?? ""}`.toLowerCase();
   if (raw.includes("short") || raw.includes("sell") || raw.includes("\u7a7a")) return "short";
   if (raw.includes("long") || raw.includes("buy") || raw.includes("\u591a")) return "long";
   return "neutral";
@@ -103,6 +111,7 @@ export function resolveSignalTone(signal: RawRadarSignal): LiveSignalTone {
 }
 
 export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal {
+  const action = resolveSignalAction(signal);
   const direction = normalizeDirection(signal);
   const score = normalizeScore(signal.score ?? signal.strength, 50);
   const confidence = normalizeScore(signal.confidence, score);
@@ -117,6 +126,7 @@ export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal 
     tone: resolveSignalTone(signal),
     score,
     confidence,
+    action,
     risk: signal.risk ?? "策略风险模型",
     status: signal.status ?? "active",
     strategyName: signal.strategyName ?? signal.strategy ?? "Yansir 策略",
@@ -124,8 +134,12 @@ export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal 
     generatedAt,
     price: signal.price,
     change24h: signal.change24h,
-    source: "strategy",
+    source: signal.source === "market" ? "market" : "strategy",
   };
+}
+
+function resolveSignalAction(signal: RawRadarSignal): string | null {
+  return signal.action ?? signal.payload?.action ?? null;
 }
 
 export function sortLiveSignals(signals: LiveSignal[]): LiveSignal[] {
