@@ -49,6 +49,8 @@ class PinePositionState:
         qty_pct: float,
         atr: float | None,
     ) -> PineOrderEvent:
+        if (side == "long" and self.position_size < 0) or (side == "short" and self.position_size > 0):
+            raise ValueError("opposite-side entry requires closing the current position first")
         qty = abs(qty_pct)
         signed_qty = qty if side == "long" else -qty
         previous_abs = abs(self.position_size)
@@ -77,9 +79,26 @@ class PinePositionState:
         self.position_peak_size = 0.0
 
     def reduce(self, action: str, side: str, price: float, reduce_pct: float) -> PineOrderEvent:
+        if not 0 <= reduce_pct <= 100:
+            raise ValueError("reduce_pct must be between 0 and 100")
         if side == "long":
             self.long_weak_reduce_done = True
         if side == "short":
             self.short_weak_reduce_done = True
-        self.position_size *= max(0.0, 1.0 - reduce_pct / 100)
+        remaining_factor = 1.0 - reduce_pct / 100
+        self.position_size *= remaining_factor
+        self.layers = [
+            PineLayer(
+                name=layer.name,
+                side=layer.side,
+                price=layer.price,
+                qty=layer.qty * remaining_factor,
+                atr=layer.atr,
+            )
+            for layer in self.layers
+            if layer.qty * remaining_factor > 0
+        ]
+        if self.position_size == 0:
+            self.position_avg_price = 0.0
+            self.position_peak_size = 0.0
         return PineOrderEvent(action=action, side=side, price=price, reduce_pct=reduce_pct)
