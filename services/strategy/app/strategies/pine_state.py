@@ -103,8 +103,10 @@ class PinePositionState:
     def reduce(self, action: str, side: str, price: float, reduce_pct: float) -> PineOrderEvent:
         self._validate_side(side)
         self._require_current_side(side)
-        if not 0 <= reduce_pct <= 100:
-            raise ValueError("reduce_pct must be between 0 and 100")
+        if action != f"reduce_{side}":
+            raise ValueError("action must match reduce side")
+        if not 0 < reduce_pct <= 100:
+            raise ValueError("reduce_pct must be greater than 0 and less than or equal to 100")
         if side == "long":
             self.long_weak_reduce_done = True
         if side == "short":
