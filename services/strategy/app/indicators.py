@@ -66,7 +66,13 @@ def rsi_series(closes: Sequence[float], length: int) -> list[float | None]:
     return output
 
 
-def dmi_adx_series(highs, lows, closes, length: int, smooth: int):
+def dmi_adx_series(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    length: int,
+    smooth: int,
+) -> tuple[list[float], list[float], list[float | None]]:
     plus_dm = [0.0]
     minus_dm = [0.0]
     for index in range(1, len(highs)):
@@ -96,8 +102,8 @@ def dmi_adx_series(highs, lows, closes, length: int, smooth: int):
     return plus_di, minus_di, rma_series(dx, smooth)
 
 
-def bollinger_width_pct_series(values, length: int, mult: float):
-    output = []
+def bollinger_width_pct_series(values: Sequence[float], length: int, mult: float) -> list[float | None]:
+    output: list[float | None] = []
     for index in range(len(values)):
         window = values[max(0, index - length + 1): index + 1]
         if len(window) < length:
@@ -110,8 +116,8 @@ def bollinger_width_pct_series(values, length: int, mult: float):
     return output
 
 
-def pivot_high_series(values, pivot_len: int):
-    output = [None] * len(values)
+def pivot_high_series(values: Sequence[float], pivot_len: int) -> list[float | None]:
+    output: list[float | None] = [None] * len(values)
     for index in range(pivot_len, len(values) - pivot_len):
         window = values[index - pivot_len:index + pivot_len + 1]
         if values[index] >= max(window):
@@ -119,8 +125,8 @@ def pivot_high_series(values, pivot_len: int):
     return output
 
 
-def pivot_low_series(values, pivot_len: int):
-    output = [None] * len(values)
+def pivot_low_series(values: Sequence[float], pivot_len: int) -> list[float | None]:
+    output: list[float | None] = [None] * len(values)
     for index in range(pivot_len, len(values) - pivot_len):
         window = values[index - pivot_len:index + pivot_len + 1]
         if values[index] <= min(window):
