@@ -8,6 +8,7 @@
     "start": "node dist/main.js",
     "lint": "eslint src --ext .ts",
     "test:entitlements": "npm run build && node tests/plan-entitlements.test.mjs",
+    "test:market-stream": "node tests/market-stream.test.mjs",
     "test:strategy-contract": "node tests/strategy-contract.test.mjs",
     "test:e2e:plans": "node tests/plan-e2e.test.mjs"
   },
@@ -16,9 +17,11 @@
     "@nestjs/config": "^3.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
+    "@types/ws": "^8.18.1",
     "pg": "^8.11.0",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.0"
+    "rxjs": "^7.8.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
