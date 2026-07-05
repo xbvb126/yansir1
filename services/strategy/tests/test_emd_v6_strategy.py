@@ -2,8 +2,20 @@ import unittest
 
 from app.models import StrategyRunRequest
 from app.strategies.emd_trend import run_emd_trend_strategy
+from app.strategies.emd_v6 import EmdV6Engine
 
-from .fixtures import candles_from_closes, trend_long_request, trend_short_request, weak_reduce_long_request
+from .fixtures import (
+    break_retest_long_add_request,
+    candles_from_closes,
+    pullback_resume_long_request,
+    real_ratio_alignment_request,
+    reversal_long_request,
+    same_side_duplicate_long_request,
+    same_side_duplicate_short_request,
+    trend_long_request,
+    trend_short_request,
+    weak_reduce_long_request,
+)
 
 
 class EmdV6StrategyReplayTest(unittest.TestCase):
@@ -51,6 +63,50 @@ class EmdV6StrategyReplayTest(unittest.TestCase):
         self.assertEqual(signal.engine, "trend_weakness")
         self.assertEqual(signal.side, "long")
         self.assertEqual(signal.reduce_pct, 25.0)
+
+    def test_real_ratio_mtf_htf_alignment_never_reads_future_candles(self):
+        series = EmdV6Engine(real_ratio_alignment_request()).build_series()
+
+        self.assertEqual(series.mtf["close"], [None, None, 200, 200, 200])
+        self.assertEqual(series.htf["close"], [90, 90, 90, 90, 90])
+
+    def test_reversal_long_signal_uses_reversal_family(self):
+        response = run_emd_trend_strategy(reversal_long_request())
+
+        signal = self._only_signal(response.signals, "reversal_long_signal")
+        self.assertEqual(signal.action, "open_long")
+        self.assertEqual(signal.engine, "reversal_support")
+        self.assertEqual(signal.side, "long")
+
+    def test_pullback_resume_long_is_add_not_base_open(self):
+        response = run_emd_trend_strategy(pullback_resume_long_request())
+
+        signal = self._only_signal(response.signals, "resume_long")
+        self.assertEqual(signal.action, "add_long")
+        self.assertEqual(signal.engine, "trend_pullback_add")
+        self.assertEqual(signal.side, "long")
+
+    def test_break_retest_long_is_add_not_base_open(self):
+        response = run_emd_trend_strategy(break_retest_long_add_request())
+
+        signal = self._only_signal(response.signals, "break_retest_long_add")
+        self.assertEqual(signal.action, "add_long")
+        self.assertEqual(signal.engine, "break_retest_add")
+        self.assertEqual(signal.side, "long")
+
+    def test_same_side_trend_flip_does_not_emit_second_base_open(self):
+        response = run_emd_trend_strategy(same_side_duplicate_long_request())
+
+        signal = self._only_signal(response.signals, "resume_long")
+        self.assertEqual(signal.action, "add_long")
+        self.assertNotEqual(signal.action, "open_long")
+
+    def test_same_side_short_trend_flip_does_not_emit_second_base_open(self):
+        response = run_emd_trend_strategy(same_side_duplicate_short_request())
+
+        signal = self._only_signal(response.signals, "resume_short")
+        self.assertEqual(signal.action, "add_short")
+        self.assertNotEqual(signal.action, "open_short")
 
     def test_response_contains_diagnostics_bands_and_state(self):
         request = trend_long_request()

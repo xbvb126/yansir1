@@ -191,13 +191,21 @@ class EmdV6Engine:
             rsi=rsi,
             adx=adx,
             bb_width_pct=bb_width_pct,
-            mtf=self.timeframe_series(self.payload.mtf_candles, confirmed=False),
-            htf=self.timeframe_series(self.payload.htf_candles, confirmed=True),
+            mtf=self.timeframe_series(
+                self.payload.mtf_candles,
+                confirmed=False,
+                timeframe=self.payload.mtf_timeframe,
+            ),
+            htf=self.timeframe_series(
+                self.payload.htf_candles,
+                confirmed=True,
+                timeframe=self.payload.htf_timeframe,
+            ),
             pivot_high=pivot_high_series(highs, DEFAULT_SR_PIVOT_LEN),
             pivot_low=pivot_low_series(lows, DEFAULT_SR_PIVOT_LEN),
         )
 
-    def timeframe_series(self, candles: list[Candle], *, confirmed: bool) -> dict[str, list[Any]]:
+    def timeframe_series(self, candles: list[Candle], *, confirmed: bool, timeframe: str) -> dict[str, list[Any]]:
         base_len = len(self.payload.candles)
         if not candles:
             return {
@@ -211,14 +219,25 @@ class EmdV6Engine:
         avg = rma_series(closes, cfg.length)
         dev = ema_series([abs(close - (avg[index] or close)) for index, close in enumerate(closes)], cfg.length)
         directions = self.direction_series(closes, avg, dev, cfg.buffer_ratio * cfg.mult)
+        base_decision_times = self.candle_close_times(self.payload.candles, self.payload.timeframe)
+        source_close_times = self.candle_close_times(candles, timeframe)
         mapped_close: list[float | None] = []
         mapped_avg: list[float | None] = []
         mapped_dev: list[float | None] = []
         mapped_dir: list[int] = []
-        for base_index in range(base_len):
-            source_index = min(base_index, len(candles) - 1)
-            if confirmed:
-                source_index -= 1
+        source_index = -1
+        # Pine lookahead_off-compatible replay: all higher-timeframe values are
+        # selected by time, never array position, and only after that candle is closed.
+        # The confirmed flag documents the HTF call site; timestamp closure is the
+        # confirmation rule for both current MTF values and HTF direction.
+        _ = confirmed
+        for decision_time in base_decision_times:
+            while source_index + 1 < len(candles):
+                candidate_index = source_index + 1
+                candidate = candles[candidate_index]
+                if candidate.open_time > decision_time or source_close_times[candidate_index] > decision_time:
+                    break
+                source_index = candidate_index
             if source_index < 0:
                 mapped_close.append(None)
                 mapped_avg.append(None)
@@ -230,6 +249,44 @@ class EmdV6Engine:
             mapped_dev.append(dev[source_index])
             mapped_dir.append(directions[source_index])
         return {"close": mapped_close, "avg": mapped_avg, "dev": mapped_dev, "dir": mapped_dir}
+
+    def candle_close_times(self, candles: list[Candle], timeframe: str) -> list[int]:
+        interval_ms = self.inferred_interval_ms(candles, timeframe)
+        close_times: list[int] = []
+        for index, candle in enumerate(candles):
+            if candle.close_time is not None:
+                close_times.append(candle.close_time)
+            elif index + 1 < len(candles):
+                close_times.append(candles[index + 1].open_time)
+            else:
+                close_times.append(candle.open_time + interval_ms)
+        return close_times
+
+    def inferred_interval_ms(self, candles: list[Candle], timeframe: str) -> int:
+        for previous, current in zip(candles, candles[1:], strict=False):
+            delta = current.open_time - previous.open_time
+            if delta > 0:
+                return delta
+        return self.timeframe_to_ms(timeframe) or 0
+
+    def timeframe_to_ms(self, timeframe: str) -> int | None:
+        value = timeframe.strip().lower()
+        if not value:
+            return None
+        if value.isdigit():
+            return int(value) * 60_000
+        unit_multipliers = {
+            "s": 1_000,
+            "m": 60_000,
+            "h": 3_600_000,
+            "d": 86_400_000,
+            "w": 604_800_000,
+        }
+        unit = value[-1]
+        amount = value[:-1]
+        if unit not in unit_multipliers or not amount.isdigit():
+            return None
+        return int(amount) * unit_multipliers[unit]
 
     def replay(self, series: ReplaySeries) -> tuple[list[StrategySignal], BarContext]:
         latest_signals: list[StrategySignal] = []
@@ -340,8 +397,8 @@ class EmdV6Engine:
             trade_allowed = not is_chaos_market
             allow_long = htf_dir == 1 and mtf_trend_ok_long and adx is not None and adx >= cfg.trend_adx_min
             allow_short = htf_dir == -1 and mtf_trend_ok_short and adx is not None and adx >= cfg.trend_adx_min
-            can_initial_long = self.state.position_size <= 0 or self.state.open_trades < DEFAULT_MAX_OPEN_TRADES
-            can_initial_short = self.state.position_size >= 0 or self.state.open_trades < DEFAULT_MAX_OPEN_TRADES
+            can_initial_long = self.state.position_size <= 0
+            can_initial_short = self.state.position_size >= 0
             trend_long_signal = bool(
                 trend_engine_on and trade_allowed and long_flip and allow_long and can_initial_long and not_chase_long
             )
@@ -410,8 +467,8 @@ class EmdV6Engine:
                 price_touch_resistance=bool(price_touch_resistance),
                 support_strength=support_strength,
                 resistance_strength=resistance_strength,
-                can_open_long=self.state.position_size <= 0 or self.state.open_trades < DEFAULT_MAX_OPEN_TRADES,
-                can_open_short=self.state.position_size >= 0 or self.state.open_trades < DEFAULT_MAX_OPEN_TRADES,
+                can_open_long=can_initial_long,
+                can_open_short=can_initial_short,
                 trend_long_signal=trend_long_signal,
                 trend_short_signal=trend_short_signal,
             )
