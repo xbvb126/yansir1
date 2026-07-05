@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service";
-import { UserRecord } from "../shared/mocks";
+import { mockUsers, UserRecord } from "../shared/mocks";
 import { PlanEntitlementRecord } from "./entitlements";
 import { UpdateUserDto } from "./dto/update-user.dto";
 
@@ -89,6 +89,11 @@ export class UsersRepository {
       };
     }
 
+    if (!this.database.enabled) {
+      const user = mockUsers.find((item) => normalizePhone(item.phone) === normalizedPhone);
+      return user ? { ...user, passwordHash: null } : null;
+    }
+
     return null;
   }
 
@@ -130,6 +135,11 @@ export class UsersRepository {
         ...mapUserRow(rows[0]),
         passwordHash: rows[0].password_hash
       };
+    }
+
+    if (!this.database.enabled) {
+      const user = mockUsers.find((item) => item.id === userId);
+      return user ? { ...user, passwordHash: null } : null;
     }
 
     return null;
@@ -322,6 +332,10 @@ export class UsersRepository {
         limit 50
       `
     );
+
+    if (!rows.length && !this.database.enabled) {
+      return mockUsers;
+    }
 
     return rows.map((row) => ({
       id: row.id,

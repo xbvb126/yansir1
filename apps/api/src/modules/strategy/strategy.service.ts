@@ -581,6 +581,7 @@ export class StrategyService implements OnModuleInit {
         signals: [],
         source: "memory",
         mode,
+        access: signalAccessSummary(entitlements),
         filters: publicSignalFiltersResponse(filters),
         pagination: publicSignalPagination(filters, 0)
       };
@@ -707,6 +708,15 @@ export class StrategyService implements OnModuleInit {
         signals: [],
         source: "public_delayed_signal_events",
         delayHours,
+        historyDays,
+        access: {
+          plan: "Guest",
+          realtimeDelayHours: delayHours,
+          historyDays,
+          signalOutcomes: false,
+          performancePreviewOnly: true,
+          lockedPerformanceFields: ["4h", "24h", "maxFavorablePct", "maxAdversePct"]
+        },
         filters: publicSignalFiltersResponse(filters),
         pagination: publicSignalPagination(filters, 0)
       };

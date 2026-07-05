@@ -87,7 +87,7 @@ export const mockUsers: UserRecord[] = [
   {
     id: "u_1002",
     name: "合约研究员",
-    phone: "186****2450",
+    phone: "18600002450",
     role: "member",
     plan: "VIP",
     status: "active",
@@ -100,7 +100,7 @@ export const mockUsers: UserRecord[] = [
   {
     id: "u_1003",
     name: "试用用户",
-    phone: "177****0198",
+    phone: "17700000198",
     role: "member",
     plan: "Free",
     status: "trial",

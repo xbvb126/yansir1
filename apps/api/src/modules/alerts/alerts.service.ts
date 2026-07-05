@@ -65,6 +65,7 @@ export class AlertsService {
   private history: AlertHistoryRecord[] = [];
   private webhookUrlByUserId = new Map<string, string>();
   private webhookEnabledByUserId = new Map<string, boolean>();
+  private pushSettingsByUserId = new Map<string, { minScore: number; cooldownMinutes: number }>();
   private historyByUserId = new Map<string, AlertHistoryRecord[]>();
 
   constructor(
@@ -122,17 +123,20 @@ export class AlertsService {
     }
 
     const activeWebhookUrl = await this.activeWebhookUrl(currentUserId);
+    const savedSetting = this.pushSettingsByUserId.get(currentUserId);
+    const minScore = savedSetting?.minScore ?? entitlements.minAlertScore;
+    const cooldownMinutes = savedSetting?.cooldownMinutes ?? 15;
 
     return {
       enabled: Boolean(activeWebhookUrl),
-      minScore: entitlements.minAlertScore,
-      cooldownMinutes: 15,
+      minScore,
+      cooldownMinutes,
       config: {
         enabled: Boolean(activeWebhookUrl),
         configured: Boolean(activeWebhookUrl),
         webhookMasked: maskWebhook(activeWebhookUrl),
-        minScore: entitlements.minAlertScore,
-        cooldownMinutes: 15,
+        minScore,
+        cooldownMinutes,
         minAllowedScore: entitlements.minAlertScore,
         maxPushPerDay: entitlements.maxPushPerDay,
         feishuAllowed: entitlements.feishuAlerts,
@@ -151,6 +155,10 @@ export class AlertsService {
     if (this.database.enabled) {
       await this.saveFeishuConfigToDatabase(dto, currentUserId);
     }
+
+    const minScore = Math.max(Number.isFinite(Number(dto.minScore)) ? Math.round(Number(dto.minScore)) : entitlements.minAlertScore, entitlements.minAlertScore);
+    const cooldownMinutes = Math.max(0, Math.min(Number.isFinite(Number(dto.cooldownMinutes)) ? Math.round(Number(dto.cooldownMinutes)) : 15, 1440));
+    this.pushSettingsByUserId.set(currentUserId, { minScore, cooldownMinutes });
 
     const nextWebhookUrl = typeof dto.webhookUrl === "string" ? dto.webhookUrl.trim() : this.webhookUrlByUserId.get(currentUserId) ?? "";
 

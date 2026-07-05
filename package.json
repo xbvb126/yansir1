@@ -31,7 +31,8 @@
     "test:web:entitlements": "npm run test:entitlements -w apps/web",
     "test:e2e:plans": "npm run test:e2e:plans -w apps/api",
     "test:ci-config": "node tests/ci-plan-permissions.test.mjs",
-    "test:plans:ci": "npm run test:ci-config && npm run test:entitlements && npm run test:web:entitlements && npm run build:api && npm run build:web && npm run test:e2e:plans",
+    "test:plans:ci": "npm run test:ci-config && npm run test:entitlements && npm run test:web:entitlements && npm run build:api && npm run build:web && npm run test:e2e:plans:ci",
+    "test:e2e:plans:ci": "node infra/run-plan-e2e-ci.mjs",
     "predeploy:check": "npm run test:plans:ci && node infra/verify-env.mjs",
     "deploy:prod": "npm run predeploy:check && systemctl restart yansir-api yansir-web yansir-strategy",
     "deploy:check": "node infra/verify-env.mjs"
