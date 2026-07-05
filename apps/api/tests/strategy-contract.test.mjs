@@ -11,6 +11,8 @@ const outDir = path.join(testDir, ".tmp-strategy-contract");
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, "strategy.service.mjs");
 const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
+const esbuildCommand = process.platform === "win32" ? process.execPath : esbuildBin;
+const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
 const serviceSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.service.ts"), "utf8");
 
 assert.match(serviceSource, /function normalizeSignalPayload/);
@@ -18,8 +20,8 @@ assert.match(serviceSource, /function signalActionFromPayload/);
 assert.match(serviceSource, /action:\s*signalActionFromPayload\(payload\)/);
 assert.match(serviceSource, /payload,\s*\n\s*performance:/);
 
-execFileSync(process.execPath, [
-  esbuildBin,
+execFileSync(esbuildCommand, [
+  ...esbuildArgsPrefix,
   "src/modules/strategy/strategy.service.ts",
   "--bundle",
   "--platform=node",

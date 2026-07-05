@@ -11,8 +11,10 @@ const outDir = path.join(testDir, '.tmp');
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, 'planAccess.mjs');
 const esbuildBin = path.join(repoRoot, 'node_modules', 'esbuild', 'bin', 'esbuild');
-execFileSync(process.execPath, [
-  esbuildBin,
+const esbuildCommand = process.platform === 'win32' ? process.execPath : esbuildBin;
+const esbuildArgsPrefix = process.platform === 'win32' ? [esbuildBin] : [];
+execFileSync(esbuildCommand, [
+  ...esbuildArgsPrefix,
   'src/lib/planAccess.ts',
   '--bundle',
   '--platform=node',

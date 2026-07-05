@@ -11,9 +11,11 @@ const outDir = path.join(testDir, ".tmp");
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, "klineConfirmation.mjs");
 const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
+const esbuildCommand = process.platform === "win32" ? process.execPath : esbuildBin;
+const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
 
-execFileSync(process.execPath, [
-  esbuildBin,
+execFileSync(esbuildCommand, [
+  ...esbuildArgsPrefix,
   "src/features/klineLab/klineConfirmation.ts",
   "--bundle",
   "--platform=node",

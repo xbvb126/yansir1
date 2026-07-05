@@ -11,9 +11,11 @@ const outDir = path.join(testDir, ".tmp-market-stream");
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, "marketStream.mjs");
 const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
+const esbuildCommand = process.platform === "win32" ? process.execPath : esbuildBin;
+const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
 
-execFileSync(process.execPath, [
-  esbuildBin,
+execFileSync(esbuildCommand, [
+  ...esbuildArgsPrefix,
   "src/modules/market/market-stream.ts",
   "--bundle",
   "--platform=node",
