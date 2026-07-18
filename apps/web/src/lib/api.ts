@@ -26,9 +26,10 @@ export function setAuthToken(token: string) {
   }
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, options: { signal?: AbortSignal } = {}): Promise<T> {
   const response = await fetch(apiUrl(path), {
-    headers: apiHeaders()
+    headers: apiHeaders(),
+    signal: options.signal
   });
   if (!response.ok) {
     throw new Error(`GET ${path} failed: ${response.status}`);

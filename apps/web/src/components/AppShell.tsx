@@ -13,6 +13,7 @@ import { PublicClawPreview } from "../features/portal/PublicClawPreview";
 import { PublicHomeView } from "../features/portal/PublicHomeView";
 import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
 import { getPublicSignals, type PublicSignal, type PublicSignalsResponse } from "../features/portal/publicPortalApi";
+import { canCreateMemberOrder, createPortalRequestCoordinator, hasVerifiedIdentity, portalSignalSource, portalSignalsForResult, type PortalRequestCoordinator } from "../features/portal/publicPortalRuntime";
 import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
@@ -504,8 +505,7 @@ export function AppShell() {
   async function refreshAll() {
     const refreshGeneration = authGenerationRef.current;
     const failed: string[] = [];
-    const [signalsRes, marketRes, meRes, plansRes, teamRes, paymentRes] = await Promise.allSettled([
-      withClientTimeout(apiGet<{ signals: Signal[] }>("/api/signals"), "signals"),
+    const [marketRes, meRes, plansRes, teamRes, paymentRes] = await Promise.allSettled([
       withClientTimeout(apiGet<{ stats?: MarketStats; rows: MarketRow[]; factors: Factor[] }>("/api/market/overview"), "market"),
       withClientTimeout(apiGet<{ user: CurrentUser; entitlements: Entitlements }>("/api/me"), "me"),
       withClientTimeout(apiGet<{ plans: Plan[] }>("/api/billing/plans"), "plans"),
@@ -524,13 +524,6 @@ export function AppShell() {
     let nextTeamDashboard = teamDashboard;
     let nextPaymentProviders = paymentProviders;
 
-    if (signalsRes.status === "fulfilled") {
-      nextSignals = signalsRes.value.signals || [];
-      setSignals(nextSignals);
-    } else {
-      failed.push("信号");
-    }
-
     if (marketRes.status === "fulfilled") {
       nextMarketRows = marketRes.value.rows || [];
       nextFactors = marketRes.value.factors || [];
@@ -543,7 +536,6 @@ export function AppShell() {
     }
 
     const canApplyMeResult = refreshGeneration === authGenerationRef.current;
-    const nextOrderUser = canApplyMeResult && meRes.status === "fulfilled" ? meRes.value.user : currentUser;
     if (meRes.status === "fulfilled") {
       nextCurrentUser = meRes.value.user || emptyUser;
       nextEntitlements = meRes.value.entitlements || emptyEntitlements;
@@ -555,27 +547,54 @@ export function AppShell() {
       }
     } else {
       if (canApplyMeResult) {
+        nextCurrentUser = emptyUser;
+        nextEntitlements = emptyEntitlements;
+        setCurrentUser(emptyUser);
+        setEntitlements(emptyEntitlements);
         setCurrentUserVerified(false);
         setCurrentUserVerificationReady(true);
       }
       failed.push("账户");
     }
 
-    const hasAuthenticatedIdentity = canApplyMeResult
-      && meRes.status === "fulfilled"
-      && Boolean(nextCurrentUser.id)
-      && nextCurrentUser.role !== "guest";
-    if (canApplyMeResult && !hasAuthenticatedIdentity) {
-      try {
-        const response = await withClientTimeout(getPublicSignals({ page: 1, limit: 80 }), "public signals");
-        nextSignals = response.signals.map(publicSignalToSignal);
-        setPublicSignalResponse(response);
-        setSignals(nextSignals);
-      } catch {
-        failed.push("公开信号");
+    const identity = {
+      verified: canApplyMeResult && meRes.status === "fulfilled",
+      userId: nextCurrentUser.id,
+      role: nextCurrentUser.role
+    };
+    const signalSource = portalSignalSource(identity);
+    const hasAuthenticatedIdentity = hasVerifiedIdentity(identity);
+    if (canApplyMeResult) {
+      if (signalSource === "private") {
+        try {
+          const response = await withClientTimeout(apiGet<{ signals: Signal[] }>("/api/signals"), "signals");
+          if (refreshGeneration !== authGenerationRef.current) return false;
+          const committed = portalSignalsForResult("private", { ok: true, signals: response.signals || [] });
+          if (committed) {
+            nextSignals = committed;
+            setSignals(committed);
+          }
+          setPublicSignalResponse(null);
+        } catch {
+          if (refreshGeneration !== authGenerationRef.current) return false;
+          failed.push("信号");
+        }
+      } else {
+        try {
+          const response = await withClientTimeout(getPublicSignals({ page: 1, limit: 80 }), "public signals");
+          if (refreshGeneration !== authGenerationRef.current) return false;
+          const committed = portalSignalsForResult("public", { ok: true, signals: response.signals.map(publicSignalToSignal) }) || [];
+          nextSignals = committed;
+          setPublicSignalResponse(response);
+          setSignals(committed);
+        } catch {
+          if (refreshGeneration !== authGenerationRef.current) return false;
+          nextSignals = portalSignalsForResult<Signal>("public", { ok: false }) || [];
+          setPublicSignalResponse(null);
+          setSignals(nextSignals);
+          failed.push("公开信号");
+        }
       }
-    } else if (hasAuthenticatedIdentity) {
-      setPublicSignalResponse(null);
     }
 
     if (plansRes.status === "fulfilled") {
@@ -599,13 +618,19 @@ export function AppShell() {
       failed.push("支付");
     }
 
-    try {
-      const path = nextOrderUser?.id && nextOrderUser.role !== "admin" ? `/api/billing/orders?userId=${encodeURIComponent(nextOrderUser.id)}` : "/api/billing/orders";
-      const ordersRes = await withClientTimeout(apiGet<{ orders: BillingOrder[] }>(path), "orders");
-      nextOrders = ordersRes.orders || [];
-      setOrders(nextOrders);
-    } catch {
-      failed.push("订单");
+    if (hasAuthenticatedIdentity) {
+      try {
+        const path = nextCurrentUser.role !== "admin" ? `/api/billing/orders?userId=${encodeURIComponent(nextCurrentUser.id)}` : "/api/billing/orders";
+        const ordersRes = await withClientTimeout(apiGet<{ orders: BillingOrder[] }>(path), "orders");
+        if (refreshGeneration !== authGenerationRef.current) return false;
+        nextOrders = ordersRes.orders || [];
+        setOrders(nextOrders);
+      } catch {
+        failed.push("订单");
+      }
+    } else {
+      nextOrders = [];
+      setOrders([]);
     }
 
     if (refreshGeneration === authGenerationRef.current) {
@@ -782,25 +807,31 @@ export function AppShell() {
     setCurrentUserVerificationReady(false);
     setCurrentUser(emptyUser);
     setEntitlements(emptyEntitlements);
+    setSignals([]);
+    setPublicSignalResponse(null);
+    setOrders([]);
     clearAppDataCache();
     showToast("已退出当前账号");
     navigate("account");
+    void refreshAll();
   }
 
   async function createOrder(plan: Plan) {
-    if (!currentUser.id) {
+    if (!canCreateMemberOrder({ verified: currentUserVerificationReady && currentUserVerified, userId: currentUser.id, role: currentUser.role })) {
       showToast("请先登录后再购买会员");
       saveReturnIntent(window.sessionStorage, createRouteReturnIntent("plans", selectedSymbol));
       navigate("login");
       return;
     }
 
+    const orderGeneration = authGenerationRef.current;
     const response = await apiPost<{ order: BillingOrder }>("/api/billing/orders", {
       userId: currentUser.id,
       phone: currentUser.phone,
       planCode: plan.code || plan.id || plan.name,
       provider: "mock"
     });
+    if (orderGeneration !== authGenerationRef.current) return;
     setOrders((items) => [response.order, ...items.filter((item) => item.id !== response.order.id)]);
     showToast("订单已生成");
   }
@@ -816,7 +847,12 @@ export function AppShell() {
   }
 
   const rows = marketRows;
-  const safeSignals = signals;
+  const verifiedIdentity = hasVerifiedIdentity({
+    verified: currentUserVerificationReady && currentUserVerified,
+    userId: currentUser.id,
+    role: currentUser.role
+  });
+  const safeSignals = verifiedIdentity || publicSignalResponse ? signals : [];
   const contentView = resolvePortalContentView(view);
   const shellView = resolvePortalShellView(view);
   const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
@@ -845,7 +881,7 @@ export function AppShell() {
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
-        currentUser.id ? <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        verifiedIdentity ? <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
           : <PublicClawPreview onLogin={() => navigateWithRequirement("ai-claw", { view: "claw", action: "ai-claw" })} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "account" && (
@@ -1140,6 +1176,10 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   const [strategyScanSummary, setStrategyScanSummary] = useState("");
   const strategyScanInFlight = useRef(false);
   const strategyScheduleStarted = useRef(false);
+  const strategyRequestCoordinatorRef = useRef<PortalRequestCoordinator | null>(null);
+  const strategyLoadMoreCoordinatorRef = useRef<PortalRequestCoordinator | null>(null);
+  if (!strategyRequestCoordinatorRef.current) strategyRequestCoordinatorRef.current = createPortalRequestCoordinator();
+  if (!strategyLoadMoreCoordinatorRef.current) strategyLoadMoreCoordinatorRef.current = createPortalRequestCoordinator();
   const guestDelayText = publicDelayHours === null ? "服务端延迟规则" : `${publicDelayHours} 小时延迟`;
   const scanBaseTime = useMemo(() => currentScanSlot(scanNow), [scanNow]);
   const scanSchedule = getNextScanSchedule(stats.updatedAt, scanNow);
@@ -1314,13 +1354,18 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
     const timer = window.setInterval(() => {
       void refreshLatestStrategyScan(false);
     }, 10 * 1000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      strategyRequestCoordinatorRef.current?.invalidate();
+      strategyLoadMoreCoordinatorRef.current?.invalidate();
+    };
   }, [authenticated, trackingSection, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
 
   useEffect(() => {
     if (trackingSection !== "strategy") return;
     setStrategyRecords([]);
     setStrategyPagination(null);
+    setStrategyLoadingMore(false);
     writeStrategyTrackRecords([]);
   }, [authenticated, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore, trackingSection]);
 
@@ -1437,8 +1482,11 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   }
 
   async function refreshLatestStrategyScan(runIfMissing = false) {
+    const coordinator = strategyRequestCoordinatorRef.current!;
+    const request = coordinator.begin();
     try {
-      const response = await apiGet<StrategySignalListResponse>(strategySignalEndpoint(1, 80));
+      const response = await apiGet<StrategySignalListResponse>(strategySignalEndpoint(1, 80), { signal: request.signal });
+      if (!coordinator.isCurrent(request)) return;
       setStrategyPagination(response.pagination || null);
       const inboxSignals = Array.isArray(response.signals) ? response.signals : [];
       if (!inboxSignals.length) {
@@ -1469,6 +1517,7 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
       setStrategyRecords(merged);
       setStrategyStatus("ready");
     } catch {
+      if (!coordinator.isCurrent(request)) return;
       setStrategyStatus(strategyRecords.length ? "ready" : "error");
     }
   }
@@ -1476,9 +1525,12 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   async function loadMoreStrategySignals() {
     if (!strategyPagination?.hasMore || strategyLoadingMore) return;
     setStrategyLoadingMore(true);
+    const coordinator = strategyLoadMoreCoordinatorRef.current!;
+    const request = coordinator.begin();
     try {
       const nextPage = strategyPagination.nextPage || strategyPagination.page + 1;
-      const response = await apiGet<StrategySignalListResponse>(strategySignalEndpoint(nextPage, strategyPagination.limit));
+      const response = await apiGet<StrategySignalListResponse>(strategySignalEndpoint(nextPage, strategyPagination.limit), { signal: request.signal });
+      if (!coordinator.isCurrent(request)) return;
       setStrategyPagination(response.pagination || null);
       const nextRecords = (response.signals || []).map(strategyInboxToRecord);
       setStrategyRecords((items) => {
@@ -1487,6 +1539,7 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
         return merged;
       });
     } catch {
+      if (!coordinator.isCurrent(request)) return;
       onToast("加载更多策略历史失败");
     } finally {
       setStrategyLoadingMore(false);

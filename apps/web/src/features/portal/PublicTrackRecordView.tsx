@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { SystemIcon } from "../../components/SystemIcon";
 import { toTrackRecordRow, type TrackRecordRow } from "./publicPerformance";
 import { getPublicPerformanceSummary, getPublicSignals, type PublicPerformanceSummary } from "./publicPortalApi";
+import { normalizePublicTrackRecordSymbol, publicTrackRecordFilterKey } from "./publicPortalRuntime";
 
 const TRACK_RECORD_CACHE_KEY = "yansir.public-track-record.v1";
 
@@ -19,18 +20,22 @@ type CachedTrackRecord = {
   historyDays: number;
 };
 
-function readCache(): CachedTrackRecord | null {
+function cacheStorageKey(filterKey: string) {
+  return `${TRACK_RECORD_CACHE_KEY}.${encodeURIComponent(filterKey)}`;
+}
+
+function readCache(filterKey: string): CachedTrackRecord | null {
   try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(TRACK_RECORD_CACHE_KEY) || "null") as CachedTrackRecord | null;
+    const parsed = JSON.parse(window.sessionStorage.getItem(cacheStorageKey(filterKey)) || "null") as CachedTrackRecord | null;
     return parsed?.summary && Array.isArray(parsed.rows) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function writeCache(value: CachedTrackRecord) {
+function writeCache(filterKey: string, value: CachedTrackRecord) {
   try {
-    window.sessionStorage.setItem(TRACK_RECORD_CACHE_KEY, JSON.stringify(value));
+    window.sessionStorage.setItem(cacheStorageKey(filterKey), JSON.stringify(value));
   } catch {
     // A blocked storage API must not turn a successful public response into an error state.
   }
@@ -48,7 +53,8 @@ function formatTime(value: string | null) {
 }
 
 export function PublicTrackRecordView() {
-  const initialCache = useRef<CachedTrackRecord | null>(readCache());
+  const initialFilterKey = publicTrackRecordFilterKey({ symbol: "", direction: "all" });
+  const initialCache = useRef<CachedTrackRecord | null>(readCache(initialFilterKey));
   const [state, setState] = useState<TrackRecordLoadState>(() => {
     const cached = initialCache.current;
     return cached ? { kind: "ready", summary: cached.summary, rows: cached.rows, staleAt: cached.staleAt } : { kind: "loading" };
@@ -56,14 +62,17 @@ export function PublicTrackRecordView() {
   const [symbolDraft, setSymbolDraft] = useState("");
   const [symbol, setSymbol] = useState("");
   const [direction, setDirection] = useState<"all" | "long" | "short">("all");
+  const filterKey = publicTrackRecordFilterKey({ symbol, direction });
+  const [loadedFilterKey, setLoadedFilterKey] = useState(initialFilterKey);
   const [delayHours, setDelayHours] = useState<number | null>(initialCache.current?.delayHours ?? null);
   const [historyDays, setHistoryDays] = useState<number | null>(initialCache.current?.historyDays ?? null);
   const requestId = useRef(0);
 
   const load = useCallback(async () => {
     const activeRequest = ++requestId.current;
-    const cached = readCache();
-    if (!cached) setState({ kind: "loading" });
+    const cached = readCache(filterKey);
+    setLoadedFilterKey(filterKey);
+    setState(cached ? { kind: "ready", summary: cached.summary, rows: cached.rows, staleAt: cached.staleAt } : { kind: "loading" });
     try {
       const query = {
         page: 1,
@@ -82,13 +91,13 @@ export function PublicTrackRecordView() {
         delayHours: signals.delayHours,
         historyDays: signals.historyDays
       };
-      writeCache(nextCache);
+      writeCache(filterKey, nextCache);
       setDelayHours(signals.delayHours);
       setHistoryDays(signals.historyDays);
       setState(rows.length ? { kind: "ready", summary, rows, staleAt } : { kind: "empty", summary });
     } catch (error) {
       if (activeRequest !== requestId.current) return;
-      const fallback = readCache();
+      const fallback = readCache(filterKey);
       setState({
         kind: "unavailable",
         message: error instanceof Error ? error.message : "公开战绩暂时不可用",
@@ -96,7 +105,7 @@ export function PublicTrackRecordView() {
         staleAt: fallback?.staleAt || null
       });
     }
-  }, [direction, symbol]);
+  }, [direction, filterKey, symbol]);
 
   useEffect(() => {
     void load();
@@ -104,12 +113,12 @@ export function PublicTrackRecordView() {
 
   function submitSymbol(event: FormEvent) {
     event.preventDefault();
-    setSymbol(symbolDraft.trim().toUpperCase().replace(/USDT$/, ""));
+    setSymbol(normalizePublicTrackRecordSymbol(symbolDraft));
   }
 
-  const cachedSummary = readCache()?.summary;
-  const summary = state.kind === "ready" || state.kind === "empty" ? state.summary : cachedSummary;
-  const rows = state.kind === "ready" ? state.rows : state.kind === "unavailable" ? state.cached : [];
+  const displayState: TrackRecordLoadState = loadedFilterKey === filterKey ? state : { kind: "loading" };
+  const summary = displayState.kind === "ready" || displayState.kind === "empty" ? displayState.summary : readCache(filterKey)?.summary;
+  const rows = displayState.kind === "ready" ? displayState.rows : displayState.kind === "unavailable" ? displayState.cached : [];
 
   return (
     <section className="view active-view public-track-record-view" aria-labelledby="track-record-title">
@@ -150,11 +159,11 @@ export function PublicTrackRecordView() {
         </div>
       </section>
 
-      {state.kind === "loading" && <div className="portal-empty-state" role="status"><SystemIcon name="clock" /><div><strong>正在加载公开战绩</strong><p>正在读取服务端确认已满足延迟条件的真实信号。</p></div></div>}
-      {state.kind === "empty" && <div className="portal-empty-state" role="status"><SystemIcon name="target" /><div><strong>当前筛选暂无记录</strong><p>可清空币种或切换方向后重试；系统不会补造信号。</p></div></div>}
-      {state.kind === "unavailable" && (
-        <div className={`track-unavailable ${state.cached.length ? "stale" : ""}`} role="alert">
-          <div><strong>{state.cached.length ? "数据已过期" : "公开战绩暂时不可用"}</strong><p>{state.cached.length ? `最后成功更新时间 ${formatTime(state.staleAt)}` : state.message}</p></div>
+      {displayState.kind === "loading" && <div className="portal-empty-state" role="status"><SystemIcon name="clock" /><div><strong>正在加载公开战绩</strong><p>正在读取服务端确认已满足延迟条件的真实信号。</p></div></div>}
+      {displayState.kind === "empty" && <div className="portal-empty-state" role="status"><SystemIcon name="target" /><div><strong>当前筛选暂无记录</strong><p>可清空币种或切换方向后重试；系统不会补造信号。</p></div></div>}
+      {displayState.kind === "unavailable" && (
+        <div className={`track-unavailable ${displayState.cached.length ? "stale" : ""}`} role="alert">
+          <div><strong>{displayState.cached.length ? "数据已过期" : "公开战绩暂时不可用"}</strong><p>{displayState.cached.length ? `最后成功更新时间 ${formatTime(displayState.staleAt)}` : displayState.message}</p></div>
           <button type="button" onClick={() => void load()}>重新加载</button>
         </div>
       )}

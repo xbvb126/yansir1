@@ -15,6 +15,7 @@
     "test:radar-live": "node tests/live-signal-command.test.mjs",
     "test:touch-targets": "node tests/touch-targets.test.mjs",
     "test:portal-source": "node tests/public-portal-source.test.mjs",
+    "test:portal-runtime": "node tests/public-portal-runtime.test.mjs",
     "test:portal-routing": "node tests/portal-routing.test.mjs",
     "test:public-performance": "node tests/public-performance.test.mjs",
     "test:view-routing": "node tests/view-routing.test.mjs"
