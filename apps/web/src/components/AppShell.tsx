@@ -11,6 +11,8 @@ import { resolvePortalContentView, resolvePortalShellView } from "../features/po
 import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
 import { PublicClawPreview } from "../features/portal/PublicClawPreview";
 import { PublicHomeView } from "../features/portal/PublicHomeView";
+import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
+import { getPublicSignals, type PublicSignal, type PublicSignalsResponse } from "../features/portal/publicPortalApi";
 import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
@@ -31,6 +33,19 @@ type Signal = {
   reason: string;
   confidence?: string;
 };
+
+function publicSignalToSignal(signal: PublicSignal): Signal {
+  return {
+    id: signal.id,
+    symbol: signal.symbol,
+    score: signal.score,
+    direction: signal.direction,
+    title: signal.title,
+    reason: signal.reason,
+    time: signal.time,
+    confidence: signal.engine || "策略引擎"
+  };
+}
 
 type MarketRow = {
   symbol: string;
@@ -429,6 +444,7 @@ export function AppShell() {
   const [dataError, setDataError] = useState("");
   const [toast, setToast] = useState("");
   const [signals, setSignals] = useState<Signal[]>(() => initialCache?.signals || []);
+  const [publicSignalResponse, setPublicSignalResponse] = useState<PublicSignalsResponse | null>(null);
   const [marketRows, setMarketRows] = useState<MarketRow[]>(() => initialCache?.marketRows || []);
   const [factors, setFactors] = useState<Factor[]>(() => initialCache?.factors || []);
   const [marketStats, setMarketStats] = useState<MarketStats>(() => initialCache?.marketStats || { monitoredSymbols: 0, crowdedRisks: 0, liveSources: 0 });
@@ -545,6 +561,23 @@ export function AppShell() {
       failed.push("账户");
     }
 
+    const hasAuthenticatedIdentity = canApplyMeResult
+      && meRes.status === "fulfilled"
+      && Boolean(nextCurrentUser.id)
+      && nextCurrentUser.role !== "guest";
+    if (canApplyMeResult && !hasAuthenticatedIdentity) {
+      try {
+        const response = await withClientTimeout(getPublicSignals({ page: 1, limit: 80 }), "public signals");
+        nextSignals = response.signals.map(publicSignalToSignal);
+        setPublicSignalResponse(response);
+        setSignals(nextSignals);
+      } catch {
+        failed.push("公开信号");
+      }
+    } else if (hasAuthenticatedIdentity) {
+      setPublicSignalResponse(null);
+    }
+
     if (plansRes.status === "fulfilled") {
       nextPlans = plansRes.value.plans || [];
       setPlans(nextPlans);
@@ -643,6 +676,9 @@ export function AppShell() {
   function navigate(nextView: ViewName) {
     setValueClawSignalContext(null);
     setSymbolSignalContext(null);
+    if (nextView === "login" && view === "data") {
+      saveReturnIntent(window.sessionStorage, createRouteReturnIntent("data", selectedSymbol));
+    }
     const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
     if (prompt) {
       saveReturnIntent(window.sessionStorage, createRouteReturnIntent(nextView, selectedSymbol));
@@ -754,6 +790,7 @@ export function AppShell() {
   async function createOrder(plan: Plan) {
     if (!currentUser.id) {
       showToast("请先登录后再购买会员");
+      saveReturnIntent(window.sessionStorage, createRouteReturnIntent("plans", selectedSymbol));
       navigate("login");
       return;
     }
@@ -792,16 +829,17 @@ export function AppShell() {
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : shellView}`}>
       {showPrimaryNav && <ResponsivePrimaryNav activeView={view} currentUser={currentUser} onNavigate={navigate} />}
       {dataStatus !== "loading" && !showSymbolDetail && view === "home" && (
-        <PublicHomeView featuredSignal={null} onNavigate={navigate} />
+        <PublicHomeView featuredSignal={publicSignalResponse?.signals[0] || null} onNavigate={navigate} />
       )}
+      {dataStatus !== "loading" && !showSymbolDetail && view === "track-record" && <PublicTrackRecordView />}
       {dataStatus !== "loading" && showSymbolDetail && (
         <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} radarSignalContext={normalizeDisplaySymbol(symbolSignalContext?.symbol || "") === normalizeDisplaySymbol(selectedSymbol) ? symbolSignalContext : null} currentUser={currentUser} entitlements={entitlements} onBack={closeSymbol} onNavigate={navigate} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view !== "home" && contentView === "data" && (
         <DataPage currentUser={currentUser} entitlements={entitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
-      {dataStatus !== "loading" && !showSymbolDetail && contentView === "radar" && (
-        <RadarPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
+      {dataStatus !== "loading" && !showSymbolDetail && view !== "track-record" && contentView === "radar" && (
+        <RadarPage authenticated={currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id)} currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} publicDelayHours={publicSignalResponse?.delayHours ?? null} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
@@ -1077,7 +1115,7 @@ function DataPage({ currentUser, entitlements, factors, onNavigate, onOpenSearch
   );
 }
 
-function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onOpenSymbolSignal, onOpenValueClawSignal, onToast, rows, signals, stats }: { currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onOpenSymbolSignal: (signal: LiveSignal) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
+function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onOpenSymbolSignal, onOpenValueClawSignal, onToast, publicDelayHours, rows, signals, stats }: { authenticated: boolean; currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onOpenSymbolSignal: (signal: LiveSignal) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; publicDelayHours: number | null; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
   const [trackingSection, setTrackingSection] = useState<"ai" | "strategy" | "mine">("strategy");
   const [signalFilter, setSignalFilter] = useState<"all" | "surge" | "opportunity" | "risk">("all");
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
@@ -1102,6 +1140,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   const [strategyScanSummary, setStrategyScanSummary] = useState("");
   const strategyScanInFlight = useRef(false);
   const strategyScheduleStarted = useRef(false);
+  const guestDelayText = publicDelayHours === null ? "服务端延迟规则" : `${publicDelayHours} 小时延迟`;
   const scanBaseTime = useMemo(() => currentScanSlot(scanNow), [scanNow]);
   const scanSchedule = getNextScanSchedule(stats.updatedAt, scanNow);
   const radarRecords = useMemo<RadarTimelineRecord[]>(() => signals.map((signal, index) => {
@@ -1264,8 +1303,10 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
   useEffect(() => {
     strategyScheduleStarted.current = false;
+    if (!currentUser.id) return;
+    if (!authenticated) return;
     void ensureStrategyRealtime();
-  }, [currentUser.id, watchlistSymbols.join(",")]);
+  }, [authenticated, currentUser.id, watchlistSymbols.join(",")]);
 
   useEffect(() => {
     if (trackingSection !== "strategy") return;
@@ -1274,14 +1315,14 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       void refreshLatestStrategyScan(false);
     }, 10 * 1000);
     return () => window.clearInterval(timer);
-  }, [trackingSection, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
+  }, [authenticated, trackingSection, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
 
   useEffect(() => {
     if (trackingSection !== "strategy") return;
     setStrategyRecords([]);
     setStrategyPagination(null);
     writeStrategyTrackRecords([]);
-  }, [currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore, trackingSection]);
+  }, [authenticated, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore, trackingSection]);
 
   useEffect(() => {
     if (signalFilter !== "all" && filterCounts[signalFilter] === 0) {
@@ -1290,6 +1331,8 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   }, [filterCounts.opportunity, filterCounts.risk, filterCounts.surge, signalFilter]);
 
   async function scanStrategyTrack(silent: boolean) {
+    if (!currentUser.id) return;
+    if (!authenticated) return;
     if (strategyScanInFlight.current) {
       return;
     }
@@ -1343,6 +1386,8 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   }
 
   async function ensureStrategyRealtime() {
+    if (!currentUser.id) return;
+    if (!authenticated) return;
     if (strategyScheduleStarted.current) return;
 
     strategyScheduleStarted.current = true;
@@ -1362,9 +1407,9 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         directions: ["long", "short"],
         cooldownMinutes: 15
       });
-      setStrategyScanSummary(currentUser.id
+      setStrategyScanSummary(authenticated
         ? "实时K线监听已启动：有新的 Pine V6 标准多空信号时才显示并触发推送。"
-        : "未登录仅展示延迟8小时的策略信号；登录后可查看自选币种实时信号并接收推送。"
+        : `未登录仅展示${guestDelayText}的策略信号；登录后可查看自选币种实时信号并接收推送。`
       );
     } catch {
       strategyScheduleStarted.current = false;
@@ -1373,13 +1418,13 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
   function strategySignalEndpoint(page = 1, limit = 80) {
     const params = new URLSearchParams({ limit: String(limit), page: String(page) });
-    if (currentUser.id) params.set("mode", strategyHistoryMode);
+    if (authenticated) params.set("mode", strategyHistoryMode);
     const cleanSymbol = normalizeDisplaySymbol(strategyFilterSymbol.trim());
     if (cleanSymbol) params.set("symbol", cleanSymbol);
     if (strategyFilterTimeframe !== "all") params.set("timeframe", strategyFilterTimeframe);
     if (strategyFilterDirection !== "all") params.set("direction", strategyFilterDirection);
     if (strategyFilterMinScore !== "all") params.set("minScore", strategyFilterMinScore);
-    return currentUser.id
+    return authenticated
       ? `/api/strategy/inbox?${params.toString()}`
       : `/api/strategy/public-signals?${params.toString()}`;
   }
@@ -1399,11 +1444,11 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       if (!inboxSignals.length) {
         setStrategyStatus(strategyRecords.length && !runIfMissing ? "ready" : "idle");
         if (runIfMissing) {
-          setStrategyScanSummary(currentUser.id
+          setStrategyScanSummary(authenticated
             ? (strategyHistoryMode === "current"
               ? "实时K线监听中：当前自选币种/周期暂无 Pine V6 信号；切到“全部历史”可看取消自选前的历史。"
               : "全部历史里暂无已投递到你的策略信号；后续命中自选后会长期保留。")
-            : "未登录仅能查看8小时前的公开历史信号；最近8小时实时信号需登录后查看。"
+            : `未登录仅能查看${guestDelayText}的公开历史信号；实时信号需登录后查看。`
           );
           setStrategyRecords([]);
           writeStrategyTrackRecords([]);
@@ -1413,9 +1458,9 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
       const nextRecords = inboxSignals.map(strategyInboxToRecord);
       setStrategyLastScan(formatStrategyScanTime(inboxSignals[0].receivedAt || inboxSignals[0].time));
-      setStrategyScanSummary(currentUser.id
+      setStrategyScanSummary(authenticated
         ? `${strategyHistoryMode === "current" ? "当前自选" : "全部历史"}策略信号 ${response.pagination?.total ?? inboxSignals.length} 条，当前页 ${inboxSignals.length} 条。`
-        : `公开延迟信号 ${response.pagination?.total ?? inboxSignals.length} 条，仅展示8小时以前的历史信号。`
+        : `公开延迟信号 ${response.pagination?.total ?? inboxSignals.length} 条，仅展示满足${guestDelayText}的历史信号。`
       );
       const merged = runIfMissing
         ? mergeStrategyRecords(nextRecords).slice(0, STRATEGY_TRACK_HISTORY_LIMIT)
@@ -1469,6 +1514,10 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   function handleToggleWatchSymbol(symbol: string) {
     const cleanSymbol = normalizeDisplaySymbol(symbol);
     if (!cleanSymbol) return;
+    if (!authenticated) {
+      setUpgradePrompt({ title: "登录后保存关注", desc: "公开雷达可浏览延迟信号；登录后才能把币种加入关注并保存监控规则。" });
+      return;
+    }
 
     const normalizedItems = watchlistSymbols.map(normalizeDisplaySymbol).filter(Boolean);
     const isWatched = normalizedItems.includes(cleanSymbol);
@@ -1500,17 +1549,17 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         </div>
       </header>
       {trackingSection !== "strategy" && <section className="ai-track-login-strip">
-        <span>{currentUser.id ? `已同步实时信号，下次扫描 ${scanSchedule.time}` : `当前可查看 ${radarWindow} 前信号，登录了解更多。`}</span>
-        <button type="button" onClick={() => (currentUser.id ? setRuleSettingsOpen(true) : setUpgradePrompt({ title: "登录后配置雷达规则", desc: "未登录只能查看延迟信号。登录后可配置规则，升级后可开启更多周期、推送和完整战绩。" }))}>{currentUser.id ? "规则" : "去登录"}</button>
+        <span>{authenticated ? `已同步实时信号，下次扫描 ${scanSchedule.time}` : `当前展示${guestDelayText}的信号，登录了解更多。`}</span>
+        <button type="button" onClick={() => (authenticated ? setRuleSettingsOpen(true) : setUpgradePrompt({ title: "登录后配置雷达规则", desc: "未登录只能查看延迟信号。登录后可配置规则，升级后可开启更多周期、推送和完整战绩。" }))}>{authenticated ? "规则" : "去登录"}</button>
       </section>}
-      {trackingSection === "strategy" && currentUser.id && <section className="ai-track-login-strip">
+      {trackingSection === "strategy" && authenticated && <section className="ai-track-login-strip">
         <span>{strategyHistoryMode === "current" ? "当前自选：只看仍启用自选币种/周期" : "全部历史：保留取消自选前收到过的信号"}</span>
         <button type="button" onClick={() => setStrategyHistoryMode((mode) => mode === "current" ? "all" : "current")}>{strategyHistoryMode === "current" ? "全部历史" : "当前自选"}</button>
       </section>}
-      {trackingSection === "strategy" && !currentUser.id && (
-        <UpgradeGuideCard title="实时信号需登录后开启" desc="未登录只能查看 8 小时延迟的全市场历史；登录并升级后可按自选币种实时接收推送。" actionLabel="登录查看实时" onClick={() => onNavigate("login")} />
+      {trackingSection === "strategy" && !authenticated && (
+        <UpgradeGuideCard title="实时信号需登录后开启" desc={`未登录只能查看${guestDelayText}的全市场历史；登录并升级后可按自选币种实时接收推送。`} actionLabel="登录查看实时" onClick={() => onNavigate("login")} />
       )}
-      {trackingSection === "strategy" && currentUser.id && planLevel(entitlements.plan) < 3 && (
+      {trackingSection === "strategy" && authenticated && planLevel(entitlements.plan) < 3 && (
         <UpgradeGuideCard title="升级解锁更多周期和完整战绩" desc={`${entitlements.plan || "Free"} 当前可用周期 ${(entitlements.allowedTimeframes || []).join(" / ") || "5m"}，升级可解锁更多自选、4h/24h 战绩和更高推送额度。`} onClick={() => onNavigate("plans")} />
       )}
       {trackingSection === "strategy" && <section className="strategy-filter-panel">
@@ -1523,7 +1572,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         </div>
         <div className="strategy-filter-row quick-row" role="group" aria-label="策略信号周期筛选">
           {["all", "5m", "15m", "1h", "4h"].map((item) => {
-            const allowed = item === "all" || !currentUser.id || (entitlements.allowedTimeframes || ["5m"]).includes(item);
+            const allowed = item === "all" || !authenticated || (entitlements.allowedTimeframes || ["5m"]).includes(item);
             return <button key={`tf-${item}`} className={`${strategyFilterTimeframe === item ? "active" : ""} ${allowed ? "" : "locked"}`} type="button" aria-disabled={!allowed} onClick={() => allowed ? setStrategyFilterTimeframe(item) : setUpgradePrompt({ title: `升级解锁 ${item} 策略信号`, desc: `${entitlements.plan || "Free"} 当前可用周期 ${(entitlements.allowedTimeframes || ["5m"]).join(" / ")}。升级后可查看更多周期的历史和实时信号。` })}>{item === "all" ? "全部周期" : item}{allowed ? "" : " · 升级"}</button>;
           })}
         </div>
@@ -1537,7 +1586,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
             <button key={`score-${item.key}`} className={strategyFilterMinScore === item.key ? "active" : ""} type="button" onClick={() => setStrategyFilterMinScore(item.key)}>{item.label}</button>
           ))}
         </div>
-        <small>{currentUser.id ? "筛选当前账户 inbox 历史；切换“全部历史”可查已取消自选前的记录。" : "未登录筛选 8 小时延迟的全市场历史信号。"}</small>
+        <small>{authenticated ? "筛选当前账户 inbox 历史；切换“全部历史”可查已取消自选前的记录。" : `未登录筛选${guestDelayText}的全市场历史信号。`}</small>
       </section>}
       {ruleSettingsOpen && (
         <div className="symbol-alert-modal radar-rule-modal">
@@ -1593,7 +1642,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         onOpenValueClaw={handleOpenValueClaw}
         onToggleWatch={handleToggleWatchSymbol}
       />
-      {upgradePrompt && <UpgradeModal title={upgradePrompt.title} desc={upgradePrompt.desc} onClose={() => setUpgradePrompt(null)} onUpgrade={() => { setUpgradePrompt(null); onNavigate(currentUser.id ? "plans" : "login"); }} actionLabel={currentUser.id ? "查看会员套餐" : "去登录"} />}
+      {upgradePrompt && <UpgradeModal title={upgradePrompt.title} desc={upgradePrompt.desc} onClose={() => setUpgradePrompt(null)} onUpgrade={() => { setUpgradePrompt(null); onNavigate(authenticated ? "plans" : "login"); }} actionLabel={authenticated ? "查看会员套餐" : "去登录"} />}
     </section>
   );
 }

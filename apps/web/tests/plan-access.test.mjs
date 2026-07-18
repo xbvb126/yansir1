@@ -186,5 +186,13 @@ const sparseFull = visiblePerformanceForEntitlements(sparsePerformance, svipEnti
 assert.equal(sparseFull.maxFavorablePct, 0.05);
 assert.deepEqual(sparseFull.lockedFields, []);
 
+// Anonymous Track Record is limited to the short review windows even when the
+// service response happens to include later outcomes.
+const anonymousTrackRecord = visiblePerformanceForEntitlements(fullPerformance, freeEntitlements);
+assert.deepEqual(Object.keys(anonymousTrackRecord.returns).sort(), ['15m', '1h']);
+assert.deepEqual(anonymousTrackRecord.lockedFields, ['4h', '24h', 'maxFavorablePct', 'maxAdversePct']);
+assert.equal(anonymousTrackRecord.maxFavorablePct, null);
+assert.equal(anonymousTrackRecord.maxAdversePct, null);
+
 rmSync(outDir, { recursive: true, force: true });
 console.log('frontend entitlement tests passed');
