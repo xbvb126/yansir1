@@ -6,7 +6,10 @@ import { KlineLabView } from "../features/klineLab/KlineLabView";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
+import { accessDecision, type AccessRequirement } from "../features/portal/accessBoundary";
 import { resolvePortalContentView } from "../features/portal/portalShell";
+import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
+import { consumeReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
 
@@ -586,6 +589,20 @@ export function AppShell() {
     }
     setDataStatus("ready");
     setDataError(failed.length ? `部分接口连接失败：${failed.join("、")}，已展示本地缓存。` : "");
+    return canApplyMeResult && meRes.status === "fulfilled" ? restoreReturnIntent() : false;
+  }
+
+  function restoreReturnIntent() {
+    const intent = consumeReturnIntent(window.sessionStorage);
+    if (!intent) return false;
+    setRoutePrompt(null);
+    setValueClawSignalContext(null);
+    setSymbolSignalContext(null);
+    setView(intent.view);
+    setSelectedSymbol(normalizeDisplaySymbol(intent.symbol || ""));
+    replaceAppUrl(intent.view, intent.symbol);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return true;
   }
 
   function navigate(nextView: ViewName) {
@@ -593,6 +610,11 @@ export function AppShell() {
     setSymbolSignalContext(null);
     const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
     if (prompt) {
+      saveReturnIntent(window.sessionStorage, {
+        view: nextView,
+        symbol: selectedSymbol || undefined,
+        action: `navigate:${nextView}`
+      });
       setRoutePrompt(prompt);
       setView(prompt.fallbackView);
       setSelectedSymbol("");
@@ -606,8 +628,22 @@ export function AppShell() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function navigateWithRequirement(requirement: AccessRequirement, intent: ReturnIntent) {
+    const decision = accessDecision(requirement, {
+      signedIn: Boolean(currentUser.id && currentUser.role !== "guest"),
+      plan: entitlements.plan || currentUser.plan
+    });
+    if (decision.allowed) {
+      navigate(intent.view);
+      return true;
+    }
+    saveReturnIntent(window.sessionStorage, intent);
+    navigate(decision.next || "account");
+    return false;
+  }
+
   function openValueClawFromSignal(signal: LiveSignal) {
-    navigate("claw");
+    if (!navigateWithRequirement("ai-claw", { view: "claw", signalId: signal.id, action: "review-signal" })) return;
     setValueClawSignalContext(signal);
     showToast(`${signal.symbol} 的 ValueClaw 复核上下文已准备好`);
   }
@@ -653,8 +689,8 @@ export function AppShell() {
     setActiveUserId(response.user.id);
     setCurrentUser(response.user);
     showToast("登录成功");
-    await refreshAll();
-    navigate("account");
+    const restoredIntent = await refreshAll();
+    if (!restoredIntent) navigate("account");
   }
 
   async function handleRegister(name: string, phone: string, password: string) {
@@ -666,8 +702,8 @@ export function AppShell() {
     setActiveUserId(response.user.id);
     setCurrentUser(response.user);
     showToast("注册成功");
-    await refreshAll();
-    navigate("account");
+    const restoredIntent = await refreshAll();
+    if (!restoredIntent) navigate("account");
   }
 
   function logout() {
@@ -715,11 +751,13 @@ export function AppShell() {
   const contentView = resolvePortalContentView(view);
   const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
   const showBottomNav = !isSubPage;
+  const showPrimaryNav = !["admin", "kline-lab"].includes(view);
   const showSymbolDetail = view === "data" && selectedSymbol;
   const canRenderKlineLab = view === "kline-lab" && currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
 
   return (
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : contentView}`}>
+      {showPrimaryNav && <ResponsivePrimaryNav activeView={view} currentUser={currentUser} onNavigate={navigate} />}
       {dataStatus !== "loading" && showSymbolDetail && (
         <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} radarSignalContext={normalizeDisplaySymbol(symbolSignalContext?.symbol || "") === normalizeDisplaySymbol(selectedSymbol) ? symbolSignalContext : null} currentUser={currentUser} entitlements={entitlements} onBack={closeSymbol} onNavigate={navigate} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}

@@ -900,6 +900,7 @@ button {
   place-items: center;
   align-content: center;
   gap: 5px;
+  min-height: 44px;
   color: #9aa1a8;
   font-size: 16px;
 }
@@ -18841,4 +18842,68 @@ button.locked,
 .rule-segment button.locked {
   color: #9a6b13;
   background: #fff5dc;
+}
+
+/* Public portal primary navigation */
+.portal-primary-header {
+  position: relative;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid #e8edf5;
+  backdrop-filter: blur(16px);
+}
+
+.portal-brand-button {
+  min-height: 44px;
+  padding: 0 8px;
+  color: #173b8f;
+  background: transparent;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.desktop-primary-nav {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.desktop-primary-nav button {
+  min-height: 44px;
+  padding: 0 14px;
+  color: #617089;
+  background: transparent;
+  border-radius: 12px;
+  font-weight: 800;
+}
+
+.desktop-primary-nav button[aria-current="page"] {
+  color: #2458d8;
+  background: #edf4ff;
+}
+
+.portal-account-button {
+  min-height: 44px;
+  padding: 0 12px;
+  color: #2458d8;
+  background: #edf4ff;
+  border-radius: 12px;
+  font-weight: 850;
+}
+
+@media (min-width: 720px) {
+  .desktop-primary-nav {
+    display: flex;
+  }
+
+  .bottom-nav {
+    display: none;
+  }
 }

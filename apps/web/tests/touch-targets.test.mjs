@@ -31,5 +31,8 @@ function assertMinHeightAtLeast(selector, minimum) {
 assertMinHeightAtLeast(".live-command__filters button", 44);
 assertMinHeightAtLeast(".live-command__empty-actions button", 44);
 assertMinHeightAtLeast(".radar-tracking-screen .ai-track-sections button", 44);
+assertMinHeightAtLeast(".portal-brand-button", 44);
+assertMinHeightAtLeast(".desktop-primary-nav button", 44);
+assertMinHeightAtLeast(".bottom-nav button", 44);
 
 console.log("touch target tests passed");
