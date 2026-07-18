@@ -9,7 +9,7 @@ import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignal
 import { accessDecision, type AccessRequirement } from "../features/portal/accessBoundary";
 import { resolvePortalContentView } from "../features/portal/portalShell";
 import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
-import { consumeReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
+import { restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
 
@@ -443,6 +443,7 @@ export function AppShell() {
   const [valueClawSignalContext, setValueClawSignalContext] = useState<LiveSignal | null>(null);
   const [symbolSignalContext, setSymbolSignalContext] = useState<LiveSignal | null>(null);
   const authGenerationRef = useRef(0);
+  const returnIntentSignalsRef = useRef<Map<string, LiveSignal>>(new Map());
 
   useEffect(() => {
     void refreshAll();
@@ -589,18 +590,50 @@ export function AppShell() {
     }
     setDataStatus("ready");
     setDataError(failed.length ? `部分接口连接失败：${failed.join("、")}，已展示本地缓存。` : "");
-    return canApplyMeResult && meRes.status === "fulfilled" ? restoreReturnIntent() : false;
+    return canApplyMeResult && meRes.status === "fulfilled"
+      ? restoreSavedReturnIntent(nextCurrentUser, nextEntitlements, nextSignals)
+      : false;
   }
 
-  function restoreReturnIntent() {
-    const intent = consumeReturnIntent(window.sessionStorage);
-    if (!intent) return false;
+  function restoreSavedReturnIntent(user: CurrentUser, refreshedEntitlements: Entitlements, refreshedSignals: Signal[]) {
+    const liveSignals = [
+      ...returnIntentSignalsRef.current.values(),
+      ...refreshedSignals.map((signal, index) => toLiveSignal({
+        id: signal.id,
+        symbol: signal.symbol,
+        direction: signal.direction,
+        score: signal.score,
+        confidence: signal.confidence,
+        reason: signal.reason,
+        title: signal.title,
+        time: signal.time,
+        price: signal.price,
+        source: "strategy"
+      }, index))
+    ];
+    const restoration = restoreStoredReturnIntent(window.sessionStorage, {
+      identityRefreshSucceeded: true,
+      identity: {
+        signedIn: Boolean(user.id && user.role !== "guest"),
+        plan: refreshedEntitlements.plan || user.plan
+      },
+      signals: liveSignals
+    });
+    if (!restoration.restored || !restoration.intent) {
+      if (!restoration.next) return false;
+      setView(restoration.next);
+      setSelectedSymbol("");
+      replaceAppUrl(restoration.next);
+      return true;
+    }
     setRoutePrompt(null);
-    setValueClawSignalContext(null);
+    if (restoration.intent.view === "claw") setValueClawSignalContext(restoration.signal);
+    else setValueClawSignalContext(null);
     setSymbolSignalContext(null);
-    setView(intent.view);
-    setSelectedSymbol(normalizeDisplaySymbol(intent.symbol || ""));
-    replaceAppUrl(intent.view, intent.symbol);
+    setView(restoration.intent.view);
+    setSelectedSymbol(normalizeDisplaySymbol(restoration.intent.symbol || ""));
+    replaceAppUrl(restoration.intent.view, restoration.intent.symbol);
+    if (restoration.intent.signalId) returnIntentSignalsRef.current.delete(restoration.intent.signalId);
     window.scrollTo({ top: 0, behavior: "smooth" });
     return true;
   }
@@ -637,12 +670,13 @@ export function AppShell() {
       navigate(intent.view);
       return true;
     }
-    saveReturnIntent(window.sessionStorage, intent);
+    saveReturnIntent(window.sessionStorage, { ...intent, requirement });
     navigate(decision.next || "account");
     return false;
   }
 
   function openValueClawFromSignal(signal: LiveSignal) {
+    returnIntentSignalsRef.current.set(signal.id, signal);
     if (!navigateWithRequirement("ai-claw", { view: "claw", signalId: signal.id, action: "review-signal" })) return;
     setValueClawSignalContext(signal);
     showToast(`${signal.symbol} 的 ValueClaw 复核上下文已准备好`);
