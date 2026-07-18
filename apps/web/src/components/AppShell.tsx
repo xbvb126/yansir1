@@ -9,6 +9,8 @@ import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignal
 import { accessDecision, type AccessRequirement } from "../features/portal/accessBoundary";
 import { resolvePortalContentView } from "../features/portal/portalShell";
 import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
+import { PublicClawPreview } from "../features/portal/PublicClawPreview";
+import { PublicHomeView } from "../features/portal/PublicHomeView";
 import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
@@ -786,12 +788,15 @@ export function AppShell() {
   const canRenderKlineLab = view === "kline-lab" && currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
 
   return (
-    <main className={`app-shell view-${showSymbolDetail ? "symbol" : contentView}`}>
+    <main className={`app-shell view-${showSymbolDetail ? "symbol" : view}`}>
       {showPrimaryNav && <ResponsivePrimaryNav activeView={view} currentUser={currentUser} onNavigate={navigate} />}
+      {dataStatus !== "loading" && !showSymbolDetail && view === "home" && (
+        <PublicHomeView featuredSignal={null} onNavigate={navigate} />
+      )}
       {dataStatus !== "loading" && showSymbolDetail && (
         <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} radarSignalContext={normalizeDisplaySymbol(symbolSignalContext?.symbol || "") === normalizeDisplaySymbol(selectedSymbol) ? symbolSignalContext : null} currentUser={currentUser} entitlements={entitlements} onBack={closeSymbol} onNavigate={navigate} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
-      {dataStatus !== "loading" && !showSymbolDetail && contentView === "data" && (
+      {dataStatus !== "loading" && !showSymbolDetail && view !== "home" && contentView === "data" && (
         <DataPage currentUser={currentUser} entitlements={entitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && contentView === "radar" && (
@@ -801,7 +806,8 @@ export function AppShell() {
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
-        <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        currentUser.id ? <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+          : <PublicClawPreview onLogin={() => navigateWithRequirement("ai-claw", { view: "claw", action: "ai-claw" })} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "account" && (
         <AccountPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} onLogout={logout} onOpenSearch={() => setSearchOpen(true)} onNavigate={navigate} />

@@ -18907,3 +18907,459 @@ button.locked,
     display: none;
   }
 }
+
+/* Public product portal */
+.app-shell.view-home {
+  width: min(100vw, 1180px);
+  padding-top: 0;
+}
+
+.public-home-view,
+.public-claw-preview {
+  display: grid;
+  gap: 28px;
+  width: 100%;
+  padding: 24px 16px 28px;
+}
+
+.portal-hero {
+  display: grid;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.portal-hero__copy,
+.portal-reassurance,
+.portal-section,
+.portal-final-cta,
+.public-claw-hero,
+.public-claw-card,
+.public-claw-login {
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--ui-shadow-soft);
+}
+
+.portal-hero__copy {
+  padding: clamp(24px, 5vw, 56px);
+  background:
+    radial-gradient(circle at 100% 0, rgba(39, 94, 233, 0.13), transparent 42%),
+    var(--panel);
+}
+
+.portal-eyebrow,
+.portal-section__heading > span,
+.portal-final-cta span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.portal-hero h1,
+.public-claw-hero h1 {
+  max-width: 760px;
+  margin: 10px 0 14px;
+  color: var(--ink);
+  font-size: clamp(32px, 6vw, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+
+.portal-hero__copy > p,
+.public-claw-hero p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--caption);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.7;
+}
+
+.portal-hero__actions,
+.portal-final-cta > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.portal-primary-action,
+.portal-secondary-action,
+.portal-plan-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.portal-primary-action {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 10px 22px rgba(39, 94, 233, 0.22);
+}
+
+.portal-secondary-action,
+.portal-plan-link {
+  color: var(--accent);
+  background: #eef4ff;
+  border: 1px solid #d7e4ff;
+}
+
+.portal-reassurance {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  padding: 22px;
+}
+
+.portal-reassurance > strong {
+  font-size: 18px;
+}
+
+.portal-reassurance ul,
+.public-claw-examples,
+.public-claw-flow {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-reassurance li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.portal-reassurance .system-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--accent-2);
+}
+
+.portal-section {
+  padding: clamp(20px, 4vw, 34px);
+}
+
+.portal-section__heading h2,
+.portal-final-cta h2 {
+  margin: 7px 0 0;
+  color: var(--ink);
+  font-size: clamp(23px, 3.4vw, 32px);
+  line-height: 1.2;
+}
+
+.portal-question-grid,
+.portal-plan-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.portal-question-grid article,
+.portal-plan-grid article {
+  min-width: 0;
+  padding: 18px;
+  background: var(--panel-soft);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+}
+
+.portal-question-grid article > span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.portal-question-grid h3,
+.portal-plan-grid strong {
+  display: block;
+  margin: 8px 0 7px;
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.portal-question-grid p,
+.portal-plan-grid p,
+.portal-final-cta p,
+.public-claw-flow p,
+.public-claw-login p,
+.portal-empty-state p {
+  margin: 0;
+  color: var(--caption);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.portal-signal-card,
+.portal-empty-state {
+  margin-top: 20px;
+  padding: 20px;
+  background: #f7faff;
+  border: 1px solid #dbe7fb;
+  border-radius: var(--radius-lg);
+}
+
+.portal-signal-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.portal-signal-card__head > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.portal-signal-card__head strong {
+  font-size: 22px;
+}
+
+.portal-signal-card__head span,
+.portal-signal-card__head em {
+  padding: 5px 8px;
+  color: var(--accent);
+  background: #e8f0ff;
+  border-radius: 999px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.portal-signal-card > p {
+  margin: 16px 0;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.portal-signal-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.portal-signal-card dl > div {
+  min-width: 0;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+
+.portal-signal-card dt {
+  color: var(--caption);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.portal-signal-card dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.portal-empty-state {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.portal-empty-state .system-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.portal-empty-state strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.portal-flow {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-flow li {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.portal-flow li > span,
+.public-claw-flow li > span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.portal-flow strong {
+  display: block;
+  margin: 2px 0 5px;
+  color: var(--ink);
+}
+
+.portal-flow p {
+  margin: 0;
+  color: var(--caption);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.portal-plan-link {
+  margin-top: 16px;
+}
+
+.portal-final-cta {
+  display: grid;
+  gap: 12px;
+  padding: clamp(24px, 4vw, 36px);
+  color: var(--ink);
+  background: linear-gradient(135deg, #eef4ff, #f4fbf8);
+}
+
+.portal-final-cta > div:last-child {
+  margin-top: 4px;
+}
+
+.public-claw-preview {
+  padding-top: 16px;
+}
+
+.public-claw-hero,
+.public-claw-card,
+.public-claw-login {
+  padding: 22px;
+}
+
+.public-claw-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.public-claw-hero h1 {
+  margin-top: 8px;
+  font-size: clamp(26px, 7vw, 38px);
+}
+
+.public-claw-flow li {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.public-claw-examples {
+  margin-top: 18px;
+}
+
+.public-claw-examples li {
+  padding: 13px 14px;
+  color: var(--ink-2);
+  background: var(--panel-soft);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.public-claw-login {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  background: linear-gradient(135deg, #eef4ff, #fff);
+}
+
+.public-claw-login strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+@media (min-width: 720px) {
+  .public-home-view {
+    padding: 34px 28px 48px;
+  }
+
+  .portal-hero {
+    grid-template-columns: minmax(0, 2fr) minmax(250px, 0.8fr);
+  }
+
+  .portal-question-grid,
+  .portal-plan-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .portal-flow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .portal-flow li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .portal-final-cta,
+  .public-claw-login {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@media (max-width: 380px) {
+  .portal-primary-header {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .portal-account-button {
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+
+  .portal-hero__actions,
+  .portal-final-cta > div:last-child {
+    display: grid;
+  }
+
+  .portal-signal-card dl {
+    grid-template-columns: 1fr;
+  }
+
+  .public-claw-hero {
+    grid-template-columns: 1fr;
+  }
+}
