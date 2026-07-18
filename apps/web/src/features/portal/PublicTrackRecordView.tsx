@@ -145,7 +145,7 @@ export function PublicTrackRecordView() {
         </section>
       )}
 
-      <section className="track-filter-card" aria-label="战绩筛选">
+      <section className="track-filter-card track-record-filter" aria-label="战绩筛选">
         <form onSubmit={submitSymbol}>
           <label><span>币种</span><input value={symbolDraft} onChange={(event) => setSymbolDraft(event.target.value)} placeholder="BTC / ETH / SOL" /></label>
           <button type="submit">筛选</button>
@@ -159,12 +159,12 @@ export function PublicTrackRecordView() {
         </div>
       </section>
 
-      {displayState.kind === "loading" && <div className="portal-empty-state" role="status"><SystemIcon name="clock" /><div><strong>正在加载公开战绩</strong><p>正在读取服务端确认已满足延迟条件的真实信号。</p></div></div>}
-      {displayState.kind === "empty" && <div className="portal-empty-state" role="status"><SystemIcon name="target" /><div><strong>当前筛选暂无记录</strong><p>可清空币种或切换方向后重试；系统不会补造信号。</p></div></div>}
+      {displayState.kind === "loading" && <div className="portal-empty-state" role="status" aria-live="polite" aria-atomic="true"><SystemIcon name="clock" /><div><strong>正在加载公开战绩</strong><p>正在读取服务端确认已满足延迟条件的真实信号。</p></div></div>}
+      {displayState.kind === "empty" && <div className="portal-empty-state" role="status" aria-live="polite" aria-atomic="true"><SystemIcon name="target" /><div><strong>当前筛选暂无记录</strong><p>可清空币种或切换方向后重试；系统不会补造信号。</p></div></div>}
       {displayState.kind === "unavailable" && (
         <div className={`track-unavailable ${displayState.cached.length ? "stale" : ""}`} role="alert">
           <div><strong>{displayState.cached.length ? "数据已过期" : "公开战绩暂时不可用"}</strong><p>{displayState.cached.length ? `最后成功更新时间 ${formatTime(displayState.staleAt)}` : displayState.message}</p></div>
-          <button type="button" onClick={() => void load()}>重新加载</button>
+          <button className="portal-retry-button" type="button" onClick={() => void load()}>重新加载</button>
         </div>
       )}
 

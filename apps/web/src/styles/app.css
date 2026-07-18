@@ -19319,6 +19319,34 @@ button.locked,
   box-shadow: 0 10px 22px rgba(39, 94, 233, 0.22);
 }
 
+.track-record-filter button {
+  min-height: 44px;
+}
+
+.portal-retry-button {
+  min-height: 44px;
+}
+
+.portal-brand-button:focus-visible,
+.portal-account-button:focus-visible,
+.desktop-primary-nav button:focus-visible,
+.bottom-nav button:focus-visible,
+.portal-primary-action:focus-visible,
+.portal-secondary-action:focus-visible,
+.portal-plan-link:focus-visible,
+.track-record-filter button:focus-visible,
+.track-record-filter input:focus-visible,
+.portal-retry-button:focus-visible {
+  outline: 3px solid #ffbf47;
+  outline-offset: 3px;
+}
+
+.track-locked {
+  filter: none;
+  opacity: 1;
+  text-decoration: none;
+}
+
 .portal-secondary-action,
 .portal-plan-link {
   color: var(--accent);
@@ -19674,5 +19702,28 @@ button.locked,
 
   .public-claw-hero {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .public-home-view,
+  .public-claw-preview {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 10px;
+  }
+
+  .portal-hero__actions > button,
+  .portal-final-cta > div:last-child > button,
+  .public-claw-login .portal-primary-action {
+    width: 100%;
+  }
+
+  .portal-section,
+  .portal-hero__copy,
+  .portal-final-cta,
+  .public-claw-card,
+  .public-claw-login {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }

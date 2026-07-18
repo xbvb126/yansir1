@@ -10,6 +10,7 @@ const home = src("src/features/portal/PublicHomeView.tsx");
 const claw = src("src/features/portal/PublicClawPreview.tsx");
 const track = src("src/features/portal/PublicTrackRecordView.tsx");
 const portalApi = src("src/features/portal/publicPortalApi.ts");
+const metadata = src("src/features/portal/publicMetadata.ts");
 
 assert.match(nav, /desktopPrimaryItems/);
 assert.match(nav, /aria-current/);
@@ -55,5 +56,9 @@ assert.match(shell, /publicSignalResponse\?\.delayHours/);
 assert.match(shell, /if \(!currentUser\.id\) return;/);
 assert.match(shell, /saveReturnIntent\(window\.sessionStorage, createRouteReturnIntent\("data"/);
 assert.match(portalApi, /\/api\/strategy\/public-signals/);
+assert.match(metadata, /track-record/);
+assert.match(metadata, /canonical/);
+assert.match(metadata, /og:title/);
+assert.match(shell, /syncPublicMetadata/);
 
 console.log("public portal source tests passed");

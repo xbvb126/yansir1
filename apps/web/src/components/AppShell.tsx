@@ -12,6 +12,7 @@ import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
 import { PublicClawPreview } from "../features/portal/PublicClawPreview";
 import { PublicHomeView } from "../features/portal/PublicHomeView";
 import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
+import { syncPublicMetadata } from "../features/portal/publicMetadata";
 import { getPublicSignals, type PublicSignal, type PublicSignalsResponse } from "../features/portal/publicPortalApi";
 import { canCreateMemberOrder, createPortalRequestCoordinator, hasVerifiedIdentity, portalSignalSource, portalSignalsForResult, type PortalRequestCoordinator } from "../features/portal/publicPortalRuntime";
 import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
@@ -469,6 +470,10 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
+    syncPublicMetadata(view, window.location);
+  }, [view]);
+
+  useEffect(() => {
     const onPop = () => {
       const nextView = readView();
       const nextSymbol = readSymbolParam();
@@ -912,7 +917,7 @@ export function AppShell() {
       )}
       {dataStatus !== "loading" && view === "login" && <LoginPage onBack={() => navigate("account")} onLogin={handleLogin} onRegister={() => navigate("register")} />}
       {dataStatus !== "loading" && view === "register" && <RegisterPage onBack={() => navigate("login")} onRegister={handleRegister} />}
-      {dataError && dataStatus === "ready" && <div className="toast subtle-toast">{dataError}</div>}
+      {dataError && dataStatus === "ready" && <div className="toast subtle-toast" role="status" aria-live="polite">{dataError}</div>}
       {searchOpen && <GlobalSearch rows={rows} onClose={() => setSearchOpen(false)} onOpenSymbol={openSymbol} />}
       {showBottomNav && <BottomNav activeView={view} onChange={navigate} />}
       {routePrompt && (
@@ -928,7 +933,7 @@ export function AppShell() {
           }}
         />
       )}
-      {toast && <div className="toast show">{toast}</div>}
+      {toast && <div className="toast show" role="status" aria-live="polite">{toast}</div>}
     </main>
   );
 }

@@ -34,5 +34,8 @@ assertMinHeightAtLeast(".radar-tracking-screen .ai-track-sections button", 44);
 assertMinHeightAtLeast(".portal-brand-button", 44);
 assertMinHeightAtLeast(".desktop-primary-nav button", 44);
 assertMinHeightAtLeast(".bottom-nav button", 44);
+assertMinHeightAtLeast(".portal-primary-action", 44);
+assertMinHeightAtLeast(".track-record-filter button", 44);
+assertMinHeightAtLeast(".portal-retry-button", 44);
 
 console.log("touch target tests passed");
