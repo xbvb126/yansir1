@@ -1,14 +1,7 @@
 import type { ReactNode } from "react";
+import { mobilePrimaryItems } from "../features/portal/portalNavigation";
 
-export type ViewName = "data" | "claw" | "radar" | "signal" | "account" | "login" | "register" | "admin" | "plans" | "team" | "kline-lab";
-
-const items: Array<{ label: string; view: Extract<ViewName, "data" | "claw" | "radar" | "signal" | "account"> }> = [
-  { label: "数据", view: "data" },
-  { label: "ValueClaw", view: "claw" },
-  { label: "信号", view: "radar" },
-  { label: "告警", view: "signal" },
-  { label: "我的", view: "account" }
-];
+export type ViewName = "home" | "data" | "claw" | "radar" | "track-record" | "signal" | "account" | "login" | "register" | "admin" | "plans" | "team" | "kline-lab";
 
 function NavGlyph({ view }: { view: ViewName }): ReactNode {
   if (view === "data") {
@@ -62,7 +55,7 @@ function NavGlyph({ view }: { view: ViewName }): ReactNode {
 export function BottomNav({ activeView, onChange }: { activeView: ViewName; onChange: (view: ViewName) => void }) {
   return (
     <nav className="bottom-nav" aria-label="底部导航">
-      {items.map((item) => (
+      {mobilePrimaryItems.map((item) => (
         <button key={item.view} data-view={item.view} className={activeView === item.view ? "active" : ""} type="button" onClick={() => onChange(item.view)}>
           <span className="nav-icon"><NavGlyph view={item.view} /></span>
           <span>{item.label}</span>

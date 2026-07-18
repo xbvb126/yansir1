@@ -78,6 +78,9 @@ assert.equal(planLevel('高级版'), 3);
 assert.equal(routeAccessPrompt('data', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('plans', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('login', guest, freeEntitlements), null);
+assert.equal(routeAccessPrompt('home', guest, freeEntitlements), null);
+assert.equal(routeAccessPrompt('track-record', guest, freeEntitlements), null);
+assert.equal(routeAccessPrompt('claw', guest, freeEntitlements), null, "guest route renders the AI Claw preview; sending a prompt is guarded inside the page");
 assert.deepEqual(routeAccessPrompt('signal', guest, freeEntitlements), {
   title: '登录后打开告警中心',
   desc: '未登录只能查看 8 小时延迟的公开历史信号。登录并配置自选币种后，才能管理实时推送。',
@@ -99,7 +102,6 @@ assert.equal(routeAccessPrompt('admin', adminUser, svipEntitlements), null);
 assert.equal(routeAccessPrompt('kline-lab', guest, freeEntitlements)?.targetView, 'login');
 assert.equal(routeAccessPrompt('kline-lab', vipUser, vipEntitlements)?.title, '当前账号无内部验信权限');
 assert.equal(routeAccessPrompt('kline-lab', adminUser, svipEntitlements), null);
-assert.equal(routeAccessPrompt('claw', guest, freeEntitlements)?.targetView, 'login');
 assert.equal(routeAccessPrompt('claw', freeUser, freeEntitlements), null);
 
 // 周期权限：默认只允许 5m，Free/VIP/SVIP 分别解锁不同周期。

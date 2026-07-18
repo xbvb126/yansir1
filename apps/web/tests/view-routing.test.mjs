@@ -24,7 +24,9 @@ assert.equal(module.normalizeViewParam("signals"), "radar");
 assert.equal(module.normalizeViewParam("radar"), "radar");
 assert.equal(module.normalizeViewParam("kline-lab"), "kline-lab");
 assert.equal(module.normalizeViewParam("KLINE-LAB"), "kline-lab");
-assert.equal(module.normalizeViewParam("unknown"), "data");
-assert.equal(module.normalizeViewParam(null), "data");
+assert.equal(module.normalizeViewParam("home"), "home");
+assert.equal(module.normalizeViewParam("track-record"), "track-record");
+assert.equal(module.normalizeViewParam(null), "home");
+assert.equal(module.normalizeViewParam("unknown"), "home");
 
 console.log("view routing tests passed");

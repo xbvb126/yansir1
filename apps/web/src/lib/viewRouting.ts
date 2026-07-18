@@ -8,9 +8,11 @@ const viewAliases: Record<string, ViewName> = {
 };
 
 const canonicalViews = new Set<ViewName>([
+  "home",
   "data",
   "claw",
   "radar",
+  "track-record",
   "signal",
   "account",
   "login",
@@ -23,7 +25,7 @@ const canonicalViews = new Set<ViewName>([
 
 export function normalizeViewParam(value: string | null | undefined): ViewName {
   const clean = `${value ?? ""}`.trim().toLowerCase();
-  if (!clean) return "data";
+  if (!clean) return "home";
   if (clean in viewAliases) return viewAliases[clean];
-  return canonicalViews.has(clean as ViewName) ? (clean as ViewName) : "data";
+  return canonicalViews.has(clean as ViewName) ? (clean as ViewName) : "home";
 }
