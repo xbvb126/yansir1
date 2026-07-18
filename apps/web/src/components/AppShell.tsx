@@ -15,6 +15,7 @@ import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView"
 import { syncPublicMetadata } from "../features/portal/publicMetadata";
 import { getPublicSignals, type PublicSignal, type PublicSignalsResponse } from "../features/portal/publicPortalApi";
 import { canCreateMemberOrder, createPortalRequestCoordinator, hasVerifiedIdentity, portalSignalSource, portalSignalsForResult, type PortalRequestCoordinator } from "../features/portal/publicPortalRuntime";
+import { capturePromptTrigger, closePromptAndRestoreFocus } from "../features/portal/promptFocus";
 import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
@@ -1717,15 +1718,18 @@ function UpgradeGuideCard({ actionLabel = "查看会员套餐", desc, onClick, t
 }
 
 function UpgradeModal({ actionLabel = "查看会员套餐", desc, onClose, onUpgrade, title }: { actionLabel?: string; desc: string; onClose: () => void; onUpgrade: () => void; title: string }) {
+  const [returnFocusTarget] = useState(() => capturePromptTrigger(typeof document === "undefined" ? null : document.activeElement));
+  const handleClose = () => closePromptAndRestoreFocus(onClose, returnFocusTarget);
+
   return (
     <div className="upgrade-modal">
-      <button className="upgrade-modal-backdrop" type="button" aria-label="关闭会员升级提示" onClick={onClose} />
+      <button className="upgrade-modal-backdrop" type="button" aria-label="关闭会员升级提示" onClick={handleClose} />
       <section className="polished-card upgrade-modal-card" role="dialog" aria-modal="true" aria-label={title}>
         <div className="upgrade-modal-icon"><SystemIcon name="spark" /></div>
         <div><strong>{title}</strong><p>{desc}</p></div>
         <div className="upgrade-modal-actions">
           <button type="button" onClick={onUpgrade}>{actionLabel}</button>
-          <button type="button" onClick={onClose}>稍后再说</button>
+          <button type="button" onClick={handleClose}>稍后再说</button>
         </div>
       </section>
     </div>

@@ -129,6 +129,7 @@ Automated release checks:
 - [x] `npm run test:ci-config`
 - [x] Additional regression: `npm run test:public-metadata -w apps/web`
 - [x] Additional regression: `npm run test:portal-runtime -w apps/web`
+- [x] Accessibility regression: `npm run test:prompt-focus -w apps/web`
 
 Local release-candidate evidence:
 
@@ -144,9 +145,9 @@ Local release-candidate evidence:
 
 Exact public route checks:
 
-- [ ] `/yansir/?view=home`: Home rendered. CTA-to-Radar interaction was not
-  completed in the final browser session. The separate history CTA did navigate
-  to `?view=track-record` at 320 px.
+- [x] `/yansir/?view=home`: Home rendered; `体验公开雷达` navigated to
+  `?view=radar`, and the separate history CTA navigated to
+  `?view=track-record` at 320 px.
 - [x] `/yansir/?view=data`: anonymous SOXL save opened the Login prompt while
   retaining `?view=data&symbol=SOXL`; the Login action reached `?view=login`.
 - [x] `/yansir/?view=claw`: anonymous preview rendered with a Login CTA and no
@@ -166,10 +167,13 @@ Failure and accessibility states:
 - [x] Keyboard focus used a visible high-contrast light/dark focus ring.
 - [x] Automated state coverage distinguishes no-signal, paused/degraded,
   pending, stale, and unavailable/retry states.
+- [x] Prompt-close focus restoration has a focused behavior/source regression;
+  both the dialog's backdrop and defer action return focus to the captured
+  triggering control.
 - [x] With the API blocked, Home and Track Record showed honest empty/no-
   fabrication states, AI Claw remained preview-only, and global status announced
   failed interfaces/cached state.
-- [ ] Browser-blocked API, prompt focus restoration, and actual 200% browser zoom
-  are not fully complete: stale last-success timestamp, retry, and focus return
-  were not exercised. A 320 CSS-pixel viewport passed responsive reflow checks,
-  but that is not recorded as an actual 200% zoom test.
+- [ ] Browser-blocked API and actual 200% browser zoom are not fully complete:
+  stale last-success timestamp and retry were not exercised. A 320 CSS-pixel
+  viewport passed responsive reflow checks, but that is not recorded as an
+  actual 200% zoom test.
