@@ -22,7 +22,10 @@ try {
   const verifiedMember = { verified: true, userId: "member-1", role: "member" };
   assert.equal(runtime.portalSignalSource(verifiedMember), "private");
   assert.equal(runtime.canCreateMemberOrder(verifiedMember), true);
-  assert.equal(runtime.portalSignalSource({ verified: true, userId: "", role: "guest" }), "public");
+  const verifiedGuestWithId = { verified: true, userId: "guest-1", role: "guest" };
+  assert.equal(runtime.hasVerifiedIdentity(verifiedGuestWithId), false);
+  assert.equal(runtime.portalSignalSource(verifiedGuestWithId), "public", "a verified Guest id must still use public Radar data");
+  assert.equal(runtime.canCreateMemberOrder(verifiedGuestWithId), false);
 
   assert.deepEqual(runtime.portalSignalsForResult("public", { ok: false }), [], "failed public loads clear any prior private/untrusted signals");
   assert.deepEqual(runtime.portalSignalsForResult("public", { ok: true, signals: ["delayed"] }), ["delayed"]);

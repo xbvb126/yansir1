@@ -29,6 +29,8 @@ assert.match(claw, /示例问题/);
 assert.match(claw, /登录后使用 AI Claw/);
 assert.doesNotMatch(claw, /apiPost|fetch\(/);
 assert.match(shell, /verifiedIdentity\s*\?\s*<ValueClawPage/);
+assert.match(shell, /<RadarPage authenticated=\{verifiedIdentity\}/);
+assert.doesNotMatch(shell, /<RadarPage authenticated=\{currentUserVerificationReady && currentUserVerified && Boolean\(currentUser\.id\)\}/);
 assert.match(shell, /<PublicClawPreview/);
 assert.match(shell, /const shellView = resolvePortalShellView\(view\);[\s\S]*app-shell view-\$\{showSymbolDetail \? "symbol" : shellView\}/);
 assert.match(track, /fixed-window-v1|固定窗口/);

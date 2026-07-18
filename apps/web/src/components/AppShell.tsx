@@ -875,7 +875,7 @@ export function AppShell() {
         <DataPage currentUser={currentUser} entitlements={entitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view !== "track-record" && contentView === "radar" && (
-        <RadarPage authenticated={currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id)} currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} publicDelayHours={publicSignalResponse?.delayHours ?? null} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
+        <RadarPage authenticated={verifiedIdentity} currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} publicDelayHours={publicSignalResponse?.delayHours ?? null} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
