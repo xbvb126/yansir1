@@ -82,6 +82,8 @@ try {
   const shell = await bundle("src/features/portal/portalShell.ts", "portal-shell");
   assert.equal(shell.resolvePortalContentView("home"), "data", "the canonical home route must render the existing market fallback");
   assert.equal(shell.resolvePortalContentView("track-record"), "radar", "track record must render the existing signal-performance fallback");
+  assert.equal(shell.resolvePortalShellView("home"), "home", "the public Home must keep its dedicated shell class");
+  assert.equal(shell.resolvePortalShellView("track-record"), "radar", "a track-record alias rendering RadarPage must keep the established radar shell class");
 
   const bottomNav = await bundle("src/components/BottomNav.tsx", "bottom-nav");
   const navTree = bottomNav.BottomNav({ activeView: "track-record", onChange: () => {} });

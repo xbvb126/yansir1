@@ -7,7 +7,7 @@ import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
 import { accessDecision, type AccessRequirement } from "../features/portal/accessBoundary";
-import { resolvePortalContentView } from "../features/portal/portalShell";
+import { resolvePortalContentView, resolvePortalShellView } from "../features/portal/portalShell";
 import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
 import { PublicClawPreview } from "../features/portal/PublicClawPreview";
 import { PublicHomeView } from "../features/portal/PublicHomeView";
@@ -781,6 +781,7 @@ export function AppShell() {
   const rows = marketRows;
   const safeSignals = signals;
   const contentView = resolvePortalContentView(view);
+  const shellView = resolvePortalShellView(view);
   const isSubPage = ["plans", "team", "admin", "login", "register", "kline-lab"].includes(view);
   const showBottomNav = !isSubPage;
   const showPrimaryNav = !["admin", "kline-lab"].includes(view);
@@ -788,7 +789,7 @@ export function AppShell() {
   const canRenderKlineLab = view === "kline-lab" && currentUserVerificationReady && currentUserVerified && Boolean(currentUser.id) && currentUser.role === "admin";
 
   return (
-    <main className={`app-shell view-${showSymbolDetail ? "symbol" : view}`}>
+    <main className={`app-shell view-${showSymbolDetail ? "symbol" : shellView}`}>
       {showPrimaryNav && <ResponsivePrimaryNav activeView={view} currentUser={currentUser} onNavigate={navigate} />}
       {dataStatus !== "loading" && !showSymbolDetail && view === "home" && (
         <PublicHomeView featuredSignal={null} onNavigate={navigate} />

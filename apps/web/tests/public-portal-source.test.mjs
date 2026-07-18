@@ -28,5 +28,6 @@ assert.match(claw, /登录后使用 AI Claw/);
 assert.doesNotMatch(claw, /apiPost|fetch\(/);
 assert.match(shell, /currentUser\.id\s*\?\s*<ValueClawPage/);
 assert.match(shell, /<PublicClawPreview/);
+assert.match(shell, /const shellView = resolvePortalShellView\(view\);[\s\S]*app-shell view-\$\{showSymbolDetail \? "symbol" : shellView\}/);
 
 console.log("public portal source tests passed");

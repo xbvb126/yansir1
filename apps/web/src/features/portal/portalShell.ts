@@ -5,3 +5,8 @@ export function resolvePortalContentView(view: ViewName): ViewName {
   if (view === "track-record") return "radar";
   return view;
 }
+
+export function resolvePortalShellView(view: ViewName): ViewName {
+  if (view === "home") return "home";
+  return resolvePortalContentView(view);
+}
