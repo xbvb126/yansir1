@@ -153,8 +153,10 @@ Exact public route checks:
 - [x] `/yansir/?view=claw`: anonymous preview rendered with a Login CTA and no
   signal creation or overwrite behavior; source regression confirms the preview
   contains no `fetch` or `/api/claw` call.
-- [ ] `/yansir/?view=radar`: API response verified `delayHours: 8`; realtime
-  network-call absence was not inspected in the final browser session.
+- [x] `/yansir/?view=radar`: API response verified `delayHours: 8`; a fresh
+  anonymous browser trace called only `/api/strategy/public-signals` and general
+  public/bootstrap endpoints, with no private signals, inbox, watchlist, or
+  realtime Radar endpoint.
 - [x] `/yansir/?view=track-record`: summary and rows container rendered; the page
   showed the 8-hour delay, 7-day window, anonymous 15m/1h availability, and
   locked longer-window/MFE/MAE copy.
