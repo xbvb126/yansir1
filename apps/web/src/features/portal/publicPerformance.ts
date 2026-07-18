@@ -34,16 +34,17 @@ export function formatPublicPercent(value: number | null | undefined): string {
 
 export function toTrackRecordRow(signal: PublicSignal): TrackRecordRow {
   const performance = signal.performance;
-  const locked24h = performance?.access?.lockedFields.includes("24h") ?? false;
+  const displayReturn = (window: string) =>
+    performance?.access?.lockedFields.includes(window) ? "会员解锁" : formatPublicPercent(performance?.returns[window]);
   return {
     id: signal.id,
     symbol: signal.symbol,
     direction: signal.direction,
     score: signal.score,
     time: signal.time,
-    return15m: formatPublicPercent(performance?.returns["15m"]),
-    return1h: formatPublicPercent(performance?.returns["1h"]),
-    return24h: locked24h ? "会员解锁" : formatPublicPercent(performance?.returns["24h"]),
+    return15m: displayReturn("15m"),
+    return1h: displayReturn("1h"),
+    return24h: displayReturn("24h"),
     pending: performance?.outcomeStatus === "pending"
   };
 }
