@@ -2706,7 +2706,7 @@ function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, pay
                 <span>可用周期 <strong>{(plan.allowedTimeframes || ["5m"]).join(" / ")}</strong></span>
                 <span>最低推送分 <strong>{plan.minAlertScore ?? "-"}</strong></span>
                 <span>每日推送 <strong>{plan.maxPushPerDay ?? plan.signalQuota}</strong></span>
-                <span>AI Claw 每日额度 <strong>{plan.signalQuota} 次</strong></span>
+                <span>AI Claw <strong>登录后可用</strong></span>
                 <span>团队席位 <strong>{plan.teamSeats ?? 0}</strong></span>
                 <span>历史窗口 <strong>{plan.historyDays ?? "-"} 天</strong></span>
                 <span>实时延迟 <strong>{plan.realtimeDelayHours ? `${plan.realtimeDelayHours} 小时` : "实时"}</strong></span>
@@ -2730,7 +2730,7 @@ function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, pay
       <section className="clean-card" aria-labelledby="plans-faq">
         <CardTitle title="常见问题" desc="套餐能力与公开体验的边界说明。" />
         <div id="plans-faq" className="plan-faq-list">
-          <article><strong>AI Claw 会生成交易信号吗？</strong><p>不会。策略引擎生成信号，AI Claw 只解释和复核已有信号；每日额度以套餐显示值为准。</p></article>
+          <article><strong>AI Claw 会生成交易信号吗？</strong><p>不会。策略引擎生成信号，AI Claw 只解释和复核已有信号；匿名用户可预览能力，登录后可使用完整对话。</p></article>
           <article><strong>公开雷达为什么延迟？</strong><p>匿名公开信号由服务端统一延迟 8 小时，公开历史范围为 7 天。</p></article>
           <article><strong>升级后什么时候生效？</strong><p>支付渠道确认订单后刷新账号权益；系统不会在未确认支付时提前开放权限。</p></article>
           <article><strong>套餐会自动续费吗？</strong><p>当前不自动续费。接入外部支付渠道后，续费与退款规则以结账页明确展示的条款为准。</p></article>

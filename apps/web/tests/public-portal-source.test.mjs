@@ -68,9 +68,11 @@ assert.match(metadata, /og:title/);
 assert.match(shell, /syncPublicMetadata/);
 assert.match(shell, /canPayMemberOrder/);
 assert.match(shell, /effectivePrivatePortalState/);
-assert.match(shell, /AI Claw.*额度|AI.*额度/s);
+assert.match(shell, /AI Claw\s*<strong>(登录后可用|需登录)/);
+assert.doesNotMatch(shell, /AI Claw 每日额度[\s\S]{0,120}signalQuota/, "Plans must not present the signal quota as an AI allowance");
 assert.match(shell, /团队席位/);
 assert.match(shell, /常见问题/);
 assert.match(shell, /自动续费|按月计费/);
+assert.doesNotMatch(home, /满足 8 小时延迟条件/);
 
 console.log("public portal source tests passed");

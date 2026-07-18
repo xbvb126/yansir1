@@ -86,3 +86,20 @@ Full regression run:
 - Confirmed no destructive return action is auto-replayed; users must reconfirm watchlist saves, plan orders, and payments.
 - Confirmed navigation order, aliases, strategy lifecycle/scoring, and unrelated files were not changed.
 - `git diff --check` passed before commit. No unresolved blocker remains.
+
+## Final re-review follow-up
+
+- Removed the fabricated numeric AI Claw allowance from Plans. The comparison now states the implemented, authoritative behavior: anonymous capability preview and full conversation after login. It no longer reuses `signalQuota` as an AI quota.
+- Replaced the remaining Home empty-state hard-coded eight-hour sentence with `delayHours` from the public API, with neutral server-delay wording while that value is unavailable.
+- Private metadata now removes the canonical link element entirely while keeping `noindex,nofollow`; returning to a public route recreates the correct canonical and restores `index,follow`.
+
+TDD RED evidence:
+
+- `test:portal-source` failed because Plans did not yet contain authoritative login availability and still reused the numeric signal quota.
+- `test:public-metadata` failed because the private-route canonical element still existed with an empty `href`.
+
+GREEN evidence:
+
+- `test:portal-source`, `test:public-metadata`, and `test:portal-runtime` passed.
+- Web TypeScript lint passed.
+- Web production build passed with `PUBLIC_SITE_ORIGIN=https://example.test/yansir`.

@@ -19,7 +19,7 @@ function fakeDocument() {
       if (!match) return null;
       return elements.find((element) => element.tagName === match[1] && element.attributes.get(match[2]) === match[3]) || null;
     },
-    appendChild(element) { elements.push(element); }
+    appendChild(element) { element.remove = () => { const index = elements.indexOf(element); if (index >= 0) elements.splice(index, 1); }; elements.push(element); }
   };
   return {
     title: "",
@@ -54,7 +54,10 @@ try {
   assert.equal(document.head.querySelector('meta[name="description"]').content, "浏览公开加密市场概览与币种数据。");
   metadata.syncPublicMetadata("account", { href: "https://portal.example/yansir/?view=account" });
   assert.equal(document.head.querySelector('meta[name="robots"]').content, "noindex,nofollow", "private routes must reset stale public metadata and opt out of indexing");
-  assert.equal(document.head.querySelector('link[rel="canonical"]').href, "", "private routes must not retain a public canonical URL");
+  assert.equal(document.head.querySelector('link[rel="canonical"]'), null, "private routes must remove the canonical element instead of resolving an empty href to the private URL");
+  metadata.syncPublicMetadata("track-record", { href: "https://portal.example/yansir/?view=track-record&symbol=BTC" });
+  assert.equal(document.head.querySelector('meta[name="robots"]').content, "index,follow");
+  assert.equal(document.head.querySelector('link[rel="canonical"]').href, "https://portal.example/yansir/?view=track-record", "returning to a public route must recreate the canonical URL");
 
   assert.throws(() => parsePublicSiteOrigin("", { required: true }), /required/i);
   assert.throws(() => parsePublicSiteOrigin("/yansir", { required: true }), /absolute http/i);

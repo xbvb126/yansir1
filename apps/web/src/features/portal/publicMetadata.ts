@@ -62,7 +62,7 @@ export function syncPublicMetadata(view: ViewName, location: Pick<Location, "hre
     ensureMeta("og:title").content = "Yansir";
     ensureMeta("og:description").content = "Yansir 会员功能";
     ensureMeta("og:url").content = "";
-    ensureCanonical().href = "";
+    document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.remove();
     return;
   }
 

@@ -63,7 +63,7 @@ export function PublicHomeView({ delayHours, featuredSignal, onNavigate }: { del
         ) : (
           <div className="portal-empty-state" role="status">
             <SystemIcon name="clock" />
-            <div><strong>暂无可展示的延迟信号</strong><p>公开记录只展示服务端确认已满足 8 小时延迟条件的真实信号。</p></div>
+            <div><strong>暂无可展示的延迟信号</strong><p>{delayHours === null ? "公开记录只展示服务端确认已满足延迟条件的真实信号。" : `公开记录只展示服务端确认已满足 ${delayHours} 小时延迟条件的真实信号。`}</p></div>
           </div>
         )}
       </section>
