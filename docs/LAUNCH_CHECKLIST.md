@@ -170,6 +170,8 @@ Failure and accessibility states:
 - [x] Prompt-close focus restoration has a focused behavior/source regression;
   both the dialog's backdrop and defer action return focus to the captured
   triggering control.
+- [x] Browser retest: closing the SOXL add-to-watchlist prompt with `稍后再说`
+  returned `document.activeElement` to the original `加入自选 SOXL` button.
 - [x] With the API blocked, Home and Track Record showed honest empty/no-
   fabrication states, AI Claw remained preview-only, and global status announced
   failed interfaces/cached state.
