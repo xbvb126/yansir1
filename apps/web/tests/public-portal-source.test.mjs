@@ -11,6 +11,7 @@ assert.match(nav, /desktopPrimaryItems/);
 assert.match(nav, /aria-current/);
 assert.match(nav, /onNavigate\("home"\)/);
 assert.match(shell, /saveReturnIntent/);
+assert.match(shell, /createRouteReturnIntent\(nextView, selectedSymbol\)/);
 assert.match(shell, /restoreReturnIntent/);
 assert.match(shell, /setValueClawSignalContext\(restoration\.signal\)/);
 assert.match(shell, /ResponsivePrimaryNav/);

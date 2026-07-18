@@ -9,7 +9,7 @@ import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignal
 import { accessDecision, type AccessRequirement } from "../features/portal/accessBoundary";
 import { resolvePortalContentView } from "../features/portal/portalShell";
 import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
-import { restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
+import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
 
@@ -643,11 +643,7 @@ export function AppShell() {
     setSymbolSignalContext(null);
     const prompt = routeAccessPrompt(nextView, currentUser, entitlements);
     if (prompt) {
-      saveReturnIntent(window.sessionStorage, {
-        view: nextView,
-        symbol: selectedSymbol || undefined,
-        action: `navigate:${nextView}`
-      });
+      saveReturnIntent(window.sessionStorage, createRouteReturnIntent(nextView, selectedSymbol));
       setRoutePrompt(prompt);
       setView(prompt.fallbackView);
       setSelectedSymbol("");

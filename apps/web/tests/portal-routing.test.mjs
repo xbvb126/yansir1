@@ -61,6 +61,18 @@ try {
   assert.equal(afterUpgrade.restored, true, "the final eligible refresh should restore the paid action");
   assert.equal(intent.readReturnIntent(upgradeAdapter), null, "the final successful restoration should consume the intent");
 
+  assert.equal(typeof intent.createRouteReturnIntent, "function", "AppShell route blocks should use a tested production intent factory");
+  const productionPaidIntent = intent.createRouteReturnIntent("signal", "BTC");
+  assert.equal(productionPaidIntent.requirement, "realtime-radar", "the production realtime alert route must persist its paid access requirement");
+  const productionStorage = new Map();
+  const productionAdapter = { getItem: (key) => productionStorage.get(key) ?? null, setItem: (key, value) => productionStorage.set(key, value), removeItem: (key) => productionStorage.delete(key) };
+  intent.saveReturnIntent(productionAdapter, productionPaidIntent);
+  const productionAfterLogin = intent.restoreReturnIntent(productionAdapter, { identityRefreshSucceeded: true, identity: { signedIn: true, plan: "Free" }, signals: [] });
+  assert.equal(productionAfterLogin.next, "plans", "the production intent should survive login when upgrade remains required");
+  assert.equal(intent.readReturnIntent(productionAdapter)?.requirement, "realtime-radar");
+  assert.equal(intent.restoreReturnIntent(productionAdapter, { identityRefreshSucceeded: true, identity: { signedIn: true, plan: "Pro" }, signals: [] }).restored, true);
+  assert.equal(intent.readReturnIntent(productionAdapter), null, "the production intent should consume only after the upgrade refresh");
+
   const access = await bundle("src/features/portal/accessBoundary.ts", "access");
   assert.deepEqual(access.accessDecision("ai-claw", { signedIn: false, plan: "Guest" }), { allowed: false, next: "login" });
   assert.deepEqual(access.accessDecision("realtime-radar", { signedIn: false, plan: "Guest" }), { allowed: false, next: "login" });

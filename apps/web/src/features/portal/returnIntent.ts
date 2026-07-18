@@ -16,6 +16,19 @@ export type ReturnIntentRestoreResult<TSignal> = {
   signal: TSignal | null;
 };
 
+const routeRequirements: Partial<Record<ViewName, AccessRequirement>> = {
+  signal: "realtime-radar"
+};
+
+export function createRouteReturnIntent(view: ViewName, symbol = ""): ReturnIntent {
+  return {
+    view,
+    symbol: symbol || undefined,
+    action: `navigate:${view}`,
+    requirement: routeRequirements[view]
+  };
+}
+
 export function saveReturnIntent(storage: StorageAdapter, intent: ReturnIntent) { storage.setItem(RETURN_INTENT_KEY, JSON.stringify(intent)); }
 export function readReturnIntent(storage: StorageAdapter): ReturnIntent | null {
   try { return JSON.parse(storage.getItem(RETURN_INTENT_KEY) || "null") as ReturnIntent | null; } catch { return null; }
