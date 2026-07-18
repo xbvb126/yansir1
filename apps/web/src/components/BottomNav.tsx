@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { mobilePrimaryItems } from "../features/portal/portalNavigation";
+import { SystemIcon } from "./SystemIcon";
 
 export type ViewName = "home" | "data" | "claw" | "radar" | "track-record" | "signal" | "account" | "login" | "register" | "admin" | "plans" | "team" | "kline-lab";
 
@@ -34,6 +35,8 @@ function NavGlyph({ view }: { view: ViewName }): ReactNode {
       </svg>
     );
   }
+
+  if (view === "track-record") return <SystemIcon name="target" />;
 
   if (view === "signal") {
     return (

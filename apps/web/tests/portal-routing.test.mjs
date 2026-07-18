@@ -11,7 +11,7 @@ const esbuildBin = path.resolve(root, "..", "..", "node_modules", "esbuild", "bi
 
 function bundle(entry, name) {
   const outfile = path.join(outDir, `${name}.mjs`);
-  execFileSync(process.execPath, [esbuildBin, entry, "--bundle", "--platform=node", "--format=esm", `--outfile=${outfile}`], { cwd: root });
+  execFileSync(process.execPath, [esbuildBin, entry, "--bundle", "--platform=node", "--format=esm", "--jsx=automatic", `--outfile=${outfile}`], { cwd: root });
   return import(pathToFileURL(outfile));
 }
 
@@ -37,6 +37,17 @@ try {
   assert.deepEqual(access.accessDecision("realtime-radar", { signedIn: false, plan: "Guest" }), { allowed: false, next: "login" });
   assert.deepEqual(access.accessDecision("realtime-radar", { signedIn: true, plan: "Free" }), { allowed: false, next: "plans" });
   assert.deepEqual(access.accessDecision("save-watchlist", { signedIn: true, plan: "Free" }), { allowed: true, next: null });
+
+  const shell = await bundle("src/features/portal/portalShell.ts", "portal-shell");
+  assert.equal(shell.resolvePortalContentView("home"), "data", "the canonical home route must render the existing market fallback");
+  assert.equal(shell.resolvePortalContentView("track-record"), "radar", "track record must render the existing signal-performance fallback");
+
+  const bottomNav = await bundle("src/components/BottomNav.tsx", "bottom-nav");
+  const navTree = bottomNav.BottomNav({ activeView: "track-record", onChange: () => {} });
+  const trackRecordButton = navTree.props.children.find((button) => button.props["data-view"] === "track-record");
+  const navGlyphElement = trackRecordButton.props.children[0].props.children;
+  const trackRecordGlyph = navGlyphElement.type(navGlyphElement.props);
+  assert.equal(trackRecordGlyph.props.name, "target", "track record must use the existing target system icon");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }
