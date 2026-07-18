@@ -177,7 +177,9 @@ Failure and accessibility states:
 - [x] With the API blocked, Home and Track Record showed honest empty/no-
   fabrication states, AI Claw remained preview-only, and global status announced
   failed interfaces/cached state.
-- [ ] Browser-blocked API and actual 200% browser zoom are not fully complete:
-  stale last-success timestamp and retry were not exercised. A 320 CSS-pixel
-  viewport passed responsive reflow checks, but that is not recorded as an
-  actual 200% zoom test.
+- [x] After a successful public Track Record load followed by API 503 responses,
+  the browser preserved the cached BTC row and locked fields, displayed
+  `数据已过期`, the last successful timestamp, and `重新加载`; retry issued fresh
+  public signals and performance-summary requests and remained safely stale.
+- [ ] Actual 200% browser zoom remains pending. A 320 CSS-pixel viewport passed
+  responsive reflow checks, but that is not recorded as an actual 200% zoom test.
