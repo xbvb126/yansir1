@@ -21,7 +21,6 @@
 
 - API build passes with `npm run build -w apps/api`.
 - Web build passes with `npm run build -w apps/web`.
-- The public portal remains usable at 200% browser zoom from 320px through 1440px, with visible keyboard focus and no clipped primary actions.
 - Runtime smoke check passes with `npm run smoke`.
 - Environment readiness can be checked with `npm run deploy:check`.
 - Strict production readiness can be checked with `REQUIRE_PRODUCTION_READY=true npm run deploy:check`.
@@ -31,6 +30,10 @@
 - Billing provider readiness is exposed through `GET /api/billing/providers`.
 - Billing order access is scoped to the owner or admin.
 - Passwords created after this milestone use salted `scrypt` hashes. Legacy SHA-256 hashes remain supported for migration compatibility.
+
+## Pending Manual Launch Verification
+
+- Confirm the public portal remains usable at 200% browser zoom from 320px through 1440px, with visible keyboard focus and no clipped primary actions.
 
 ## Suggested Next Milestones
 

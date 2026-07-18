@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prebuild": "node scripts/generate-public-metadata.mjs",
+    "prebuild": "node scripts/generate-public-metadata.mjs --production",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview --host 0.0.0.0",
@@ -16,6 +16,7 @@
     "test:radar-live": "node tests/live-signal-command.test.mjs",
     "test:touch-targets": "node tests/touch-targets.test.mjs",
     "test:portal-source": "node tests/public-portal-source.test.mjs",
+    "test:public-metadata": "node tests/public-metadata.test.mjs",
     "test:portal-runtime": "node tests/public-portal-runtime.test.mjs",
     "test:portal-routing": "node tests/portal-routing.test.mjs",
     "test:public-performance": "node tests/public-performance.test.mjs",

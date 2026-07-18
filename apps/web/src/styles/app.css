@@ -19337,8 +19337,9 @@ button.locked,
 .track-record-filter button:focus-visible,
 .track-record-filter input:focus-visible,
 .portal-retry-button:focus-visible {
-  outline: 3px solid #ffbf47;
-  outline-offset: 3px;
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px #0b1220;
 }
 
 .track-locked {
