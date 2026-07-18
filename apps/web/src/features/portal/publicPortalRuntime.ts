@@ -18,6 +18,30 @@ export function canCreateMemberOrder(identity: PortalIdentitySnapshot) {
   return hasVerifiedIdentity(identity);
 }
 
+export function canPayMemberOrder(identity: PortalIdentitySnapshot) {
+  return hasVerifiedIdentity(identity);
+}
+
+export type PrivatePortalState<TUser, TEntitlements, TOrder, TTeam> = {
+  currentUser: TUser;
+  entitlements: TEntitlements;
+  orders: TOrder[];
+  teamDashboard: TTeam;
+};
+
+export function effectivePrivatePortalState<TUser, TEntitlements, TOrder, TTeam>(
+  state: PrivatePortalState<TUser, TEntitlements, TOrder, TTeam>,
+  identity: PortalIdentitySnapshot
+): PrivatePortalState<TUser, TEntitlements, TOrder, TTeam> | {
+  currentUser: null;
+  entitlements: null;
+  orders: TOrder[];
+  teamDashboard: null;
+} {
+  if (hasVerifiedIdentity(identity)) return state;
+  return { currentUser: null, entitlements: null, orders: [], teamDashboard: null };
+}
+
 export function portalSignalsForResult<T>(
   source: PortalSignalSource,
   result: { ok: true; signals: T[] } | { ok: false }

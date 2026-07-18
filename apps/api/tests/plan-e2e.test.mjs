@@ -149,6 +149,8 @@ async function testPublicSignalsAreDelayedAndPerformanceLocked() {
       assert.equal(signal.performance.returns['24h'], null);
       assert.equal(signal.performance.maxFavorablePct, null);
       assert.equal(signal.performance.maxAdversePct, null);
+      assert.ok(['pending', 'completed'].includes(signal.performance.outcomeStatus), 'public rows expose completion only');
+      assert.doesNotMatch(JSON.stringify(signal.performance), /success|failed/, 'public rows must not reveal 24h outcome direction');
     }
   }
 }

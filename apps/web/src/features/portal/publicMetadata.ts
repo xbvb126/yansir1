@@ -55,10 +55,20 @@ function canonicalPublicUrl(view: ViewName, location: Pick<Location, "href">) {
 
 export function syncPublicMetadata(view: ViewName, location: Pick<Location, "href">) {
   const metadata = PUBLIC_METADATA[view];
-  if (!metadata) return;
+  if (!metadata) {
+    document.title = "Yansir";
+    ensureMeta("robots").content = "noindex,nofollow";
+    ensureMeta("description").content = "Yansir 会员功能";
+    ensureMeta("og:title").content = "Yansir";
+    ensureMeta("og:description").content = "Yansir 会员功能";
+    ensureMeta("og:url").content = "";
+    ensureCanonical().href = "";
+    return;
+  }
 
   const canonical = canonicalPublicUrl(view, location);
   document.documentElement.lang = "zh-CN";
+  ensureMeta("robots").content = "index,follow";
   document.title = metadata.title;
   ensureMeta("description").content = metadata.description;
   ensureMeta("og:title").content = metadata.title;

@@ -33,6 +33,19 @@ try {
   assert.equal(intent.consumeReturnIntent(adapter)?.view, "radar");
   assert.equal(intent.readReturnIntent(adapter), null);
 
+  const contextual = intent.createContextualReturnIntent({
+    view: "track-record", symbol: "BTC", signalId: "sig-1",
+    filters: { direction: "short", symbol: "BTC", unsafe: "javascript:alert(1)" },
+    action: "apply-track-record-filters", requirement: "full-performance"
+  });
+  assert.deepEqual(contextual.filters, { direction: "short", symbol: "BTC" });
+  assert.equal(contextual.action, "apply-track-record-filters");
+  assert.deepEqual(intent.returnIntentSearchParams(contextual), { symbol: "BTC", direction: "short", signal: "sig-1", action: "apply-track-record-filters" });
+
+  const marketWatchlist = intent.createContextualReturnIntent({ view: "data", symbol: "ETH", action: "save-watchlist", requirement: "save-watchlist" });
+  assert.equal(marketWatchlist.symbol, "ETH");
+  assert.equal(marketWatchlist.action, "save-watchlist");
+
   const liveSignal = { id: "sig-claw", symbol: "BTC", trigger: "real strategy signal" };
   const failedAuthStorage = new Map();
   const failedAuthAdapter = { getItem: (key) => failedAuthStorage.get(key) ?? null, setItem: (key, value) => failedAuthStorage.set(key, value), removeItem: (key) => failedAuthStorage.delete(key) };

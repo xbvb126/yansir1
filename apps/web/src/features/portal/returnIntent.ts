@@ -29,7 +29,52 @@ export function createRouteReturnIntent(view: ViewName, symbol = ""): ReturnInte
   };
 }
 
-export function saveReturnIntent(storage: StorageAdapter, intent: ReturnIntent) { storage.setItem(RETURN_INTENT_KEY, JSON.stringify(intent)); }
+const safeActions = new Set([
+  "save-watchlist",
+  "review-signal",
+  "open-realtime-radar",
+  "apply-track-record-filters",
+  "continue-plan-upgrade",
+  "ai-claw"
+]);
+
+const safeFiltersByView: Partial<Record<ViewName, Set<string>>> = {
+  data: new Set(["marketTab", "symbol"]),
+  radar: new Set(["direction", "symbol", "signalType", "minScore"]),
+  "track-record": new Set(["direction", "symbol"]),
+  plans: new Set(["plan"])
+};
+
+export function createContextualReturnIntent(input: ReturnIntent): ReturnIntent {
+  const allowedFilters = safeFiltersByView[input.view] ?? new Set<string>();
+  const filters = Object.fromEntries(
+    Object.entries(input.filters ?? {})
+      .filter(([key, value]) => allowedFilters.has(key) && /^[\w.,:+-]{1,80}$/.test(String(value)))
+      .map(([key, value]) => [key, String(value)])
+  );
+  const action = safeActions.has(input.action) || input.action === `navigate:${input.view}`
+    ? input.action
+    : `navigate:${input.view}`;
+  return {
+    ...input,
+    symbol: input.symbol ? String(input.symbol).trim().toUpperCase().replace(/USDT$/, "") : undefined,
+    signalId: input.signalId ? String(input.signalId).slice(0, 120) : undefined,
+    filters: Object.keys(filters).length ? filters : undefined,
+    action
+  };
+}
+
+export function returnIntentSearchParams(intent: ReturnIntent): Record<string, string> {
+  const safe = createContextualReturnIntent(intent);
+  return {
+    ...(safe.filters ?? {}),
+    ...(safe.symbol ? { symbol: safe.symbol } : {}),
+    ...(safe.signalId ? { signal: safe.signalId } : {}),
+    ...(safe.action ? { action: safe.action } : {})
+  };
+}
+
+export function saveReturnIntent(storage: StorageAdapter, intent: ReturnIntent) { storage.setItem(RETURN_INTENT_KEY, JSON.stringify(createContextualReturnIntent(intent))); }
 export function readReturnIntent(storage: StorageAdapter): ReturnIntent | null {
   try { return JSON.parse(storage.getItem(RETURN_INTENT_KEY) || "null") as ReturnIntent | null; } catch { return null; }
 }

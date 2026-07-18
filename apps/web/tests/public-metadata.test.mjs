@@ -52,6 +52,9 @@ try {
   assert.equal(canonical.href, "https://portal.example/yansir/?view=data", "canonical URL should remove symbol and hash state");
   assert.equal(ogUrl.content, canonical.href, "runtime canonical and Open Graph URL must agree");
   assert.equal(document.head.querySelector('meta[name="description"]').content, "浏览公开加密市场概览与币种数据。");
+  metadata.syncPublicMetadata("account", { href: "https://portal.example/yansir/?view=account" });
+  assert.equal(document.head.querySelector('meta[name="robots"]').content, "noindex,nofollow", "private routes must reset stale public metadata and opt out of indexing");
+  assert.equal(document.head.querySelector('link[rel="canonical"]').href, "", "private routes must not retain a public canonical URL");
 
   assert.throws(() => parsePublicSiteOrigin("", { required: true }), /required/i);
   assert.throws(() => parsePublicSiteOrigin("/yansir", { required: true }), /absolute http/i);

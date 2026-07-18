@@ -12,7 +12,7 @@ export type PublicSignal = {
   engine?: string;
   performance: {
     returns: Record<string, number | null>;
-    outcomeStatus?: string | null;
+    outcomeStatus?: "pending" | "completed" | null;
     access?: { previewOnly: boolean; lockedFields: string[] };
   } | null;
 };

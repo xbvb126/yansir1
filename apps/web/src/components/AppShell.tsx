@@ -14,9 +14,9 @@ import { PublicHomeView } from "../features/portal/PublicHomeView";
 import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
 import { syncPublicMetadata } from "../features/portal/publicMetadata";
 import { getPublicSignals, type PublicSignal, type PublicSignalsResponse } from "../features/portal/publicPortalApi";
-import { canCreateMemberOrder, createPortalRequestCoordinator, hasVerifiedIdentity, portalSignalSource, portalSignalsForResult, type PortalRequestCoordinator } from "../features/portal/publicPortalRuntime";
+import { canCreateMemberOrder, canPayMemberOrder, createPortalRequestCoordinator, effectivePrivatePortalState, hasVerifiedIdentity, portalSignalSource, portalSignalsForResult, type PortalRequestCoordinator } from "../features/portal/publicPortalRuntime";
 import { capturePromptTrigger, closePromptAndRestoreFocus } from "../features/portal/promptFocus";
-import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
+import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, returnIntentSearchParams, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
 
@@ -451,13 +451,13 @@ export function AppShell() {
   const [marketRows, setMarketRows] = useState<MarketRow[]>(() => initialCache?.marketRows || []);
   const [factors, setFactors] = useState<Factor[]>(() => initialCache?.factors || []);
   const [marketStats, setMarketStats] = useState<MarketStats>(() => initialCache?.marketStats || { monitoredSymbols: 0, crowdedRisks: 0, liveSources: 0 });
-  const [currentUser, setCurrentUser] = useState<CurrentUser>(() => initialCache?.currentUser || emptyUser);
+  const [currentUser, setCurrentUser] = useState<CurrentUser>(emptyUser);
   const [currentUserVerified, setCurrentUserVerified] = useState(false);
   const [currentUserVerificationReady, setCurrentUserVerificationReady] = useState(false);
-  const [entitlements, setEntitlements] = useState<Entitlements>(() => initialCache?.entitlements || emptyEntitlements);
+  const [entitlements, setEntitlements] = useState<Entitlements>(emptyEntitlements);
   const [plans, setPlans] = useState<Plan[]>(() => initialCache?.plans || []);
-  const [orders, setOrders] = useState<BillingOrder[]>(() => initialCache?.orders || []);
-  const [teamDashboard, setTeamDashboard] = useState<TeamDashboard>(() => initialCache?.teamDashboard || emptyTeamDashboard);
+  const [orders, setOrders] = useState<BillingOrder[]>([]);
+  const [teamDashboard, setTeamDashboard] = useState<TeamDashboard>(emptyTeamDashboard);
   const [paymentProviders, setPaymentProviders] = useState<PaymentProviderSummary>(() => initialCache?.paymentProviders || emptyPaymentProviders);
   const [searchOpen, setSearchOpen] = useState(false);
   const [routePrompt, setRoutePrompt] = useState<RouteAccessPrompt | null>(null);
@@ -698,7 +698,9 @@ export function AppShell() {
     setSymbolSignalContext(null);
     setView(restoration.intent.view);
     setSelectedSymbol(normalizeDisplaySymbol(restoration.intent.symbol || ""));
-    replaceAppUrl(restoration.intent.view, restoration.intent.symbol);
+    replaceAppUrl(restoration.intent.view, restoration.intent.symbol, returnIntentSearchParams(restoration.intent));
+    if (restoration.intent.action === "save-watchlist") showToast("已恢复市场位置，请确认后保存到关注列表");
+    if (restoration.intent.action === "continue-plan-upgrade") showToast("已恢复套餐选择，请确认订单后继续");
     if (restoration.intent.signalId) returnIntentSignalsRef.current.delete(restoration.intent.signalId);
     window.scrollTo({ top: 0, behavior: "smooth" });
     return true;
@@ -747,6 +749,24 @@ export function AppShell() {
     showToast(`${signal.symbol} 的 ValueClaw 复核上下文已准备好`);
   }
 
+  function openFullPerformance(filters: { symbol: string; direction: string }) {
+    navigateWithRequirement("full-performance", {
+      view: "track-record",
+      symbol: filters.symbol || undefined,
+      filters: { direction: filters.direction, ...(filters.symbol ? { symbol: filters.symbol } : {}) },
+      action: "apply-track-record-filters"
+    });
+  }
+
+  function requestWatchlistSave(symbol: string) {
+    navigateWithRequirement("save-watchlist", {
+      view: "data",
+      symbol: normalizeDisplaySymbol(symbol),
+      filters: { symbol: normalizeDisplaySymbol(symbol), marketTab: "watchlist" },
+      action: "save-watchlist"
+    });
+  }
+
   function openSymbol(symbol: string) {
     const clean = normalizeDisplaySymbol(symbol);
     if (!clean) return;
@@ -786,7 +806,6 @@ export function AppShell() {
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/login", { phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
-    setCurrentUser(response.user);
     showToast("登录成功");
     const restoredIntent = await refreshAll();
     if (!restoredIntent) navigate("account");
@@ -799,7 +818,6 @@ export function AppShell() {
     const response = await apiPost<{ token: string; user: CurrentUser }>("/api/auth/register", { name, phone, password });
     setAuthToken(response.token);
     setActiveUserId(response.user.id);
-    setCurrentUser(response.user);
     showToast("注册成功");
     const restoredIntent = await refreshAll();
     if (!restoredIntent) navigate("account");
@@ -825,7 +843,7 @@ export function AppShell() {
   async function createOrder(plan: Plan) {
     if (!canCreateMemberOrder({ verified: currentUserVerificationReady && currentUserVerified, userId: currentUser.id, role: currentUser.role })) {
       showToast("请先登录后再购买会员");
-      saveReturnIntent(window.sessionStorage, createRouteReturnIntent("plans", selectedSymbol));
+      saveReturnIntent(window.sessionStorage, { view: "plans", symbol: selectedSymbol || undefined, filters: { plan: plan.code || plan.id || plan.name }, action: "continue-plan-upgrade" });
       navigate("login");
       return;
     }
@@ -843,6 +861,12 @@ export function AppShell() {
   }
 
   async function payOrder(order: BillingOrder) {
+    if (!canPayMemberOrder({ verified: currentUserVerificationReady && currentUserVerified, userId: currentUser.id, role: currentUser.role })) {
+      showToast("登录状态已失效，请重新登录后支付");
+      saveReturnIntent(window.sessionStorage, { view: "plans", action: "continue-plan-upgrade" });
+      navigate("login");
+      return;
+    }
     const response = await apiPost<{ order: BillingOrder; user: CurrentUser }>(`/api/billing/orders/${order.id}/pay`, {});
     setOrders((items) => items.map((item) => (item.id === response.order.id ? response.order : item)));
     setCurrentUserVerified(false);
@@ -858,6 +882,15 @@ export function AppShell() {
     userId: currentUser.id,
     role: currentUser.role
   });
+  const privateState = effectivePrivatePortalState({ currentUser, entitlements, orders, teamDashboard }, {
+    verified: currentUserVerificationReady && currentUserVerified,
+    userId: currentUser.id,
+    role: currentUser.role
+  });
+  const displayCurrentUser = privateState.currentUser || emptyUser;
+  const displayEntitlements = privateState.entitlements || emptyEntitlements;
+  const displayOrders = privateState.orders;
+  const displayTeamDashboard = privateState.teamDashboard || emptyTeamDashboard;
   const safeSignals = verifiedIdentity || publicSignalResponse ? signals : [];
   const contentView = resolvePortalContentView(view);
   const shellView = resolvePortalShellView(view);
@@ -869,34 +902,34 @@ export function AppShell() {
 
   return (
     <main className={`app-shell view-${showSymbolDetail ? "symbol" : shellView}`}>
-      {showPrimaryNav && <ResponsivePrimaryNav activeView={view} currentUser={currentUser} onNavigate={navigate} />}
+      {showPrimaryNav && <ResponsivePrimaryNav activeView={view} currentUser={displayCurrentUser} onNavigate={navigate} />}
       {dataStatus !== "loading" && !showSymbolDetail && view === "home" && (
-        <PublicHomeView featuredSignal={publicSignalResponse?.signals[0] || null} onNavigate={navigate} />
+        <PublicHomeView delayHours={publicSignalResponse?.delayHours ?? null} featuredSignal={publicSignalResponse?.signals[0] || null} onNavigate={navigate} />
       )}
-      {dataStatus !== "loading" && !showSymbolDetail && view === "track-record" && <PublicTrackRecordView />}
+      {dataStatus !== "loading" && !showSymbolDetail && view === "track-record" && <PublicTrackRecordView onUnlock={openFullPerformance} />}
       {dataStatus !== "loading" && showSymbolDetail && (
-        <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} radarSignalContext={normalizeDisplaySymbol(symbolSignalContext?.symbol || "") === normalizeDisplaySymbol(selectedSymbol) ? symbolSignalContext : null} currentUser={currentUser} entitlements={entitlements} onBack={closeSymbol} onNavigate={navigate} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
+        <SymbolDetailPage symbol={selectedSymbol} seedRows={rows} signals={safeSignals} radarSignalContext={normalizeDisplaySymbol(symbolSignalContext?.symbol || "") === normalizeDisplaySymbol(selectedSymbol) ? symbolSignalContext : null} currentUser={displayCurrentUser} entitlements={displayEntitlements} onBack={closeSymbol} onNavigate={navigate} onOpenValueClawSignal={openValueClawFromSignal} onRequireWatchlist={requestWatchlistSave} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view !== "home" && contentView === "data" && (
-        <DataPage currentUser={currentUser} entitlements={entitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        <DataPage currentUser={displayCurrentUser} entitlements={displayEntitlements} rows={rows} stats={marketStats} factors={factors} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view !== "track-record" && contentView === "radar" && (
-        <RadarPage authenticated={verifiedIdentity} currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} stats={marketStats} publicDelayHours={publicSignalResponse?.delayHours ?? null} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
+        <RadarPage authenticated={verifiedIdentity} currentUser={displayCurrentUser} entitlements={displayEntitlements} rows={rows} signals={safeSignals} stats={marketStats} publicDelayHours={publicSignalResponse?.delayHours ?? null} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onOpenSymbolSignal={openSymbolFromRadar} onOpenValueClawSignal={openValueClawFromSignal} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
-        <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        <AlertsPage entitlements={displayEntitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
         verifiedIdentity ? <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
           : <PublicClawPreview onLogin={() => navigateWithRequirement("ai-claw", { view: "claw", action: "ai-claw" })} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "account" && (
-        <AccountPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} onLogout={logout} onOpenSearch={() => setSearchOpen(true)} onNavigate={navigate} />
+        <AccountPage currentUser={displayCurrentUser} entitlements={displayEntitlements} rows={rows} signals={safeSignals} onLogout={logout} onOpenSearch={() => setSearchOpen(true)} onNavigate={navigate} />
       )}
       {dataStatus !== "loading" && view === "plans" && (
-        <PlansPage paymentProviders={paymentProviders} plans={plans} orders={orders} currentUser={currentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
+        <PlansPage paymentProviders={paymentProviders} plans={plans} orders={displayOrders} currentUser={displayCurrentUser} onBack={() => navigate("account")} onCreateOrder={createOrder} onPayOrder={payOrder} />
       )}
-      {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={teamDashboard} currentUser={currentUser} onBack={() => navigate("account")} />}
+      {dataStatus !== "loading" && view === "team" && <TeamPage dashboard={displayTeamDashboard} currentUser={displayCurrentUser} onBack={() => navigate("account")} />}
       {dataStatus !== "loading" && canRenderKlineLab && <KlineLabView currentUser={currentUser} rows={rows} navigate={navigate} showToast={showToast} />}
       {dataStatus !== "loading" && view === "kline-lab" && !canRenderKlineLab && (
         <section className="view active-view kline-lab-view" aria-label="内部页面验证中">
@@ -2206,7 +2239,7 @@ function AccountPage({ currentUser, entitlements, onLogout, onNavigate, onOpenSe
   );
 }
 
-function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpenValueClawSignal, onToast, radarSignalContext, seedRows, signals, symbol }: { currentUser: CurrentUser; entitlements: Entitlements; onBack: () => void; onNavigate: (view: ViewName) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; radarSignalContext?: LiveSignal | null; seedRows: MarketRow[]; signals: Signal[]; symbol: string }) {
+function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpenValueClawSignal, onRequireWatchlist, onToast, radarSignalContext, seedRows, signals, symbol }: { currentUser: CurrentUser; entitlements: Entitlements; onBack: () => void; onNavigate: (view: ViewName) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onRequireWatchlist: (symbol: string) => void; onToast: (message: string) => void; radarSignalContext?: LiveSignal | null; seedRows: MarketRow[]; signals: Signal[]; symbol: string }) {
   const cleanSeedSymbol = normalizeDisplaySymbol(symbol);
   const cleanSymbol = cleanSeedSymbol;
   const seed = useMemo(
@@ -2376,6 +2409,7 @@ function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpe
     const nextSymbol = cleanSymbol || displaySymbol;
     if (!currentUser.id) {
       setUpgradePrompt({ title: "登录后保存监控规则", desc: "登录后可把币种加入自选并保存周期、阈值和推送规则。" });
+      onRequireWatchlist(cleanSymbol);
       return;
     }
     if (!planAllowedTimeframes.includes(ruleInterval)) {
@@ -2422,6 +2456,7 @@ function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpe
     const nextSymbol = cleanSymbol || displaySymbol;
     if (!currentUser.id) {
       setUpgradePrompt({ title: "登录后加入自选", desc: "未登录只能浏览延迟信号。登录后可加入自选，升级后可追踪更多币种和周期。" });
+      onRequireWatchlist(cleanSymbol);
       return;
     }
     if (!isWatched && watchlistLimits && watchlistLimits.remainingSymbolSlots <= 0) {
@@ -2646,6 +2681,7 @@ function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpe
 
 function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, paymentProviders, plans }: { currentUser: CurrentUser; onBack: () => void; onCreateOrder: (plan: Plan) => void; onPayOrder: (order: BillingOrder) => void; orders: BillingOrder[]; paymentProviders: PaymentProviderSummary; plans: Plan[] }) {
   const displayPlans = plans.length ? plans : fallbackPlansForDisplay();
+  const requestedPlan = new URLSearchParams(window.location.search).get("plan") || "";
   return (
     <section className="clean-page">
       <SubHeader title="会员等级购买" desc="前后端统一读取套餐权限：自选数量、周期、推送额度、历史战绩和接口权限都以这里为准。" onBack={onBack} />
@@ -2657,8 +2693,9 @@ function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, pay
       <div className="plan-list">
         {displayPlans.map((plan) => {
           const isCurrent = normalizePlanName(currentUser.plan) === normalizePlanName(plan.name);
+          const isRequested = normalizePlanName(requestedPlan) === normalizePlanName(plan.code || plan.id || plan.name);
           return (
-            <article className={isCurrent ? "plan-card active" : "plan-card"} key={plan.id || plan.code || plan.name}>
+            <article className={`plan-card${isCurrent ? " active" : ""}${isRequested ? " requested" : ""}`} key={plan.id || plan.code || plan.name}>
               <div>
                 <strong>{plan.name}</strong>
                 <span>{plan.features?.join(" / ") || "会员权益"}</span>
@@ -2669,6 +2706,8 @@ function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, pay
                 <span>可用周期 <strong>{(plan.allowedTimeframes || ["5m"]).join(" / ")}</strong></span>
                 <span>最低推送分 <strong>{plan.minAlertScore ?? "-"}</strong></span>
                 <span>每日推送 <strong>{plan.maxPushPerDay ?? plan.signalQuota}</strong></span>
+                <span>AI Claw 每日额度 <strong>{plan.signalQuota} 次</strong></span>
+                <span>团队席位 <strong>{plan.teamSeats ?? 0}</strong></span>
                 <span>历史窗口 <strong>{plan.historyDays ?? "-"} 天</strong></span>
                 <span>实时延迟 <strong>{plan.realtimeDelayHours ? `${plan.realtimeDelayHours} 小时` : "实时"}</strong></span>
                 <span>战绩回看 <strong>{plan.signalOutcomes ? "完整" : "基础"}</strong></span>
@@ -2679,6 +2718,24 @@ function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, pay
           );
         })}
       </div>
+      <section className="clean-card" aria-labelledby="plans-billing-rules">
+        <CardTitle title="计费规则" desc="当前套餐按月计费，以支付确认后的订阅状态为准。" />
+        <div className="plan-permission-grid" id="plans-billing-rules">
+          <span>计费周期 <strong>30 天</strong></span>
+          <span>自动续费 <strong>当前不自动续费</strong></span>
+          <span>生效时间 <strong>支付确认后</strong></span>
+          <span>外部支付 <strong>以结账页规则为准</strong></span>
+        </div>
+      </section>
+      <section className="clean-card" aria-labelledby="plans-faq">
+        <CardTitle title="常见问题" desc="套餐能力与公开体验的边界说明。" />
+        <div id="plans-faq" className="plan-faq-list">
+          <article><strong>AI Claw 会生成交易信号吗？</strong><p>不会。策略引擎生成信号，AI Claw 只解释和复核已有信号；每日额度以套餐显示值为准。</p></article>
+          <article><strong>公开雷达为什么延迟？</strong><p>匿名公开信号由服务端统一延迟 8 小时，公开历史范围为 7 天。</p></article>
+          <article><strong>升级后什么时候生效？</strong><p>支付渠道确认订单后刷新账号权益；系统不会在未确认支付时提前开放权限。</p></article>
+          <article><strong>套餐会自动续费吗？</strong><p>当前不自动续费。接入外部支付渠道后，续费与退款规则以结账页明确展示的条款为准。</p></article>
+        </div>
+      </section>
       <section className="clean-card">
         <CardTitle title="订单中心" desc="会员购买产生的订单放在这里。" />
         {orders.length === 0 && <EmptyState title="暂无订单" desc="选择 VIP 或 SVIP 后会显示在这里。" />}
@@ -2692,9 +2749,9 @@ function PlansPage({ currentUser, onBack, onCreateOrder, onPayOrder, orders, pay
 
 function fallbackPlansForDisplay(): Plan[] {
   return [
-    { id: "free", code: "free", name: "Free", price: 0, signalQuota: 10, feishu: false, apiAccess: false, maxWatchlistSymbols: 5, allowedTimeframes: ["5m"], realtimeDelayHours: 8, historyDays: 7, minAlertScore: 80, maxPushPerDay: 0, signalOutcomes: false, features: ["全市场信号延迟 8 小时", "自选 5 个币", "周期 5m", "基础战绩预览"] },
-    { id: "vip", code: "vip", name: "VIP", price: 199, signalQuota: 300, feishu: true, apiAccess: false, maxWatchlistSymbols: 50, allowedTimeframes: ["5m", "15m"], realtimeDelayHours: 0, historyDays: 30, minAlertScore: 65, maxPushPerDay: 300, signalOutcomes: true, features: ["每日 300 条实时推送", "自选 50 个币", "周期 5m / 15m", "完整战绩回看"] },
-    { id: "svip", code: "svip", name: "SVIP", price: 699, signalQuota: 2000, feishu: true, apiAccess: true, maxWatchlistSymbols: 200, allowedTimeframes: ["5m", "15m", "1h", "4h"], realtimeDelayHours: 0, historyDays: 180, minAlertScore: 65, maxPushPerDay: 2000, signalOutcomes: true, features: ["每日 2000 条实时推送", "自选 200 个币", "周期 5m / 15m / 1h / 4h", "API 订阅"] }
+    { id: "free", code: "free", name: "Free", price: 0, signalQuota: 10, feishu: false, apiAccess: false, maxWatchlistSymbols: 5, allowedTimeframes: ["5m"], realtimeDelayHours: 8, historyDays: 7, minAlertScore: 80, maxPushPerDay: 0, signalOutcomes: false, teamSeats: 0, features: ["全市场信号延迟 8 小时", "自选 5 个币", "周期 5m", "基础战绩预览"] },
+    { id: "vip", code: "vip", name: "VIP", price: 199, signalQuota: 300, feishu: true, apiAccess: false, maxWatchlistSymbols: 50, allowedTimeframes: ["5m", "15m"], realtimeDelayHours: 0, historyDays: 30, minAlertScore: 65, maxPushPerDay: 300, signalOutcomes: true, teamSeats: 1, features: ["每日 300 条实时推送", "自选 50 个币", "周期 5m / 15m", "完整战绩回看"] },
+    { id: "svip", code: "svip", name: "SVIP", price: 699, signalQuota: 2000, feishu: true, apiAccess: true, maxWatchlistSymbols: 200, allowedTimeframes: ["5m", "15m", "1h", "4h"], realtimeDelayHours: 0, historyDays: 180, minAlertScore: 65, maxPushPerDay: 2000, signalOutcomes: true, teamSeats: 5, features: ["每日 2000 条实时推送", "自选 200 个币", "周期 5m / 15m / 1h / 4h", "API 订阅"] }
   ];
 }
 
@@ -2991,10 +3048,13 @@ function appBasePath() {
   return base.endsWith("/") ? base : `${base}/`;
 }
 
-function replaceAppUrl(view: ViewName, symbol = "") {
+function replaceAppUrl(view: ViewName, symbol = "", context: Record<string, string> = {}) {
   const params = new URLSearchParams();
   params.set("view", view);
   if (symbol) params.set("symbol", normalizeDisplaySymbol(symbol));
+  for (const [key, value] of Object.entries(context)) {
+    if (key !== "view" && value) params.set(key, value);
+  }
   window.history.replaceState(null, "", `${appBasePath()}?${params.toString()}`);
 }
 

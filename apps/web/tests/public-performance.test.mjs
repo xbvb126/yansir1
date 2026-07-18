@@ -33,6 +33,7 @@ try {
   assert.equal(row.return1h, "-0.50%");
   assert.equal(row.return24h, "会员解锁");
   assert.equal(row.pending, true);
+  assert.equal(row.completionStatus, "pending");
 
   const shortWindowLockedRow = performance.toTrackRecordRow({
     id: "sig-locked-short-windows",
@@ -49,6 +50,7 @@ try {
   assert.equal(shortWindowLockedRow.return15m, "会员解锁");
   assert.equal(shortWindowLockedRow.return1h, "会员解锁");
   assert.equal(shortWindowLockedRow.return24h, "-4.00%");
+  assert.equal(shortWindowLockedRow.completionStatus, "completed");
 
   const unlockedNull24h = performance.toTrackRecordRow({
     id: "sig-null-24h",

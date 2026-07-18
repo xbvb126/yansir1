@@ -2,7 +2,7 @@ import type { ViewName } from "../../components/BottomNav";
 import { SystemIcon } from "../../components/SystemIcon";
 import type { PublicSignal } from "./publicPortalApi";
 
-export function PublicHomeView({ featuredSignal, onNavigate }: { featuredSignal: PublicSignal | null; onNavigate: (view: ViewName) => void }) {
+export function PublicHomeView({ delayHours, featuredSignal, onNavigate }: { delayHours: number | null; featuredSignal: PublicSignal | null; onNavigate: (view: ViewName) => void }) {
   const lockedFields = featuredSignal?.performance?.access?.lockedFields || [];
   const return15m = lockedFields.includes("15m") ? "会员解锁" : featuredSignal?.performance?.returns["15m"];
   const return1h = lockedFields.includes("1h") ? "会员解锁" : featuredSignal?.performance?.returns["1h"];
@@ -23,7 +23,7 @@ export function PublicHomeView({ featuredSignal, onNavigate }: { featuredSignal:
           <strong>先验证，再决定</strong>
           <ul>
             <li><SystemIcon name="check" />无需登录即可浏览</li>
-            <li><SystemIcon name="clock" />真实信号延迟 8 小时</li>
+            <li><SystemIcon name="clock" />{delayHours === null ? "服务端延迟校验中" : `真实信号延迟 ${delayHours} 小时`}</li>
             <li><SystemIcon name="shield" />仅供研究参考，不构成投资建议</li>
           </ul>
         </aside>

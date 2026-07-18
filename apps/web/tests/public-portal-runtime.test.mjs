@@ -26,6 +26,15 @@ try {
   assert.equal(runtime.hasVerifiedIdentity(verifiedGuestWithId), false);
   assert.equal(runtime.portalSignalSource(verifiedGuestWithId), "public", "a verified Guest id must still use public Radar data");
   assert.equal(runtime.canCreateMemberOrder(verifiedGuestWithId), false);
+  assert.equal(runtime.canPayMemberOrder(cachedIdentity), false, "expired cached identity must not pay a cached order");
+  assert.equal(runtime.canPayMemberOrder(verifiedGuestWithId), false, "Guest identities must never pay orders");
+  assert.equal(runtime.canPayMemberOrder(verifiedMember), true);
+
+  const cachedPrivate = { currentUser: { id: "cached-user" }, entitlements: { plan: "SVIP" }, orders: [{ id: "old" }], teamDashboard: { secret: true } };
+  assert.deepEqual(runtime.effectivePrivatePortalState(cachedPrivate, cachedIdentity), {
+    currentUser: null, entitlements: null, orders: [], teamDashboard: null
+  }, "cached private state stays hidden until /api/me verifies the active identity");
+  assert.deepEqual(runtime.effectivePrivatePortalState(cachedPrivate, verifiedMember), cachedPrivate);
 
   assert.deepEqual(runtime.portalSignalsForResult("public", { ok: false }), [], "failed public loads clear any prior private/untrusted signals");
   assert.deepEqual(runtime.portalSignalsForResult("public", { ok: true, signals: ["delayed"] }), ["delayed"]);

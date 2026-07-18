@@ -10,6 +10,7 @@ export type TrackRecordRow = {
   return1h: string;
   return24h: "会员解锁" | string;
   pending: boolean;
+  completionStatus: "pending" | "completed";
 };
 
 type PublicPerformanceInput = {
@@ -45,7 +46,8 @@ export function toTrackRecordRow(signal: PublicSignal): TrackRecordRow {
     return15m: displayReturn("15m"),
     return1h: displayReturn("1h"),
     return24h: displayReturn("24h"),
-    pending: performance?.outcomeStatus === "pending"
+    pending: performance?.outcomeStatus !== "completed",
+    completionStatus: performance?.outcomeStatus === "completed" ? "completed" : "pending"
   };
 }
 

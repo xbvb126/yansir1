@@ -247,11 +247,47 @@ async function testPublicPerformanceSummaryIsEmptyWithoutDatabase() {
   assert.equal(summary.directionalHitRate1h, null);
 }
 
+async function testPublicSignalLedgerExcludesObservationsAndHidesDirectionalOutcomes() {
+  const sqlCalls = [];
+  const database = {
+    enabled: true,
+    query: async (sql) => {
+      sqlCalls.push(sql);
+      if (/count\(\*\)/.test(sql)) return [{ total_count: "1" }];
+      return [{
+        id: "public-1", symbol: "BTCUSDT", timeframe: "5m", direction: "long",
+        signal_type: "trend_long_signal", title: "real strategy signal", reason: "rule evidence",
+        engine: "pine_v6", price: "64000", score: 82, emitted_at: "2026-07-17T00:00:00.000Z", payload: {},
+        performance_entry_price: "64000", performance_price_15m: "64100", performance_price_1h: "64200",
+        performance_price_4h: "65000", performance_price_24h: "62000",
+        performance_return_5m: "0.001", performance_return_15m: "0.002", performance_return_1h: "0.003",
+        performance_return_4h: "0.02", performance_return_24h: "-0.03125",
+        performance_max_favorable_pct: "0.04", performance_max_adverse_pct: "-0.05",
+        performance_outcome_status: "failed", performance_evaluated_until: "2026-07-18T00:00:00.000Z",
+        performance_updated_at: "2026-07-18T00:01:00.000Z"
+      }];
+    }
+  };
+  const { service } = createService(strategyResult, database);
+  const payload = await service.getPublicDelayedSignals({ page: 1, limit: 10 });
+  assert.equal(payload.signals.length, 1);
+  const combinedSql = sqlCalls.join("\n");
+  assert.match(combinedSql, /direction in \('long', 'short'\)/);
+  assert.match(combinedSql, /market_observation/);
+  assert.equal(payload.signals[0].performance.outcomeStatus, "completed", "anonymous completion must not reveal success/failure direction");
+  assert.equal(payload.signals[0].performance.returns["4h"], null);
+  assert.equal(payload.signals[0].performance.returns["24h"], null);
+  assert.equal(payload.signals[0].performance.maxFavorablePct, null);
+  assert.equal(payload.signals[0].performance.maxAdversePct, null);
+  assert.doesNotMatch(JSON.stringify(payload.signals[0].performance), /success|failed|-0\.03125|0\.02|-0\.05/);
+}
+
 try {
   await testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys();
   await testAlertCandidatesExposeActionAndReduceReasonBranches();
   await testPublicPerformanceSummaryUsesDelayedSevenDayWindow();
   await testPublicPerformanceSummaryIsEmptyWithoutDatabase();
+  await testPublicSignalLedgerExcludesObservationsAndHidesDirectionalOutcomes();
   console.log("strategy contract tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

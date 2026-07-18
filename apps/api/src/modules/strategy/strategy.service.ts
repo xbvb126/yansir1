@@ -23,6 +23,10 @@ const MAX_SCAN_TIMEFRAMES = 4;
 const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 300;
 const MIN_SCHEDULE_INTERVAL_SECONDS = 30;
 const MAX_SCHEDULE_INTERVAL_SECONDS = 86400;
+const PUBLIC_LEDGER_ELIGIBILITY = [
+  "se.direction in ('long', 'short')",
+  "coalesce(se.signal_type, '') <> 'market_observation'"
+] as const;
 const DEFAULT_ALERT_RULE: Required<AlertRuleDto> = {
   symbols: ["BTCUSDT", "ETHUSDT", "XRPUSDT"],
   timeframe: "5m",
@@ -722,7 +726,11 @@ export class StrategyService implements OnModuleInit {
       };
     }
 
-    const where = ["se.emitted_at <= now() - interval '8 hours'", "se.emitted_at >= now() - interval '7 days'"];
+    const where = [
+      "se.emitted_at <= now() - interval '8 hours'",
+      "se.emitted_at >= now() - interval '7 days'",
+      ...PUBLIC_LEDGER_ELIGIBILITY
+    ];
     const params: Array<string[] | AlertDirection[] | number | Date> = [];
     if (filters.symbols.length) {
       params.push(filters.symbols);
@@ -839,8 +847,7 @@ export class StrategyService implements OnModuleInit {
       left join signal_performance sp on sp.signal_event_id = se.id
       where se.emitted_at <= now() - interval '8 hours'
         and se.emitted_at >= now() - interval '7 days'
-        and se.direction in ('long', 'short')
-        and coalesce(se.signal_type, '') <> 'market_observation'
+        and ${PUBLIC_LEDGER_ELIGIBILITY.join("\n        and ")}
     `);
     return {
       ...empty,
@@ -2084,7 +2091,9 @@ function mapSignalPerformance(row: SignalEventRow, fullPerformance = true) {
     },
     maxFavorablePct: fullPerformance ? nullableNumber(row.performance_max_favorable_pct) : null,
     maxAdversePct: fullPerformance ? nullableNumber(row.performance_max_adverse_pct) : null,
-    outcomeStatus: row.performance_outcome_status ?? "pending",
+    outcomeStatus: fullPerformance
+      ? row.performance_outcome_status ?? "pending"
+      : publicCompletionStatus(row),
     evaluatedUntil: row.performance_evaluated_until ? new Date(row.performance_evaluated_until).toISOString() : null,
     updatedAt: row.performance_updated_at ? new Date(row.performance_updated_at).toISOString() : null,
     access: {
@@ -2093,6 +2102,12 @@ function mapSignalPerformance(row: SignalEventRow, fullPerformance = true) {
       lockedFields: fullPerformance ? [] : ["4h", "24h", "maxFavorablePct", "maxAdversePct"]
     }
   };
+}
+
+function publicCompletionStatus(row: SignalEventRow): "pending" | "completed" {
+  return row.performance_return_24h !== null && row.performance_return_24h !== undefined
+    ? "completed"
+    : "pending";
 }
 
 function nullableNumber(value: string | null | undefined) {
