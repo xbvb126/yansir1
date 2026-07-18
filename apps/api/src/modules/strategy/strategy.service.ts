@@ -816,6 +816,42 @@ export class StrategyService implements OnModuleInit {
     };
   }
 
+  async getPublicPerformanceSummary() {
+    const empty = {
+      windowDays: 7 as const,
+      generatedAt: new Date().toISOString(),
+      methodologyVersion: "fixed-window-v1",
+      totalSignals: 0,
+      completed24hCount: 0,
+      pending24hCount: 0,
+      directionalHitRate1h: null as number | null,
+      averageDirectionalReturn1h: null as number | null
+    };
+    if (!this.database.enabled) return empty;
+    const [row] = await this.database.query<Record<string, string | null>>(`
+      select
+        count(*)::text as total_signals,
+        count(sp.return_24h)::text as completed_24h_count,
+        (count(*) - count(sp.return_24h))::text as pending_24h_count,
+        avg(case when sp.return_1h is null then null when se.direction = 'short' and sp.return_1h < 0 then 1 when se.direction <> 'short' and sp.return_1h > 0 then 1 else 0 end)::text as directional_hit_rate_1h,
+        avg(case when sp.return_1h is null then null when se.direction = 'short' then -sp.return_1h else sp.return_1h end)::text as average_directional_return_1h
+      from signal_events se
+      left join signal_performance sp on sp.signal_event_id = se.id
+      where se.emitted_at <= now() - interval '8 hours'
+        and se.emitted_at >= now() - interval '7 days'
+        and se.direction in ('long', 'short')
+        and coalesce(se.signal_type, '') <> 'market_observation'
+    `);
+    return {
+      ...empty,
+      totalSignals: Number(row?.total_signals || 0),
+      completed24hCount: Number(row?.completed_24h_count || 0),
+      pending24hCount: Number(row?.pending_24h_count || 0),
+      directionalHitRate1h: nullableNumber(row?.directional_hit_rate_1h),
+      averageDirectionalReturn1h: nullableNumber(row?.average_directional_return_1h)
+    };
+  }
+
   async startPerformanceUpdater(payload: { intervalSeconds?: number; runImmediately?: boolean } = {}, userId?: string) {
     if (userId !== undefined) await this.assertApiAccess(userId);
     if (this.performanceTimer) {

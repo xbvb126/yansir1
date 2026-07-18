@@ -15,6 +15,8 @@ GET  /api/market/ticker
 GET  /api/market/klines
 GET  /api/signals
 GET  /api/signals/:id/performance
+GET  /api/strategy/public-signals
+GET  /api/strategy/public-performance-summary
 GET  /api/strategy/scan/latest
 GET  /api/strategy/scan/schedule
 POST /api/strategy/run
@@ -40,6 +42,8 @@ Current implementation notes:
 - `/api/billing/webhook` accepts subscription events from a payment provider and updates user plan, status, expiry, quota, and audit logs. If `BILLING_WEBHOOK_SECRET` is configured, callers must send `x-billing-webhook-secret`.
 - `/api/market/ticker` and `/api/market/klines` read Binance USDⓈ-M Futures data when available and fall back to fixture data during local/offline development.
 - `/api/strategy/run` calls the Python strategy service and attempts to persist returned signals into `signals` and `signal_events`.
+- `/api/strategy/public-signals` and `/api/strategy/public-performance-summary` are anonymous, server-delayed public endpoints. Both use only strategy-engine signal records emitted at least eight hours ago and within the last seven days; AI Claw explains or reviews those records and does not create signals.
+- Public signal records expose the 15-minute and 1-hour performance preview. The 4-hour, 24-hour, maximum favorable excursion, and maximum adverse excursion fields remain present but locked as `null` with their names listed in `performance.access.lockedFields`.
 - If `/api/strategy/run` receives no `candles`, the API fetches K lines first and then sends the enriched payload to the strategy service.
 - `/api/strategy/scan` runs the same strategy over a batch of symbols. It is the manual trigger that will later become a scheduled scan job.
 - `/api/strategy/scan/latest` returns the last in-memory scan snapshot for local UI integration.
@@ -79,6 +83,25 @@ Request:
   "mtf_candles": [],
   "htf_candles": [],
   "config": {}
+}
+```
+
+## Anonymous public radar endpoints
+
+`GET /api/strategy/public-signals` returns paginated strategy-engine signals after an exact server-side delay of eight hours. The public history window is seven days. Per-record 15-minute and 1-hour performance is available as a preview; `4h`, `24h`, `maxFavorablePct`, and `maxAdversePct` remain locked.
+
+`GET /api/strategy/public-performance-summary` returns aggregate performance for the same delayed seven-day population. Only directional `long` and `short` signals are included, and `market_observation` records are excluded.
+
+```json
+{
+  "windowDays": 7,
+  "generatedAt": "2026-07-18T00:00:00.000Z",
+  "methodologyVersion": "fixed-window-v1",
+  "totalSignals": 12,
+  "completed24hCount": 9,
+  "pending24hCount": 3,
+  "directionalHitRate1h": 0.666666,
+  "averageDirectionalReturn1h": 0.0125
 }
 ```
 

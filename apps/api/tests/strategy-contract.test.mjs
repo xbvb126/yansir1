@@ -120,7 +120,7 @@ function usersService() {
   };
 }
 
-function createService(result = strategyResult) {
+function createService(result = strategyResult, databaseOverride = null) {
   const savedSignals = [];
   const strategyClient = {
     runStrategy: async () => result
@@ -143,7 +143,7 @@ function createService(result = strategyResult) {
   const alertsService = {
     sendFeishu: async () => ({ sent: true })
   };
-  const database = {
+  const database = databaseOverride ?? {
     enabled: false,
     query: async () => []
   };
@@ -213,9 +213,45 @@ async function testAlertCandidatesExposeActionAndReduceReasonBranches() {
   assert.match(reduceShort.reason, /reduce_short/);
 }
 
+async function testPublicPerformanceSummaryUsesDelayedSevenDayWindow() {
+  let capturedSql = "";
+  const database = {
+    enabled: true,
+    query: async (sql) => {
+      capturedSql = sql;
+      return [{ total_signals: "12", completed_24h_count: "9", pending_24h_count: "3", directional_hit_rate_1h: "0.666666", average_directional_return_1h: "0.0125" }];
+    }
+  };
+  const { service } = createService(strategyResult, database);
+  const summary = await service.getPublicPerformanceSummary();
+  assert.match(capturedSql, /interval '8 hours'/);
+  assert.match(capturedSql, /interval '7 days'/);
+  assert.match(capturedSql, /direction in \('long', 'short'\)/);
+  assert.match(capturedSql, /market_observation/);
+  assert.deepEqual(summary, {
+    windowDays: 7,
+    generatedAt: summary.generatedAt,
+    methodologyVersion: "fixed-window-v1",
+    totalSignals: 12,
+    completed24hCount: 9,
+    pending24hCount: 3,
+    directionalHitRate1h: 0.666666,
+    averageDirectionalReturn1h: 0.0125
+  });
+}
+
+async function testPublicPerformanceSummaryIsEmptyWithoutDatabase() {
+  const { service } = createService();
+  const summary = await service.getPublicPerformanceSummary();
+  assert.equal(summary.totalSignals, 0);
+  assert.equal(summary.directionalHitRate1h, null);
+}
+
 try {
   await testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys();
   await testAlertCandidatesExposeActionAndReduceReasonBranches();
+  await testPublicPerformanceSummaryUsesDelayedSevenDayWindow();
+  await testPublicPerformanceSummaryIsEmptyWithoutDatabase();
   console.log("strategy contract tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
