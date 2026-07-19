@@ -64,6 +64,30 @@ assertMinHeightAtLeast(".track-record-unlock", 44);
 const expandedTrackRecordShell = selectorBlock(".app-shell:has(.public-track-record-view)");
 assert.match(expandedTrackRecordShell, /width\s*:\s*min\(100vw,\s*1180px\)/);
 
+const trackRecordRow = selectorBlock(".track-record-row");
+assert.match(
+  trackRecordRow,
+  /grid-template-columns\s*:\s*minmax\(0,\s*[^)]+\)/,
+  ".track-record-row should use a zero-minimum first grid track",
+);
+assert.doesNotMatch(
+  trackRecordRow,
+  /(?:^|[;\s])min-width\s*:/,
+  ".track-record-row should not declare a minimum width that can overflow the page",
+);
+assert.doesNotMatch(
+  trackRecordRow,
+  /(?:^|[;\s])width\s*:\s*\d+(?:px|rem|em)\b/,
+  ".track-record-row should not declare a fixed width that can overflow the page",
+);
+
+const trackRecordColumns = selectorBlock(".track-record-row > div");
+assert.match(
+  trackRecordColumns,
+  /min-width\s*:\s*0(?:px)?\s*;/,
+  ".track-record-row child columns should be allowed to shrink within the grid",
+);
+
 assertHighContrastFocus(".track-record-controls input:focus-visible");
 assertHighContrastFocus(".track-record-controls button:focus-visible");
 assertHighContrastFocus(".track-methodology-disclosure summary:focus-visible");
