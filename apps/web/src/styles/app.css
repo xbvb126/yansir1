@@ -18878,6 +18878,15 @@ button.locked,
   margin: 0 auto;
   padding: 28px 0 112px;
   color: #12213d;
+  font-size: 14px;
+}
+
+.app-shell:has(.public-track-record-view) {
+  width: min(100vw, 1180px);
+}
+
+.public-track-record-view .portal-eyebrow {
+  font-size: 14px;
 }
 
 .track-record-heading {
@@ -18907,7 +18916,7 @@ button.locked,
   align-items: center;
   gap: 8px;
   color: #617492;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -18982,7 +18991,7 @@ button.locked,
 
 .track-trust-grid small {
   color: #8290a7;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .track-trust-grid .positive {
@@ -19011,7 +19020,7 @@ button.locked,
   display: grid;
   gap: 6px;
   color: #61708b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .track-record-controls input,
@@ -19019,6 +19028,7 @@ button.locked,
   min-height: 44px;
   border: 1px solid #dbe3ef;
   border-radius: 12px;
+  font-size: 14px;
 }
 
 .track-record-controls input {
@@ -19060,7 +19070,7 @@ button.locked,
 
 .track-record-ledger-head span {
   color: #8390a5;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .track-record-list {
@@ -19094,7 +19104,7 @@ button.locked,
 
 .track-record-row small {
   color: #8390a5;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .track-record-row .positive {
@@ -19106,7 +19116,7 @@ button.locked,
 }
 
 .track-completion {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -19116,6 +19126,27 @@ button.locked,
 
 .track-completion.pending {
   color: #6e7f9b;
+}
+
+.track-direction {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  width: fit-content;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.track-direction.long {
+  color: #087f61;
+  background: #e6f8f1;
+}
+
+.track-direction.short {
+  color: #c83849;
+  background: #fff0f2;
 }
 
 .track-methodology-disclosure {
@@ -19142,6 +19173,7 @@ button.locked,
 .track-methodology-disclosure summary small {
   margin-top: 2px;
   color: #8090a8;
+  font-size: 14px;
 }
 
 .track-methodology-disclosure > div {
@@ -19160,6 +19192,72 @@ button.locked,
 .track-record-unlock {
   min-height: 44px;
   margin-top: 18px;
+}
+
+.track-record-controls input:focus-visible,
+.track-record-controls button:focus-visible,
+.track-methodology-disclosure summary:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px #0b1220;
+}
+
+.public-track-record-view .portal-retry-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  margin: 18px auto 0;
+  padding: 0 20px;
+  border: 1px solid #102343;
+  border-radius: 12px;
+  color: #fff;
+  background: #102343;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.track-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid #dbe6f6;
+  border-radius: 14px;
+  background: #f7f9fc;
+}
+
+.track-unavailable.stale {
+  border-color: #efd59a;
+  background: #fff9ec;
+}
+
+.track-unavailable strong,
+.track-unavailable p {
+  display: block;
+  margin: 0;
+}
+
+.track-unavailable strong {
+  font-size: 16px;
+}
+
+.track-unavailable p {
+  margin-top: 4px;
+  color: #64748d;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.track-unavailable .portal-retry-button {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.public-track-record-view .portal-empty-state p {
+  font-size: 14px;
 }
 
 @media (max-width: 720px) {
@@ -19212,6 +19310,15 @@ button.locked,
     flex: 1;
     padding: 0 10px;
   }
+
+  .track-unavailable {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .track-unavailable .portal-retry-button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 430px) {
@@ -19220,7 +19327,7 @@ button.locked,
   }
 
   .track-record-verified {
-    font-size: 11px;
+    font-size: 14px;
   }
 
   .track-trust-primary strong {
