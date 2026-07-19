@@ -43,6 +43,29 @@ export function TrustSummary({ summary }: { summary: PublicPerformanceSummary })
   );
 }
 
+export function TrustSummaryLoading() {
+  return (
+    <section className="track-trust-summary is-loading" role="status" aria-label="可信度总览正在加载" aria-busy="true">
+      <h2>可信度总览</h2>
+      <div className="track-trust-grid" aria-hidden="true">
+        <article className="track-trust-primary">
+          <span className="track-trust-skeleton label" />
+          <strong className="track-trust-skeleton metric" />
+          <small className="track-trust-skeleton caption" />
+        </article>
+        <article>
+          <span className="track-trust-skeleton label" />
+          <strong className="track-trust-skeleton value" />
+        </article>
+        <article>
+          <span className="track-trust-skeleton label" />
+          <strong className="track-trust-skeleton value" />
+        </article>
+      </div>
+    </section>
+  );
+}
+
 type FilterProps = {
   symbolDraft: string;
   direction: "all" | "long" | "short";
@@ -60,7 +83,7 @@ export function TrackRecordFilters(props: FilterProps) {
       </form>
       <div role="group" aria-label="方向筛选">
         {(["all", "long", "short"] as const).map((item) => (
-          <button className={props.direction === item ? "active" : ""} key={item} type="button" onClick={() => props.onDirectionChange(item)}>
+          <button aria-pressed={props.direction === item} className={props.direction === item ? "active" : ""} key={item} type="button" onClick={() => props.onDirectionChange(item)}>
             {item === "all" ? "全部方向" : item === "long" ? "看多" : "看空"}
           </button>
         ))}

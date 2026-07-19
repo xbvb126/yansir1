@@ -113,6 +113,29 @@ try {
   assert.equal(emptyTrust.sampleCaption, "暂无满足公开条件的样本");
   assert.equal(emptyTrust.isEmpty, true);
 
+  const inconsistentEmptyTrust = performance.toTrustSummaryView({
+    windowDays: 7,
+    generatedAt: "2026-07-19T00:00:00.000Z",
+    methodologyVersion: "fixed-window-v1",
+    totalSignals: 0,
+    completed24hCount: 0,
+    pending24hCount: 0,
+    directionalHitRate1h: 0.75,
+    averageDirectionalReturn1h: 0.0125,
+  });
+  assert.equal(inconsistentEmptyTrust.hitRate, "计算中", "zero signals must suppress an inconsistent hit rate");
+  assert.equal(inconsistentEmptyTrust.averageReturn, "计算中", "zero signals must suppress an inconsistent average return");
+
+  assert.equal(typeof performance.describeTrackRecordEmptyState, "function", "empty-state copy must be derived from active filters and server metadata");
+  assert.equal(
+    performance.describeTrackRecordEmptyState({ symbol: "BTC", direction: "long", delayHours: 8, historyDays: 7 }),
+    "当前筛选：BTC · 看多。公开信号延迟 8 小时，历史范围 7 天；可清空币种或切换方向后重试，系统不会补造信号。"
+  );
+  assert.equal(
+    performance.describeTrackRecordEmptyState({ symbol: "", direction: "all", delayHours: null, historyDays: null }),
+    "当前筛选：全部币种 · 全部方向。服务端延迟与公开历史范围读取中；可调整筛选后重试，系统不会补造信号。"
+  );
+
   assert.equal(performance.publicReturnTone("+0.42%"), "positive");
   assert.equal(performance.publicReturnTone("-0.31%"), "negative");
   assert.equal(performance.publicReturnTone("计算中"), "neutral");

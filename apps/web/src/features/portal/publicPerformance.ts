@@ -51,12 +51,32 @@ function formatPercent(value: number | null | undefined, digits: number, signed:
 export function toTrustSummaryView(summary: PublicPerformanceSummary): TrustSummaryView {
   const isEmpty = summary.totalSignals === 0;
   return {
-    hitRate: formatPercent(summary.directionalHitRate1h, 1, false),
-    averageReturn: formatPercent(summary.averageDirectionalReturn1h, 2, true),
+    hitRate: formatPercent(isEmpty ? null : summary.directionalHitRate1h, 1, false),
+    averageReturn: formatPercent(isEmpty ? null : summary.averageDirectionalReturn1h, 2, true),
     sampleCount: summary.totalSignals.toLocaleString("en-US"),
     sampleCaption: isEmpty ? "暂无满足公开条件的样本" : "公开信号样本",
     isEmpty,
   };
+}
+
+type TrackRecordEmptyContext = {
+  symbol: string;
+  direction: "all" | "long" | "short";
+  delayHours: number | null;
+  historyDays: number | null;
+};
+
+export function describeTrackRecordEmptyState(context: TrackRecordEmptyContext): string {
+  const symbol = context.symbol || "全部币种";
+  const direction = context.direction === "long" ? "看多" : context.direction === "short" ? "看空" : "全部方向";
+  const publicBounds = context.delayHours === null && context.historyDays === null
+    ? "服务端延迟与公开历史范围读取中"
+    : [
+        context.delayHours === null ? "服务端延迟读取中" : `公开信号延迟 ${context.delayHours} 小时`,
+        context.historyDays === null ? "公开历史范围读取中" : `历史范围 ${context.historyDays} 天`
+      ].join("，");
+  const retry = context.symbol || context.direction !== "all" ? "可清空币种或切换方向后重试" : "可调整筛选后重试";
+  return `当前筛选：${symbol} · ${direction}。${publicBounds}；${retry}，系统不会补造信号。`;
 }
 
 export function publicReturnTone(value: string): "positive" | "negative" | "neutral" | "locked" {

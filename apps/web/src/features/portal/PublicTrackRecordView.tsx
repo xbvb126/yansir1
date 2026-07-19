@@ -1,9 +1,9 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { SystemIcon } from "../../components/SystemIcon";
-import { toTrackRecordRow, type TrackRecordRow } from "./publicPerformance";
+import { describeTrackRecordEmptyState, toTrackRecordRow, type TrackRecordRow } from "./publicPerformance";
 import { getPublicPerformanceSummary, getPublicSignals, type PublicPerformanceSummary, type PublicSignalsResponse } from "./publicPortalApi";
 import { normalizePublicTrackRecordSymbol, publicTrackRecordFilterKey } from "./publicPortalRuntime";
-import { MethodologyDisclosure, TrackRecordFilters, TrackRecordHero, TrackRecordList, TrustSummary } from "./TrackRecordPresentation";
+import { MethodologyDisclosure, TrackRecordFilters, TrackRecordHero, TrackRecordList, TrustSummary, TrustSummaryLoading } from "./TrackRecordPresentation";
 
 const TRACK_RECORD_CACHE_KEY = "yansir.public-track-record.v1";
 
@@ -11,7 +11,7 @@ type TrackRecordLoadState =
   | { kind: "loading" }
   | { kind: "ready"; summary: PublicPerformanceSummary; rows: TrackRecordRow[]; staleAt: string | null; pagination: PublicSignalsResponse["pagination"] }
   | { kind: "empty"; summary: PublicPerformanceSummary }
-  | { kind: "unavailable"; message: string; cached: TrackRecordRow[]; staleAt: string | null };
+  | { kind: "unavailable"; message: string; cached: TrackRecordRow[]; staleAt: string | null; hasCachedSnapshot: boolean };
 
 type CachedTrackRecord = {
   summary: PublicPerformanceSummary;
@@ -119,7 +119,8 @@ export function PublicTrackRecordView({ onUnlock }: { onUnlock?: (filters: { sym
         kind: "unavailable",
         message: error instanceof Error ? error.message : "公开战绩暂时不可用",
         cached: fallback?.rows || [],
-        staleAt: fallback?.staleAt || null
+        staleAt: fallback?.staleAt || null,
+        hasCachedSnapshot: Boolean(fallback)
       });
     } finally {
       if (activeRequest === requestId.current) setLoadingMore(false);
@@ -145,7 +146,7 @@ export function PublicTrackRecordView({ onUnlock }: { onUnlock?: (filters: { sym
   return (
     <section className="view active-view public-track-record-view" aria-labelledby="track-record-title">
       <TrackRecordHero delayHours={delayHours} historyDays={historyDays} />
-      {summary && <TrustSummary summary={summary} />}
+      {summary ? <TrustSummary summary={summary} /> : displayState.kind === "loading" ? <TrustSummaryLoading /> : null}
       <TrackRecordFilters
         symbolDraft={symbolDraft}
         direction={direction}
@@ -161,12 +162,12 @@ export function PublicTrackRecordView({ onUnlock }: { onUnlock?: (filters: { sym
       )}
       {displayState.kind === "empty" && (
         <div className="portal-empty-state" role="status" aria-live="polite" aria-atomic="true">
-          <SystemIcon name="target" /><div><strong>暂无满足公开条件的样本</strong><p>可清空币种或切换方向后重试；系统不会补造信号。</p></div>
+          <SystemIcon name="target" /><div><strong>暂无满足公开条件的样本</strong><p>{describeTrackRecordEmptyState({ symbol, direction, delayHours, historyDays })}</p></div>
         </div>
       )}
       {displayState.kind === "unavailable" && (
-        <div className={`track-unavailable ${displayState.cached.length ? "stale" : ""}`} role="alert">
-          <div><strong>{displayState.cached.length ? "数据已过期" : "公开战绩暂时不可用"}</strong><p>{displayState.cached.length ? `最后成功更新时间 ${formatTime(displayState.staleAt)}` : displayState.message}</p></div>
+        <div className={`track-unavailable ${displayState.hasCachedSnapshot ? "stale" : ""}`} role="alert">
+          <div><strong>{displayState.hasCachedSnapshot ? "数据已过期" : "公开战绩暂时不可用"}</strong><p>{displayState.hasCachedSnapshot ? `最后成功更新时间 ${formatTime(displayState.staleAt)}` : displayState.message}</p></div>
           <button className="portal-retry-button" type="button" onClick={() => void load()}>重新加载</button>
         </div>
       )}

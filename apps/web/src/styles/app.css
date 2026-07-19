@@ -18939,6 +18939,7 @@ button.locked,
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(180px, 0.7fr);
   grid-template-rows: 1fr 1fr;
+  min-height: 194px;
   overflow: hidden;
   border: 1px solid #dbe6f6;
   border-radius: 24px;
@@ -19000,6 +19001,28 @@ button.locked,
 
 .track-trust-grid .negative {
   color: #d44855;
+}
+
+.track-trust-skeleton {
+  display: block;
+  width: min(100%, 150px);
+  min-height: 14px;
+  border-radius: 999px;
+  background: #e7edf6;
+}
+
+.track-trust-skeleton.metric {
+  width: min(72%, 280px);
+  min-height: 72px;
+}
+
+.track-trust-skeleton.caption {
+  width: min(82%, 220px);
+}
+
+.track-trust-skeleton.value {
+  width: min(68%, 130px);
+  min-height: 42px;
 }
 
 .track-record-controls {
