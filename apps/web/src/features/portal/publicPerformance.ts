@@ -1,4 +1,12 @@
-import type { PublicSignal } from "./publicPortalApi";
+import type { PublicPerformanceSummary, PublicSignal } from "./publicPortalApi";
+
+export type TrustSummaryView = {
+  hitRate: string;
+  averageReturn: string;
+  sampleCount: string;
+  sampleCaption: string;
+  isEmpty: boolean;
+};
 
 export type TrackRecordRow = {
   id: string;
@@ -31,6 +39,31 @@ export function formatPublicPercent(value: number | null | undefined): string {
   const percent = value * 100;
   const sign = percent > 0 ? "+" : "";
   return `${sign}${percent.toFixed(2)}%`;
+}
+
+function formatPercent(value: number | null | undefined, digits: number, signed: boolean) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "计算中";
+  const percent = value * 100;
+  const sign = signed && percent > 0 ? "+" : "";
+  return `${sign}${percent.toFixed(digits)}%`;
+}
+
+export function toTrustSummaryView(summary: PublicPerformanceSummary): TrustSummaryView {
+  const isEmpty = summary.totalSignals === 0;
+  return {
+    hitRate: formatPercent(summary.directionalHitRate1h, 1, false),
+    averageReturn: formatPercent(summary.averageDirectionalReturn1h, 2, true),
+    sampleCount: summary.totalSignals.toLocaleString("en-US"),
+    sampleCaption: isEmpty ? "暂无满足公开条件的样本" : "公开信号样本",
+    isEmpty,
+  };
+}
+
+export function publicReturnTone(value: string): "positive" | "negative" | "neutral" | "locked" {
+  if (value === "会员解锁") return "locked";
+  if (value.startsWith("+")) return "positive";
+  if (value.startsWith("-")) return "negative";
+  return "neutral";
 }
 
 export function toTrackRecordRow(signal: PublicSignal): TrackRecordRow {

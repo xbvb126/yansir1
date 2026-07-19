@@ -80,6 +80,44 @@ try {
   });
   assert.equal(unlockedAbsent24h.return24h, "计算中", "an absent 24h return must not be inferred from shorter windows");
 
+  const trust = performance.toTrustSummaryView({
+    windowDays: 7,
+    generatedAt: "2026-07-19T00:00:00.000Z",
+    methodologyVersion: "fixed-window-v1",
+    totalSignals: 2980,
+    completed24hCount: 1842,
+    pending24hCount: 1138,
+    directionalHitRate1h: 0.618,
+    averageDirectionalReturn1h: 0.0042,
+  });
+  assert.deepEqual(trust, {
+    hitRate: "61.8%",
+    averageReturn: "+0.42%",
+    sampleCount: "2,980",
+    sampleCaption: "公开信号样本",
+    isEmpty: false,
+  });
+
+  const emptyTrust = performance.toTrustSummaryView({
+    windowDays: 7,
+    generatedAt: "2026-07-19T00:00:00.000Z",
+    methodologyVersion: "fixed-window-v1",
+    totalSignals: 0,
+    completed24hCount: 0,
+    pending24hCount: 0,
+    directionalHitRate1h: null,
+    averageDirectionalReturn1h: null,
+  });
+  assert.equal(emptyTrust.hitRate, "计算中");
+  assert.equal(emptyTrust.averageReturn, "计算中");
+  assert.equal(emptyTrust.sampleCaption, "暂无满足公开条件的样本");
+  assert.equal(emptyTrust.isEmpty, true);
+
+  assert.equal(performance.publicReturnTone("+0.42%"), "positive");
+  assert.equal(performance.publicReturnTone("-0.31%"), "negative");
+  assert.equal(performance.publicReturnTone("计算中"), "neutral");
+  assert.equal(performance.publicReturnTone("会员解锁"), "locked");
+
   assert.deepEqual(performance.publicPerformanceState({ loading: false, error: null, staleAt: null, rows: [] }), { kind: "empty" });
   assert.deepEqual(performance.publicPerformanceState({ loading: true, error: null, staleAt: null, rows: [] }), { kind: "loading" });
   assert.deepEqual(
