@@ -37,6 +37,9 @@ assertMinHeightAtLeast(".bottom-nav button", 44);
 assertMinHeightAtLeast(".portal-primary-action", 44);
 assertMinHeightAtLeast(".track-record-filter button", 44);
 assertMinHeightAtLeast(".portal-retry-button", 44);
+assertMinHeightAtLeast(".track-record-controls button", 44);
+assertMinHeightAtLeast(".track-methodology-disclosure summary", 44);
+assertMinHeightAtLeast(".track-record-unlock", 44);
 
 const portalFocus = selectorBlock(".portal-brand-button:focus-visible");
 assert.doesNotMatch(portalFocus, /#ffbf47/i, "portal focus should not rely on the low-contrast amber outline");

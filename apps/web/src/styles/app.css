@@ -18874,314 +18874,366 @@ button.locked,
 
 /* Public Track Record */
 .public-track-record-view {
-  width: min(1180px, calc(100% - 32px));
+  width: min(100% - 24px, 1180px);
   margin: 0 auto;
-  padding: 40px 0 112px;
-  color: #17233b;
+  padding: 28px 0 112px;
+  color: #12213d;
 }
 
-.track-record-hero,
-.track-summary-grid article,
-.track-filter-card,
-.track-table-card,
-.track-methodology,
-.track-unavailable {
-  border: 1px solid rgba(29, 48, 83, 0.1);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 50px rgba(23, 35, 59, 0.07);
-}
-
-.track-record-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 32px;
-  align-items: end;
-  padding: clamp(24px, 5vw, 54px);
-  background:
-    radial-gradient(circle at 88% 10%, rgba(64, 196, 161, 0.18), transparent 32%),
-    linear-gradient(135deg, #f8fbff, #f3fbf8);
-}
-
-.track-record-hero h1 {
-  margin: 10px 0 12px;
-  font-size: clamp(36px, 7vw, 72px);
-  line-height: 0.95;
-  letter-spacing: -0.055em;
-}
-
-.track-record-hero p {
-  max-width: 720px;
-  margin: 0;
-  color: #60708b;
-  font-size: 16px;
-  line-height: 1.75;
-}
-
-.track-record-hero aside {
-  display: grid;
-  gap: 10px;
-  min-width: 220px;
-}
-
-.track-record-hero aside span {
+.track-record-heading {
   display: flex;
-  min-height: 44px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 10px 4px 24px;
+  border-bottom: 1px solid #e7edf6;
+}
+
+.track-record-heading h1 {
+  margin: 8px 0;
+  font-size: clamp(38px, 7vw, 64px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.track-record-heading p {
+  margin: 0;
+  color: #70809a;
+  font-size: 15px;
+}
+
+.track-record-verified {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  color: #365167;
-  background: rgba(255, 255, 255, 0.76);
+  gap: 8px;
+  color: #617492;
   font-size: 13px;
   font-weight: 700;
 }
 
-.track-record-hero .system-icon,
-.track-methodology .system-icon {
+.track-record-verified .system-icon {
+  width: 28px;
+  height: 28px;
+  color: #2568ef;
+}
+
+.track-trust-summary {
+  margin-top: 22px;
+}
+
+.track-trust-summary h2 {
+  margin: 0 0 14px;
+  font-size: 24px;
+}
+
+.track-trust-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(180px, 0.7fr);
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  border: 1px solid #dbe6f6;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #fff, #f7fbff);
+}
+
+.track-trust-grid article {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 22px;
+}
+
+.track-trust-grid article:not(.track-trust-primary) + article {
+  border-top: 1px solid #e4ebf6;
+}
+
+.track-trust-primary {
+  grid-row: 1 / -1;
+  border-right: 1px solid #e4ebf6;
+}
+
+.track-trust-grid span {
+  color: #40516e;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.track-trust-grid span .system-icon {
   width: 20px;
   height: 20px;
-  stroke: #1aa982;
-  fill: none;
-  stroke-width: 1.8;
+  margin-right: 8px;
+  vertical-align: middle;
 }
 
-.track-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 18px;
+.track-trust-grid strong {
+  font-size: clamp(28px, 6vw, 42px);
+  letter-spacing: -0.04em;
 }
 
-.track-summary-grid article {
-  display: grid;
-  gap: 7px;
-  padding: 20px;
+.track-trust-primary strong {
+  color: #099b73;
+  font-size: clamp(52px, 11vw, 82px);
 }
 
-.track-summary-grid span,
-.track-summary-grid small {
-  color: #76839a;
+.track-trust-grid strong small {
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+.track-trust-grid small {
+  color: #8290a7;
   font-size: 12px;
 }
 
-.track-summary-grid strong {
-  font-size: clamp(24px, 4vw, 34px);
-  letter-spacing: -0.035em;
+.track-trust-grid .positive {
+  color: #099b73;
 }
 
-.track-filter-card {
+.track-trust-grid .negative {
+  color: #d44855;
+}
+
+.track-record-controls {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 18px;
-  padding: 16px;
+  margin-top: 22px;
 }
 
-.track-filter-card form,
-.track-filter-card > div {
+.track-record-controls form,
+.track-record-controls > div {
   display: flex;
+  align-items: flex-end;
   gap: 8px;
-  align-items: end;
 }
 
-.track-filter-card label {
+.track-record-controls label {
   display: grid;
   gap: 6px;
-  color: #67758d;
+  color: #61708b;
   font-size: 12px;
 }
 
-.track-filter-card input,
-.track-filter-card button,
-.track-unavailable button {
+.track-record-controls input,
+.track-record-controls button {
   min-height: 44px;
-  border: 1px solid rgba(29, 48, 83, 0.13);
+  border: 1px solid #dbe3ef;
   border-radius: 12px;
 }
 
-.track-filter-card input {
-  width: min(240px, 48vw);
+.track-record-controls input {
+  width: min(260px, 48vw);
   padding: 0 14px;
-  color: #17233b;
-  background: #f8fafc;
+  color: #12213d;
+  background: #fff;
 }
 
-.track-filter-card button,
-.track-unavailable button {
+.track-record-controls button {
   padding: 0 17px;
-  color: #365167;
-  background: #f4f7fa;
+  color: #253755;
+  background: #fff;
   font-weight: 750;
 }
 
-.track-filter-card button.active,
-.track-filter-card form button,
-.track-unavailable button {
-  border-color: #17233b;
-  color: white;
-  background: #17233b;
+.track-record-controls button.active,
+.track-record-controls form button {
+  border-color: #102343;
+  color: #fff;
+  background: #102343;
 }
 
-.track-unavailable {
+.track-record-ledger {
+  margin-top: 30px;
+}
+
+.track-record-ledger-head {
   display: flex;
-  justify-content: space-between;
-  gap: 18px;
   align-items: center;
-  margin-top: 18px;
-  padding: 18px 20px;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
-.track-unavailable.stale {
-  border-color: rgba(219, 145, 35, 0.28);
-  background: #fffaf0;
-}
-
-.track-unavailable strong,
-.track-unavailable p {
-  display: block;
+.track-record-ledger-head h2 {
   margin: 0;
+  font-size: 22px;
 }
 
-.track-unavailable p {
-  margin-top: 4px;
-  color: #758197;
-  font-size: 13px;
+.track-record-ledger-head span {
+  color: #8390a5;
+  font-size: 12px;
 }
 
-.track-table-card {
-  overflow: hidden;
-  margin-top: 18px;
+.track-record-list {
+  border-top: 1px solid #e5ebf4;
 }
 
-.track-table-scroll {
-  overflow-x: auto;
+.track-record-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) 0.7fr 0.7fr;
+  gap: 16px;
+  align-items: center;
+  min-height: 84px;
+  padding: 14px 6px;
+  border-bottom: 1px solid #e5ebf4;
 }
 
-.track-table-card table {
-  width: 100%;
-  min-width: 850px;
-  border-collapse: collapse;
+.track-record-row > div {
+  display: grid;
+  gap: 4px;
 }
 
-.track-table-card th,
-.track-table-card td {
-  padding: 16px 18px;
-  border-bottom: 1px solid rgba(29, 48, 83, 0.08);
-  text-align: left;
-  white-space: nowrap;
+.track-record-row > div:last-child {
+  justify-items: end;
+  text-align: right;
 }
 
-.track-table-card th {
-  color: #76839a;
-  background: #f7f9fc;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.track-table-card td strong,
-.track-table-card td small {
+.track-record-row strong,
+.track-record-row small {
   display: block;
 }
 
-.track-table-card td small {
-  margin-top: 4px;
-  color: #8792a6;
-  font-size: 11px;
+.track-record-row small {
+  color: #8390a5;
+  font-size: 12px;
 }
 
-.track-direction {
-  display: inline-flex;
-  padding: 4px 8px;
-  border-radius: 999px;
-  color: #128165;
-  background: #e8f8f2;
+.track-record-row .positive {
+  color: #099b73;
+}
+
+.track-record-row .negative {
+  color: #d44855;
+}
+
+.track-completion {
   font-size: 12px;
   font-weight: 800;
 }
 
-.track-direction.short {
-  color: #bd5662;
-  background: #fff0f1;
+.track-completion.completed {
+  color: #098c68;
 }
 
-.track-locked {
-  color: #9a7b3a;
-  font-size: 12px;
-  font-weight: 750;
+.track-completion.pending {
+  color: #6e7f9b;
 }
 
-.track-methodology {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-  margin-top: 18px;
-  padding: 24px;
+.track-methodology-disclosure {
+  margin-top: 20px;
+  border-radius: 14px;
+  background: #f7f9fc;
 }
 
-.track-methodology > div {
+.track-methodology-disclosure summary {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
 }
 
-.track-methodology span,
-.track-methodology strong,
-.track-methodology small {
+.track-methodology-disclosure summary span,
+.track-methodology-disclosure summary strong,
+.track-methodology-disclosure summary small {
   display: block;
 }
 
-.track-methodology small {
-  margin-top: 5px;
-  color: #758197;
+.track-methodology-disclosure summary small {
+  margin-top: 2px;
+  color: #8090a8;
+}
+
+.track-methodology-disclosure > div {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 16px 46px;
+  color: #64748d;
+  font-size: 14px;
   line-height: 1.55;
 }
 
-@media (max-width: 900px) {
-  .track-record-hero,
-  .track-methodology {
-    grid-template-columns: 1fr;
-  }
-
-  .track-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.track-methodology-disclosure p {
+  margin: 0;
 }
 
-@media (max-width: 560px) {
+.track-record-unlock {
+  min-height: 44px;
+  margin-top: 18px;
+}
+
+@media (max-width: 720px) {
   .public-track-record-view {
     width: min(100% - 20px, 1180px);
     padding-top: 18px;
   }
 
-  .track-record-hero {
-    gap: 22px;
-    padding: 24px 18px;
+  .track-record-heading {
+    align-items: center;
   }
 
-  .track-record-hero aside {
-    min-width: 0;
+  .track-record-heading p {
+    max-width: 280px;
   }
 
-  .track-summary-grid {
-    grid-template-columns: 1fr 1fr;
+  .track-record-verified {
+    max-width: 108px;
+    text-align: right;
   }
 
-  .track-summary-grid article:last-child {
-    grid-column: 1 / -1;
+  .track-trust-grid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(116px, 0.8fr);
+    border-radius: 20px;
   }
 
-  .track-filter-card,
-  .track-filter-card form,
-  .track-filter-card > div,
-  .track-unavailable {
+  .track-trust-grid article {
+    padding: 18px 16px;
+  }
+
+  .track-record-controls {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .track-filter-card input {
+  .track-record-controls form,
+  .track-record-controls > div {
     width: 100%;
+  }
+
+  .track-record-controls label {
+    flex: 1;
+  }
+
+  .track-record-controls input {
+    width: 100%;
+  }
+
+  .track-record-controls > div button {
+    flex: 1;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 430px) {
+  .track-record-heading h1 {
+    font-size: 42px;
+  }
+
+  .track-record-verified {
+    font-size: 11px;
+  }
+
+  .track-trust-primary strong {
+    font-size: 54px;
+  }
+
+  .track-trust-grid strong {
+    font-size: 26px;
+  }
+
+  .track-record-row {
+    grid-template-columns: minmax(0, 1.25fr) 0.65fr 0.65fr;
+    gap: 8px;
   }
 }
 
