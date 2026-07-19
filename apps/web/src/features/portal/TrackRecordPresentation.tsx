@@ -45,7 +45,7 @@ export function TrustSummary({ summary }: { summary: PublicPerformanceSummary })
 
 export function TrustSummaryLoading() {
   return (
-    <section className="track-trust-summary is-loading" role="status" aria-label="可信度总览正在加载" aria-busy="true">
+    <section className="track-trust-summary is-loading" aria-label="可信度总览正在加载" aria-busy="true">
       <h2>可信度总览</h2>
       <div className="track-trust-grid" aria-hidden="true">
         <article className="track-trust-primary">

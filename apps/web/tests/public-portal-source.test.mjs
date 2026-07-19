@@ -10,6 +10,10 @@ const home = src("src/features/portal/PublicHomeView.tsx");
 const claw = src("src/features/portal/PublicClawPreview.tsx");
 const track = src("src/features/portal/PublicTrackRecordView.tsx");
 const trackPresentation = src("src/features/portal/TrackRecordPresentation.tsx");
+const trustSummaryLoading = trackPresentation.slice(
+  trackPresentation.indexOf("export function TrustSummaryLoading"),
+  trackPresentation.indexOf("type FilterProps")
+);
 const portalApi = src("src/features/portal/publicPortalApi.ts");
 const metadata = src("src/features/portal/publicMetadata.ts");
 
@@ -60,6 +64,7 @@ assert.doesNotMatch(track, /track-methodology">/);
 assert.match(trackPresentation, /export function TrustSummary/);
 assert.match(trackPresentation, /export function TrustSummaryLoading/);
 assert.match(trackPresentation, /aria-busy="true"/);
+assert.doesNotMatch(trustSummaryLoading, /role="status"/, "the trust skeleton must not duplicate the detailed loading announcement");
 assert.match(trackPresentation, /track-trust-grid[\s\S]*track-trust-primary/, "the loading summary must preserve the real summary grid structure");
 assert.doesNotMatch(trackPresentation, /TrustSummaryLoading[\s\S]*?(?:0%|0 条)/, "the loading placeholder must not fabricate metrics");
 assert.match(trackPresentation, /1h 方向命中率/);
