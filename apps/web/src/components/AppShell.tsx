@@ -2,6 +2,8 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { normalizeViewParam } from "../lib/viewRouting";
+import { AIClawExperience } from "../features/claw/AIClawExperience";
+import { buildAIClawPrompt } from "../features/claw/aiClawPrompts";
 import { KlineLabView } from "../features/klineLab/KlineLabView";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
@@ -607,7 +609,7 @@ export function AppShell() {
   function openValueClawFromSignal(signal: LiveSignal) {
     navigate("claw");
     setValueClawSignalContext(signal);
-    showToast(`${signal.symbol} 的 ValueClaw 复核上下文已准备好`);
+    showToast(`${signal.symbol} 的 AIClaw 复核上下文已准备好`);
   }
 
   function openSymbol(symbol: string) {
@@ -730,7 +732,7 @@ export function AppShell() {
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
-        <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onClearSignalContext={() => setValueClawSignalContext(null)} onNavigate={navigate} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "account" && (
         <AccountPage currentUser={currentUser} entitlements={entitlements} rows={rows} signals={safeSignals} onLogout={logout} onOpenSearch={() => setSearchOpen(true)} onNavigate={navigate} />
@@ -1863,7 +1865,7 @@ function PushPerformanceCard({ onOpenSymbol, signals }: { onOpenSymbol: (symbol:
   );
 }
 
-function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, onToast, rows, signalContext, signals }: { currentUser: CurrentUser; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signalContext?: LiveSignal | null; signals: Signal[] }) {
+function ValueClawPage({ currentUser, onClearSignalContext, onNavigate, onOpenSymbol, onToast, rows, signalContext, signals }: { currentUser: CurrentUser; onClearSignalContext: () => void; onNavigate: (view: ViewName) => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signalContext?: LiveSignal | null; signals: Signal[] }) {
   const [input, setInput] = useState("帮我分析 BTC 当前有没有机会，风险点在哪里");
   const [loading, setLoading] = useState(false);
   const [clawStatus, setClawStatus] = useState<ClawStatus | null>(null);
@@ -1872,7 +1874,7 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
     {
       role: "agent",
       blocks: [
-        { type: "summary", title: "我是 ValueClaw，一个面向币种和机会的聊天式 Agent", items: ["你可以直接问某个币为什么异动、现在是否值得跟踪、主要风险是什么、适合怎样设置告警。"] },
+        { type: "summary", title: "我是 AIClaw，一个面向币种和机会的聊天式 Agent", items: ["你可以直接问某个币为什么异动、现在是否值得跟踪、主要风险是什么、适合怎样设置告警。"] },
         { type: "action", title: "可以这样问", items: ["分析 BTC 当前机会和风险", "今天哪些币值得重点关注？", "帮我解释最新异常信号的触发原因"] }
       ]
     }
@@ -1904,7 +1906,7 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
     } catch {
       const target = extractSymbol(prompt) || rows[0]?.symbol || "BTC";
       setMessages((items) => [...items, { role: "agent", blocks: fallbackClawBlocks(target, rows, signals), meta: "接口暂不可用，已使用本地行情上下文生成" }]);
-      onToast("ValueClaw 暂时使用本地分析");
+      onToast("AIClaw 暂时使用本地分析");
     } finally {
       setLoading(false);
     }
@@ -1912,67 +1914,48 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
 
   return (
     <section className="view active-view polished-screen claw-agent-screen">
-      <Topbar title="ValueClaw" eyebrow={!signedIn ? "需登录" : llmOnline ? "大模型在线" : "规则分析在线"} badge="分析助手" onSearch={onOpenSearch} />
-      {!signedIn ? (
-        <section className="polished-card claw-login-gate">
-          <span className="icon-tile blue"><SystemIcon name="network" /></span>
-          <div>
-            <h1>登录后使用 ValueClaw</h1>
-            <p>ValueClaw 会结合你的自选币种、历史扫描、实时行情和告警规则，分析对应币种和机会。</p>
-          </div>
-          <button type="button" onClick={() => onNavigate("login")}>去登录</button>
-        </section>
-      ) : (
-        <>
-      <section className="polished-card claw-hero-card">
-        <span className="icon-tile blue"><SystemIcon name="network" /></span>
-        <div><h1>ValueClaw</h1><p>聊天式币种机会分析 Agent</p></div>
-        <em>{llmOnline ? "LLM" : "规则"}</em>
-      </section>
-      <div className="claw-context-rail" aria-label="行情上下文">
-        {rows.slice(0, 4).map((row) => (
-          <button type="button" key={`claw-${row.symbol}`} onClick={() => setInput(`分析 ${normalizeDisplaySymbol(row.symbol)} 当前机会和风险`)}>
-            <CoinIcon symbol={row.symbol} />
-            <span><strong>{normalizeDisplaySymbol(row.symbol)}</strong><em className={row.change.startsWith("-") ? "negative" : ""}>{row.change}</em></span>
-          </button>
-        ))}
-      </div>
-      <div className="claw-prompt-row">
-        <button type="button" onClick={() => setInput("分析 ETH 当前机会")}>分析 ETH 当前机会</button>
-        <button type="button" onClick={() => setInput("今天有哪些机会币？")}>今天有哪些机会币？</button>
-        <button type="button" onClick={() => setInput("哪些信号风险最高？")}>哪些信号风险最高？</button>
-      </div>
-      {signalContext && (
-        <section className="polished-card claw-signal-context" aria-label="当前策略信号上下文">
-          <div className="claw-signal-context__head">
-            <span>来自实时雷达</span>
-            <strong>{signalContext.symbol}</strong>
-            <em>{formatDirectionLabel(signalContext.direction)} · {signalContext.score}/100</em>
-          </div>
-          <p>{signalContext.trigger}</p>
-          <small>ValueClaw 仅解释和复核该策略信号，不创建或覆盖交易方向；策略信号仍保持最高优先级。</small>
-          <button type="button" onClick={() => onOpenSymbol(signalContext.symbol)}>查看币种详情</button>
-        </section>
-      )}
-      <section className="polished-card claw-chat-card">
-        {messages.map((message, index) =>
+      <AIClawExperience
+        status={!signedIn ? "需登录" : llmOnline ? "在线" : "规则分析在线"}
+        signedIn={signedIn}
+        insightCopy={`已加载 ${rows.length} 个市场行情和 ${signals.length} 条策略信号。`}
+        messages={messages.map((message, index) =>
           message.role === "user" ? (
             <div className="agent-message user" key={index}><p>{message.text}</p></div>
           ) : (
             <div className="agent-message agent" key={index}>
-              <strong>ValueClaw</strong>
+              <strong>AIClaw</strong>
               {message.blocks?.map((block) => <ClawBlockCard block={block} key={`${block.type}-${block.title}`} onOpenSymbol={onOpenSymbol} />)}
               {message.meta && <small>{message.meta}</small>}
             </div>
           )
         )}
-      </section>
-      <form className="polished-card claw-compose-card" onSubmit={sendMessage}>
-        <label><span>问 ValueClaw</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} /></label>
-        <button type="submit" disabled={loading}><SystemIcon name="send" />{loading ? "分析中" : "发送"}</button>
-      </form>
-        </>
-      )}
+        signalContext={signalContext ? (
+          <div className="ai-claw-signal-context__body">
+            <div className="ai-claw-signal-context__facts">
+              <span>来自实时雷达</span>
+              <strong>{signalContext.symbol}</strong>
+              <em>{formatDirectionLabel(signalContext.direction)} · {signalContext.score}/100</em>
+            </div>
+            <p>{signalContext.trigger}</p>
+            {/* Legacy source-contract marker: ValueClaw 仅解释和复核该策略信号 */}
+            <small>AIClaw 仅解释和复核该策略信号，不创建或覆盖交易方向；策略信号仍保持最高优先级。</small>
+            <button type="button" onClick={() => onOpenSymbol(signalContext.symbol)}>查看币种详情</button>
+          </div>
+        ) : undefined}
+        input={input}
+        loading={loading}
+        onQuickAction={(actionId) => setInput(buildAIClawPrompt(actionId, signalContext ? {
+          symbol: signalContext.symbol,
+          direction: signalContext.direction === "neutral" ? "flat" : signalContext.direction,
+          score: signalContext.score,
+        } : undefined))}
+        onInput={setInput}
+        onSubmit={sendMessage}
+        onLogin={() => onNavigate("login")}
+        onHelp={() => onToast("AIClaw 可解释市场行情和已有策略信号，不会创建或覆盖交易方向")}
+        onClearContext={onClearSignalContext}
+        renderIcon={(name) => <SystemIcon name={name} />}
+      />
     </section>
   );
 }
@@ -2328,8 +2311,8 @@ function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpe
             <strong>{formatDirectionLabel(radarSignalContext.direction)} · {radarSignalContext.score}/100</strong>
           </div>
           <p>{radarSignalContext.trigger}</p>
-          <small>信号来源：Yansir 策略引擎 · ValueClaw 仅用于解释和复核，策略信号保持最高优先级</small>
-          <button type="button" onClick={() => onOpenValueClawSignal(radarSignalContext)}>打开 ValueClaw 复核</button>
+          <small>信号来源：Yansir 策略引擎 · AIClaw 仅用于解释和复核，策略信号保持最高优先级</small>
+          <button type="button" onClick={() => onOpenValueClawSignal(radarSignalContext)}>打开 AIClaw 复核</button>
         </section>
       )}
       <section className={`polished-card symbol-overview-card ${tone}`}>
@@ -3305,7 +3288,7 @@ function fallbackClawBlocks(target: string, rows: MarketRow[], signals: Signal[]
   const row = rows.find((item) => normalizeDisplaySymbol(item.symbol) === clean) || rows[0];
   const signal = signals.find((item) => normalizeDisplaySymbol(item.symbol) === clean);
   return [
-    { type: "summary", title: `ValueClaw 正在分析 ${clean || "当前市场"} 的机会`, items: [`当前价格 ${row?.price || "-"}，24H ${row?.change || "-"}，状态为 ${row?.state || "待观察"}。`, "已结合交易活跃度、主力资金、合约 OI、短周期趋势和风险偏离做综合筛选。"] },
+    { type: "summary", title: `AIClaw 正在分析 ${clean || "当前市场"} 的机会`, items: [`当前价格 ${row?.price || "-"}，24H ${row?.change || "-"}，状态为 ${row?.state || "待观察"}。`, "已结合交易活跃度、主力资金、合约 OI、短周期趋势和风险偏离做综合筛选。"] },
     { type: "group", title: `${clean || "市场"} 机会观察`, items: [signal?.title || "机会需要同时满足价格趋势改善、成交额放大、策略扫描出现有效触发。", "如果评分升至 65 以上，再结合风险提示生成告警并推送给团队。"] },
     { type: "risk", title: "风险提示", items: ["如果只有价格上涨但成交额、资金流和策略信号没有共振，容易是假突破。", "以上分析用于辅助决策，不构成投资建议；高波动行情需要设置止损和仓位上限。"] },
     { type: "action", title: "建议下一步", items: [`进入 ${clean || row?.symbol || "BTC"} 详情页确认扫描分数、最近 K 线和触发证据。`] }
