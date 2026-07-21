@@ -8,17 +8,18 @@
 
 - Full comparison: `docs/superpowers/specs/assets/ai-claw-radar-unified-qa.png`
 - Focused signal-context comparison: `docs/superpowers/specs/assets/ai-claw-context-qa.png`
+- Authenticated expanded Radar: `docs/superpowers/specs/assets/radar-auth-expanded-qa.png`
 
 **Viewport and state**
 
 - Browser outer viewport: `390 × 844`; rendered page client width: `375px`.
 - AIClaw route: `http://127.0.0.1:4175/yansir/?view=claw`, authenticated demo-admin state backed by the local API on port 3101.
-- Radar route: `http://127.0.0.1:4175/yansir/?view=radar`, authenticated strategy source with expandable BTC signal evidence.
+- Radar route: `http://127.0.0.1:4175/yansir/?view=radar`, authenticated market source showing the `已同步实时信号` status strip and expanded BTC 96 evidence.
 - A separate signed-out run verified the public AIClaw shell, in-page login gate, disabled protected actions, and API-error/fallback feedback.
 
 **Full-view comparison evidence**
 
-The approved source, authenticated Radar, and authenticated AIClaw captures were inspected together in `docs/superpowers/specs/assets/ai-claw-radar-unified-qa.png`. The implementation preserves the same mobile hierarchy: title/status header, source or action controls, single content column, compact information density, fixed bottom navigation, and Yansir blue active states. `docs/superpowers/specs/assets/ai-claw-context-qa.png` separately verifies the focused Radar-to-AIClaw context state.
+The approved source, authenticated expanded Radar, and authenticated AIClaw captures were inspected together in `docs/superpowers/specs/assets/ai-claw-radar-unified-qa.png`. The Radar panel in that comparison is sourced from `docs/superpowers/specs/assets/radar-auth-expanded-qa.png` and visibly includes the authenticated sync strip, BTC 96 expanded evidence, and all three actions. The implementation preserves the same mobile hierarchy: title/status header, source or action controls, single content column, compact information density, fixed bottom navigation, and Yansir blue active states. `docs/superpowers/specs/assets/ai-claw-context-qa.png` separately verifies the focused Radar-to-AIClaw context state.
 
 **Focused region comparison evidence**
 
@@ -38,7 +39,7 @@ No actionable P0/P1/P2 findings remain.
 - Fonts and typography: heading/body hierarchy and compact label weights are coherent with the approved target; no broken wrapping or truncation was observed.
 - Spacing and layout rhythm: mobile gutters, two-column action proportions, 12px primary radii, compact Radar rows, fixed composer, and bottom-nav spacing preserve the target structure.
 - Colors and visual tokens: Yansir cobalt is used for active/navigation states, green for monitoring/opportunity, red for risk, and gray for neutral/disabled states.
-- Image quality and asset fidelity: no target product imagery is replaced by placeholder imagery; visible UI icons use the existing project icon system. Dynamic coin assets differ because the local capture uses fallback data.
+- Image quality and asset fidelity: no target product imagery is replaced by placeholder imagery; visible UI icons use the existing project icon system. Dynamic coin assets differ because the authenticated capture uses current local runtime data rather than the static reference fixtures.
 - Copy and content: app-specific titles, six AIClaw actions, Radar tabs/categories, three signal actions, and bottom-nav labels match the approved terminology. Signed-out explanatory copy is intentional.
 
 **Primary interactions tested**
@@ -64,7 +65,7 @@ No browser console errors were observed.
 1. Initial pass: direct guest navigation to `?view=claw` redirected to account, and the bottom navigation still displayed legacy `ValueClaw` / `信号` labels. These were P1 because they hid the redesigned shell and contradicted approved terminology.
 2. Fixes: made the AIClaw shell publicly routable while retaining the component-level login gate and disabled protected actions; changed bottom-nav labels to `AIClaw` / `雷达`; added exact entitlement and routing assertions.
 3. Post-fix signed-out pass: recaptured AIClaw and Radar at the same viewport, verified the public login gate, protected disabled controls, error/fallback state, overflow, and console state.
-4. Authenticated pass: started the local API, signed in with the documented demo administrator, exercised all six quick actions and composer send, transferred and cleared BTC Radar context, verified Radar evidence/actions and the zero-count empty state, and captured portable full/focused comparison evidence. No actionable P0/P1/P2 mismatch remained.
+4. Authenticated pass: started the local API, signed in with the documented demo administrator, exercised all six quick actions and composer send, transferred and cleared BTC Radar context, verified the authenticated sync strip, expanded BTC 96 evidence with all three actions, and the zero-count empty state, then captured portable full/focused comparison evidence. No actionable P0/P1/P2 mismatch remained.
 
 **Implementation checklist**
 
