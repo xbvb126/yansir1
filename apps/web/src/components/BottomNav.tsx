@@ -4,8 +4,8 @@ export type ViewName = "data" | "claw" | "radar" | "signal" | "account" | "login
 
 const items: Array<{ label: string; view: Extract<ViewName, "data" | "claw" | "radar" | "signal" | "account"> }> = [
   { label: "数据", view: "data" },
-  { label: "ValueClaw", view: "claw" },
-  { label: "信号", view: "radar" },
+  { label: "AIClaw", view: "claw" },
+  { label: "雷达", view: "radar" },
   { label: "告警", view: "signal" },
   { label: "我的", view: "account" }
 ];

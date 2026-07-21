@@ -74,7 +74,7 @@ assert.equal(planLevel('VIP'), 2);
 assert.equal(planLevel('SVIP'), 3);
 assert.equal(planLevel('高级版'), 3);
 
-// 页面级路由权限：公开页不拦截；实时告警、团队、后台、ValueClaw 按登录和套餐拦截。
+// 页面级路由权限：公开页（包括 AIClaw 外壳）不拦截；实时告警、团队、后台按登录和套餐拦截。
 assert.equal(routeAccessPrompt('data', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('plans', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('login', guest, freeEntitlements), null);
@@ -99,7 +99,7 @@ assert.equal(routeAccessPrompt('admin', adminUser, svipEntitlements), null);
 assert.equal(routeAccessPrompt('kline-lab', guest, freeEntitlements)?.targetView, 'login');
 assert.equal(routeAccessPrompt('kline-lab', vipUser, vipEntitlements)?.title, '当前账号无内部验信权限');
 assert.equal(routeAccessPrompt('kline-lab', adminUser, svipEntitlements), null);
-assert.equal(routeAccessPrompt('claw', guest, freeEntitlements)?.targetView, 'login');
+assert.equal(routeAccessPrompt('claw', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('claw', freeUser, freeEntitlements), null);
 
 // 周期权限：默认只允许 5m，Free/VIP/SVIP 分别解锁不同周期。

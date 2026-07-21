@@ -33,7 +33,7 @@ export type PerformanceLike = {
   updatedAt?: string | null;
 } | null;
 
-const PUBLIC_VIEWS = ["data", "radar", "account", "plans", "login", "register"];
+const PUBLIC_VIEWS = ["data", "claw", "radar", "account", "plans", "login", "register"];
 const LOCKED_PERFORMANCE_FIELDS = ["4h", "24h", "maxFavorablePct", "maxAdversePct"];
 
 export function planLevel(plan?: string) {
@@ -55,16 +55,6 @@ export function routeAccessPrompt<View extends string>(view: View, user: Fronten
   const teamSeats = Number(entitlements.teamSeats || 0);
 
   if (PUBLIC_VIEWS.includes(view)) return null;
-
-  if (view === "claw" && !signedIn) {
-    return {
-      title: "登录后使用 ValueClaw",
-      desc: "ValueClaw 会结合你的自选币种、实时行情和历史信号做分析。请先登录后继续使用。",
-      targetView: "login" as View,
-      fallbackView: "account" as View,
-      actionLabel: "去登录"
-    };
-  }
 
   if (view === "signal") {
     if (!signedIn) {
