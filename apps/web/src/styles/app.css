@@ -19169,7 +19169,6 @@ button.locked,
   color: var(--workspace-muted);
 }
 
-.radar-tracking-screen .radar-workspace__filters,
 .radar-tracking-screen .radar-workspace-chrome__categories {
   display: flex;
   gap: 8px;
@@ -19180,7 +19179,6 @@ button.locked,
   scrollbar-width: none;
 }
 
-.radar-tracking-screen .radar-workspace__filters::-webkit-scrollbar,
 .radar-tracking-screen .radar-workspace-chrome__categories::-webkit-scrollbar {
   display: none;
 }
