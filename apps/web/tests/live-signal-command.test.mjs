@@ -222,6 +222,7 @@ const baseSignal = module.toLiveSignal(
     trigger: "放量突破已确认",
     timeframe: "5m",
     price: "64000.50",
+    triggerPrice: "63950.25",
     generatedAt: "2026-07-04T08:00:00.000Z",
   },
   0,
@@ -233,7 +234,7 @@ assert.equal(baseSignal.source, "strategy");
 assert.equal(baseSignal.score, 87);
 assert.equal(baseSignal.confidence, 91);
 assert.equal(baseSignal.timeframe, "5m");
-assert.equal(baseSignal.triggerPrice, "64000.50");
+assert.equal(baseSignal.triggerPrice, "63950.25");
 
 const addSignal = module.toLiveSignal(
   {
@@ -285,6 +286,7 @@ const riskSignal = module.toLiveSignal(
 
 assert.equal(riskSignal.direction, "short");
 assert.equal(riskSignal.tone, "risk");
+assert.equal(riskSignal.triggerPrice, undefined);
 
 const watchSignal = module.toLiveSignal(
   {
@@ -319,6 +321,7 @@ const marketSignal = module.toLiveSignal(
 
 assert.equal(marketSignal.source, "market");
 assert.equal(marketSignal.price, "13.51");
+assert.equal(marketSignal.triggerPrice, undefined);
 assert.equal(marketSignal.change24h, "+90.67%");
 
 const waitingStrategySignal = module.toLiveSignal(
@@ -443,7 +446,7 @@ assert.match(markup, /AIClaw 复核/);
 assert.match(markup, /加入观察/);
 assert.match(markup, /aria-expanded="true"/);
 assert.match(markup, /<time>08:01<\/time><span class="radar-signal-row__pair">ETHUSDT<\/span><span class="radar-signal-row__timeframe">--<\/span><span class="radar-signal-row__direction">做空<\/span><span class="radar-signal-row__score">76<\/span><span class="radar-signal-row__price">--<\/span>/);
-assert.match(markup, /<time>08:00<\/time><span class="radar-signal-row__pair">BTCUSDT<\/span><span class="radar-signal-row__timeframe">5m<\/span><span class="radar-signal-row__direction">做多<\/span><span class="radar-signal-row__score">87<\/span><span class="radar-signal-row__price">64000\.50<\/span>/);
+assert.match(markup, /<time>08:00<\/time><span class="radar-signal-row__pair">BTCUSDT<\/span><span class="radar-signal-row__timeframe">5m<\/span><span class="radar-signal-row__direction">做多<\/span><span class="radar-signal-row__score">87<\/span><span class="radar-signal-row__price">63950\.25<\/span>/);
 assert.match(markup, /看空|风险/);
 assert.match(markup, /做空/);
 assert.match(markup, /live-command__row-detail/);
@@ -497,7 +500,8 @@ const marketMarkup = renderToStaticMarkup(
 );
 
 assert.match(marketMarkup, /市场异动详情/);
-assert.match(marketMarkup, /13\.51/);
+assert.match(marketMarkup, /<span class="radar-signal-row__pair">LAB<\/span><span class="radar-signal-row__timeframe">--<\/span><span class="radar-signal-row__direction">观望<\/span><span class="radar-signal-row__score">91<\/span><span class="radar-signal-row__price">--<\/span>/);
+assert.doesNotMatch(marketMarkup, /radar-signal-row__price">13\.51/);
 assert.match(marketMarkup, /\+90\.67%/);
 assert.match(marketMarkup, /市场事实/);
 assert.match(marketMarkup, /币种详情/);

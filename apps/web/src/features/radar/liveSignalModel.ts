@@ -137,7 +137,7 @@ export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal 
     trigger: signal.trigger ?? signal.reason ?? signal.body ?? signal.title ?? "策略触发已确认",
     generatedAt,
     timeframe: signal.timeframe,
-    triggerPrice: signal.triggerPrice ?? signal.price,
+    triggerPrice: signal.triggerPrice,
     price: signal.price,
     change24h: signal.change24h,
     source: signal.source === "market" ? "market" : "strategy",
