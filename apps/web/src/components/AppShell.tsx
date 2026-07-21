@@ -1081,7 +1081,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     if (filter === "all") return true;
     if (isStrategyWaitingRecord(record)) return false;
     if (filter === "long") return record.direction === "long";
-    if (filter === "short") return record.direction === "short" || record.group === "risk";
+    if (filter === "short") return record.direction === "short";
     const searchableText = [record.category, record.title, record.body, record.trigger, ...record.tags].join(" ");
     if (filter === "breakout") return /趋势|突破/.test(searchableText);
     if (filter === "rebound") return /回调|反弹/.test(searchableText);

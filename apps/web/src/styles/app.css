@@ -16558,6 +16558,46 @@ body {
   font-weight: 850;
 }
 
+.radar-workspace-chrome__heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.radar-workspace-chrome__heading h1 {
+  min-width: 0;
+  margin: 0;
+}
+
+.radar-workspace-chrome__status {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.radar-workspace-chrome__status strong,
+.radar-workspace-chrome__status span {
+  white-space: nowrap;
+}
+
+.radar-workspace-chrome__status span {
+  color: #6f7785;
+  font-size: 12px;
+}
+
+.radar-workspace-chrome .ai-track-tabs button {
+  min-height: 44px;
+}
+
+.radar-workspace-chrome .ai-track-tabs button.active {
+  color: #2F6BFF;
+}
+
+.radar-workspace-chrome .ai-track-tabs button.active::after {
+  background: #2F6BFF;
+}
+
 .radar-tracking-screen .ai-track-record-category::before {
   width: 10px;
   height: 14px;

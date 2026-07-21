@@ -67,6 +67,16 @@ assert.doesNotMatch(
   /trackingSection === "strategy"\s*\?\s*strategyRecords\s*:\s*trackingSection === "mine"\s*\?\s*radarRecords\.filter/,
   "strategy and market radar sources should not be limited to triggered signals only",
 );
+assert.match(
+  appShellSource,
+  /if \(filter === "short"\) return record\.direction === "short";/,
+  "short category should use the authoritative signal direction",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /filter === "short"[^;]*record\.group === "risk"/,
+  "risk classification should not substitute for a short direction",
+);
 assert.doesNotMatch(
   liveSignalCommandSource,
   /live-command__header|live-command__status|<h1>实时雷达<\/h1>|StrategyStatusPanel/,
