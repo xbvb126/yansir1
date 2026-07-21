@@ -85,18 +85,22 @@ try {
 
   {
     let now = new Date("2026-07-21T14:02:01.000Z");
-    let callback;
-    let clearCalls = 0;
+    let nextTimerId = 1;
+    const timers = new Map();
+    const clearedTimers = [];
     let executions = 0;
     const execution = deferred();
     const scanner = new AlignedGlobalScanner({
       now: () => now,
       setTimer: (fn) => {
-        callback = fn;
-        return 7;
+        const timerId = nextTimerId;
+        nextTimerId += 1;
+        timers.set(timerId, fn);
+        return timerId;
       },
-      clearTimer: () => {
-        clearCalls += 1;
+      clearTimer: (timerId) => {
+        clearedTimers.push(timerId);
+        timers.delete(timerId);
       },
       executeSlot: async () => {
         executions += 1;
@@ -106,20 +110,26 @@ try {
 
     scanner.start();
     now = new Date("2026-07-21T14:05:05.000Z");
-    const firstRun = callback();
+    const initialTimerId = 1;
+    const initialCallback = timers.get(initialTimerId);
+    timers.delete(initialTimerId);
+    const firstRun = initialCallback();
     await Promise.resolve();
-    await callback();
+    await initialCallback();
 
     assert.equal(executions, 1);
     assert.equal(scanner.getStatus().skippedOverlappingRuns, 1);
 
-    scanner.stop();
-    assert.equal(clearCalls, 1);
-    assert.equal(scanner.getStatus().enabled, false);
-    assert.equal(scanner.getStatus().nextRunAt, null);
-
     execution.resolve({ scannedSymbols: 1, matchedSignals: 0, failedSymbols: 0, errors: [] });
     await firstRun;
+    assert.equal(timers.size, 1);
+    assert.equal(nextTimerId, 3);
+
+    const nextTimerIdAfterRun = 2;
+    scanner.stop();
+    assert.deepEqual(clearedTimers, [nextTimerIdAfterRun]);
+    assert.equal(timers.size, 0);
+    assert.equal(scanner.getStatus().enabled, false);
     assert.equal(scanner.getStatus().nextRunAt, null);
   }
 

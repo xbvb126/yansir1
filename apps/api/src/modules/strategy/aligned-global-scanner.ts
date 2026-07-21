@@ -79,43 +79,50 @@ export class AlignedGlobalScanner {
   }
 
   private schedule(): void {
+    if (this.activeTimer !== null) {
+      this.options.clearTimer(this.activeTimer);
+      this.activeTimer = null;
+    }
+
     const now = this.options.now();
     const slot = nextGlobalScanSlot(now);
 
     this.status.nextRunAt = slot.runAt.toISOString();
-    this.activeTimer = this.options.setTimer(
-      () => this.run(slot),
+    let timer: unknown | null = null;
+    timer = this.options.setTimer(
+      () => {
+        if (this.activeTimer === timer) this.activeTimer = null;
+        return this.run(slot);
+      },
       slot.runAt.getTime() - now.getTime()
     );
+    this.activeTimer = timer;
   }
 
   private async run(slot: GlobalScanSlot): Promise<void> {
+    if (!this.status.enabled) return;
+
+    if (this.status.running) {
+      this.status.skippedOverlappingRuns += 1;
+      return;
+    }
+
+    this.status.running = true;
+    this.status.lastSlotAt = slot.closedAt.toISOString();
+    this.status.lastStartedAt = this.options.now().toISOString();
+    this.status.lastTimeframes = [...slot.timeframes];
+
     try {
-      if (!this.status.enabled) return;
-
-      if (this.status.running) {
-        this.status.skippedOverlappingRuns += 1;
-        return;
-      }
-
-      this.status.running = true;
-      this.status.lastSlotAt = slot.closedAt.toISOString();
-      this.status.lastStartedAt = this.options.now().toISOString();
-      this.status.lastTimeframes = [...slot.timeframes];
-
-      try {
-        const result = await this.options.executeSlot(slot);
-        this.status.scannedSymbols = result.scannedSymbols;
-        this.status.matchedSignals = result.matchedSignals;
-        this.status.failedSymbols = result.failedSymbols;
-        this.status.errors = [...result.errors];
-      } catch (error) {
-        this.status.errors = [error instanceof Error ? error.message : String(error)];
-      } finally {
-        this.status.running = false;
-        this.status.lastFinishedAt = this.options.now().toISOString();
-      }
+      const result = await this.options.executeSlot(slot);
+      this.status.scannedSymbols = result.scannedSymbols;
+      this.status.matchedSignals = result.matchedSignals;
+      this.status.failedSymbols = result.failedSymbols;
+      this.status.errors = [...result.errors];
+    } catch (error) {
+      this.status.errors = [error instanceof Error ? error.message : String(error)];
     } finally {
+      this.status.running = false;
+      this.status.lastFinishedAt = this.options.now().toISOString();
       if (this.status.enabled) this.schedule();
     }
   }
