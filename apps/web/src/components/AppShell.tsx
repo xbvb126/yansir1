@@ -1937,7 +1937,6 @@ function ValueClawPage({ currentUser, onClearSignalContext, onNavigate, onOpenSy
               <em>{formatDirectionLabel(signalContext.direction)} · {signalContext.score}/100</em>
             </div>
             <p>{signalContext.trigger}</p>
-            {/* Legacy source-contract marker: ValueClaw 仅解释和复核该策略信号 */}
             <small>AIClaw 仅解释和复核该策略信号，不创建或覆盖交易方向；策略信号仍保持最高优先级。</small>
             <button type="button" onClick={() => onOpenSymbol(signalContext.symbol)}>查看币种详情</button>
           </div>

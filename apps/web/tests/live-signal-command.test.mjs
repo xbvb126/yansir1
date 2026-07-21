@@ -128,8 +128,13 @@ assert.match(
 );
 assert.match(
   appShellSource,
-  /ValueClaw 仅解释和复核该策略信号/,
-  "ValueClaw context copy should preserve the strategy-signal boundary",
+  /AIClaw 仅解释和复核该策略信号/,
+  "AIClaw context copy should preserve the strategy-signal boundary",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /Legacy source-contract marker: ValueClaw/,
+  "AIClaw boundary copy should not require a legacy production marker",
 );
 assert.match(
   appShellSource,
