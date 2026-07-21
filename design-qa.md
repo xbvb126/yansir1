@@ -6,26 +6,26 @@
 
 **Implementation screenshots**
 
-- AIClaw: `D:\yansir\.worktrees\ai-claw-radar-unified\claw-390x844.png`
-- Radar: `D:\yansir\.worktrees\ai-claw-radar-unified\radar-390x844-final.png`
-- Combined source and implementation: `D:\yansir\.worktrees\ai-claw-radar-unified\design-qa-comparison.png`
+- Full comparison: `docs/superpowers/specs/assets/ai-claw-radar-unified-qa.png`
+- Focused signal-context comparison: `docs/superpowers/specs/assets/ai-claw-context-qa.png`
 
 **Viewport and state**
 
 - Browser outer viewport: `390 × 844`; rendered page client width: `375px`.
-- AIClaw route: `http://127.0.0.1:4175/yansir/?view=claw`, signed-out state with the public shell and in-page login gate.
-- Radar route: `http://127.0.0.1:4175/yansir/?view=radar`, signed-out/fallback API state with strategy source selected.
-- The approved reference shows a signed-in state with real strategy fixtures. The signed-out gate, delayed/fallback rows, and disabled protected AIClaw actions in the implementation are expected conditional differences rather than design drift.
+- AIClaw route: `http://127.0.0.1:4175/yansir/?view=claw`, authenticated demo-admin state backed by the local API on port 3101.
+- Radar route: `http://127.0.0.1:4175/yansir/?view=radar`, authenticated strategy source with expandable BTC signal evidence.
+- A separate signed-out run verified the public AIClaw shell, in-page login gate, disabled protected actions, and API-error/fallback feedback.
 
 **Full-view comparison evidence**
 
-The approved source and both browser captures were inspected together in `design-qa-comparison.png`. The implementation preserves the same mobile hierarchy: title/status header, source or action controls, single content column, compact information density, fixed bottom navigation, and Yansir blue active states. The public AIClaw shell remains visible while protected actions are gated in place.
+The approved source, authenticated Radar, and authenticated AIClaw captures were inspected together in `docs/superpowers/specs/assets/ai-claw-radar-unified-qa.png`. The implementation preserves the same mobile hierarchy: title/status header, source or action controls, single content column, compact information density, fixed bottom navigation, and Yansir blue active states. `docs/superpowers/specs/assets/ai-claw-context-qa.png` separately verifies the focused Radar-to-AIClaw context state.
 
 **Focused region comparison evidence**
 
 - Header: Radar title/status and AIClaw title/status/help remain readable at mobile width. Dynamic scan copy fits without causing page overflow.
 - Controls: Radar source tabs and horizontal category rail remain usable; AIClaw keeps a two-column six-action grid with 44px-or-larger targets.
 - Content: Radar rows preserve the timeline structure and inline evidence/actions. AIClaw keeps insight, login/conversation, optional signal context, and safe composer order.
+- Signal context: authenticated `AIClaw 复核` carried the selected BTC signal into AIClaw; `清除上下文` removed the context region without disturbing the conversation.
 - Bottom navigation: exact labels are `数据 / AIClaw / 雷达 / 告警 / 我的`; active state is blue on both routes.
 - Overflow: browser checks reported `scrollWidth=375` and `clientWidth=375` for both `documentElement` and `body`, so there is no horizontal page overflow.
 
@@ -50,6 +50,10 @@ No actionable P0/P1/P2 findings remain.
 - `币种详情`, including navigation to `?view=data&symbol=BANK`.
 - Advanced-filter modal.
 - Guest AIClaw login gate and disabled protected quick actions/composer.
+- Authenticated clicks on all six quick actions updated the composer respectively to `分析当前加密市场概览`, `分析当前加密市场资金流向`, `解读最近的 Yansir 策略信号`, `分析当前热门代币`, `分析当前巨鲸动态`, and `分析当前市场情绪`.
+- Authenticated composer send returned a rule-analysis response.
+- Radar `趋势突破` with count `0` rendered the empty state.
+- Signed-out API-error handling retained the question and surfaced the fallback toast/result.
 
 **Console errors checked**
 
@@ -59,17 +63,18 @@ No browser console errors were observed.
 
 1. Initial pass: direct guest navigation to `?view=claw` redirected to account, and the bottom navigation still displayed legacy `ValueClaw` / `信号` labels. These were P1 because they hid the redesigned shell and contradicted approved terminology.
 2. Fixes: made the AIClaw shell publicly routable while retaining the component-level login gate and disabled protected actions; changed bottom-nav labels to `AIClaw` / `雷达`; added exact entitlement and routing assertions.
-3. Post-fix pass: recaptured AIClaw and Radar at the same viewport, combined them with the approved source, exercised core interactions, checked overflow and console state, and found no remaining actionable P0/P1/P2 mismatch.
+3. Post-fix signed-out pass: recaptured AIClaw and Radar at the same viewport, verified the public login gate, protected disabled controls, error/fallback state, overflow, and console state.
+4. Authenticated pass: started the local API, signed in with the documented demo administrator, exercised all six quick actions and composer send, transferred and cleared BTC Radar context, verified Radar evidence/actions and the zero-count empty state, and captured portable full/focused comparison evidence. No actionable P0/P1/P2 mismatch remained.
 
 **Implementation checklist**
 
 - [x] Keep AIClaw shell visible to signed-out users.
 - [x] Gate protected AIClaw actions in the conversation/composer area.
 - [x] Use exact `AIClaw` and `雷达` navigation labels.
-- [x] Verify core interactions, overflow, console state, tests, lint, and production build.
+- [x] Verify signed-out, authenticated, signal-context, empty/error, overflow, console, tests, lint, and production-build states.
 
 **Follow-up polish**
 
-None required for acceptance. Real signed-in strategy data can be used for a later content-only capture without changing the approved layout.
+None required for acceptance.
 
 final result: passed

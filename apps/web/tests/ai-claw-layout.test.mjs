@@ -12,6 +12,39 @@ const outDir = path.join(testDir, ".tmp");
 const promptsOutFile = path.join(outDir, "aiClawPrompts.mjs");
 const experienceOutFile = path.join(outDir, "AIClawExperience.mjs");
 
+function elementInnerHtmlByClass(markup, tagName, className) {
+  const openingTag = new RegExp(`<${tagName}\\b[^>]*\\bclass="[^"]*\\b${className}\\b[^"]*"[^>]*>`, "g");
+  const match = openingTag.exec(markup);
+  assert.ok(match, `expected .${className} ${tagName} element`);
+
+  const tagBoundary = new RegExp(`<\\/?${tagName}\\b[^>]*>`, "g");
+  tagBoundary.lastIndex = match.index + match[0].length;
+  let depth = 1;
+  let boundary;
+  while ((boundary = tagBoundary.exec(markup))) {
+    depth += boundary[0].startsWith(`</${tagName}`) ? -1 : 1;
+    if (depth === 0) {
+      return markup.slice(match.index + match[0].length, boundary.index);
+    }
+  }
+  assert.fail(`expected closing </${tagName}> for .${className}`);
+}
+
+function openingTags(markup, tagName) {
+  return markup.match(new RegExp(`<${tagName}\\b[^>]*>`, "g")) || [];
+}
+
+function isDisabledOpeningTag(openingTag) {
+  return /(?:^|\s)disabled(?:=""|(?=\s|>))/.test(openingTag);
+}
+
+function assertEveryControlDisabled(openingTagList, expectedCount, label) {
+  assert.equal(openingTagList.length, expectedCount, `${label} control count`);
+  openingTagList.forEach((openingTag, index) => {
+    assert.equal(isDisabledOpeningTag(openingTag), true, `${label} control ${index + 1} should be disabled`);
+  });
+}
+
 mkdirSync(outDir, { recursive: true });
 
 try {
@@ -82,6 +115,27 @@ try {
   assert.match(signedOutMarkup, /今天想先看什么？/);
   assert.match(signedOutMarkup, /市场概览.*资金流向.*策略信号.*热门代币.*巨鲸动态.*市场情绪/s);
   assert.match(signedOutMarkup, /登录后使用 AIClaw/);
+
+  const signedOutQuickActions = elementInnerHtmlByClass(signedOutMarkup, "div", "ai-claw-quick-actions");
+  const signedOutQuickActionButtons = openingTags(signedOutQuickActions, "button");
+  assertEveryControlDisabled(signedOutQuickActionButtons, 6, "signed-out quick action");
+
+  const signedOutComposer = elementInnerHtmlByClass(signedOutMarkup, "form", "ai-claw-composer");
+  assertEveryControlDisabled(openingTags(signedOutComposer, "textarea"), 1, "signed-out composer textarea");
+  assertEveryControlDisabled(openingTags(signedOutComposer, "button"), 1, "signed-out composer submit");
+
+  const signedOutLoginGate = elementInnerHtmlByClass(signedOutMarkup, "div", "ai-claw-login-gate");
+  const signedOutLoginButtons = openingTags(signedOutLoginGate, "button");
+  assert.equal(signedOutLoginButtons.length, 1, "signed-out login CTA count");
+  assert.equal(isDisabledOpeningTag(signedOutLoginButtons[0]), false, "signed-out login CTA should stay enabled");
+
+  const quickActionMutation = [...signedOutQuickActionButtons];
+  quickActionMutation[0] = quickActionMutation[0].replace(/\sdisabled=""/, "");
+  assert.throws(
+    () => assertEveryControlDisabled(quickActionMutation, 6, "mutated quick action"),
+    /mutated quick action control 1 should be disabled/,
+    "selector-aware assertion must reject one enabled quick action even when unrelated disabled controls exist",
+  );
 
   const appShellSource = readFileSync(
     path.join(webRoot, "src/components/AppShell.tsx"),
