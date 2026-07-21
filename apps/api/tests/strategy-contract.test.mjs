@@ -39,6 +39,7 @@ execFileSync(esbuildCommand, [
 const { StrategyService } = await import(pathToFileURL(outFile));
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
+const USER_TWO_ID = "00000000-0000-0000-0000-000000000002";
 
 const svipEntitlements = {
   plan: "SVIP",
@@ -215,6 +216,7 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
   const inbox = new Map();
   const deliveries = [];
   const cooldowns = new Set();
+  const alertCalls = [];
   let nextEventId = 1;
 
   const signalsService = {
@@ -247,11 +249,8 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
     }
   };
 
-  const database = {
-    enabled: true,
-    advisoryTails: new Map(),
-    query: async (sql, values = []) => {
-      const normalizedSql = sql.replace(/\s+/g, " ").trim().toLowerCase();
+  async function executeQuery(sql, values = []) {
+      const normalizedSql = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
       if (normalizedSql.includes("from signal_events") && normalizedSql.includes("dedupe_key = any")) {
         return values[0].flatMap((key) => signalEvents.has(key) ? [signalEvents.get(key)] : []);
       }
@@ -297,20 +296,48 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
           interval_seconds: 300
         }];
       }
+      if (normalizedSql.startsWith("select status") && normalizedSql.includes("from alert_deliveries")) {
+        const existing = deliveries.find((delivery) =>
+          delivery.user_id === values[0]
+          && delivery.signal_event_id === values[1]
+          && delivery.channel === values[2]
+        );
+        return existing ? [{ status: existing.status }] : [];
+      }
       if (normalizedSql.includes("count(*)::text as sent_count") && normalizedSql.includes("from alert_deliveries")) {
-        return [{ sent_count: deliveries.filter((delivery) => delivery.status === "sent").length }];
+        return [{
+          sent_count: deliveries.filter((delivery) =>
+            delivery.user_id === values[0]
+            && delivery.channel === values[1]
+            && ["sending", "sent"].includes(delivery.status)
+          ).length
+        }];
       }
       if (normalizedSql.includes("from signal_delivery_cooldowns")) {
         const key = values.slice(0, 6).join(":");
-        return [{ in_cooldown: cooldowns.has(key) }];
+        const occupiedByDelivery = deliveries.some((delivery) =>
+          delivery.user_id === values[0]
+          && delivery.channel === values[1]
+          && delivery.symbol === values[2]
+          && delivery.timeframe === values[3]
+          && delivery.direction === values[4]
+          && delivery.signal_type === values[5]
+          && ["sending", "sent"].includes(delivery.status)
+        );
+        return [{ in_cooldown: cooldowns.has(key) || occupiedByDelivery }];
       }
       if (normalizedSql.startsWith("insert into alert_deliveries")) {
         const skipped = normalizedSql.includes("'skipped'");
+        const sending = normalizedSql.includes("'sending'");
         const delivery = {
           user_id: values[0],
           signal_event_id: values[1],
           channel: "feishu",
-          status: skipped ? "skipped" : "sent",
+          symbol: values[2],
+          timeframe: values[3],
+          direction: values[4],
+          signal_type: values[5],
+          status: skipped ? "skipped" : sending ? "sending" : "sent",
           reason: skipped ? values[8] : null
         };
         const existing = deliveries.find((item) =>
@@ -318,18 +345,48 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
           && item.signal_event_id === delivery.signal_event_id
           && item.channel === delivery.channel
         );
-        if (!existing) deliveries.push(delivery);
-        else if (existing.status !== "sent" || !skipped) Object.assign(existing, delivery);
+        if (!existing) {
+          deliveries.push(delivery);
+          return sending ? [{ id: `delivery-${deliveries.length}` }] : [];
+        }
+        if (existing.status !== "sent" || !skipped) Object.assign(existing, delivery);
         return [];
+      }
+      if (normalizedSql.startsWith("update alert_deliveries")) {
+        const existing = deliveries.find((delivery) =>
+          delivery.user_id === values[0]
+          && delivery.signal_event_id === values[1]
+          && delivery.channel === values[2]
+          && delivery.status === "sending"
+        );
+        if (!existing) return [];
+        existing.status = values[3];
+        existing.reason = values[5] ?? null;
+        return [{ id: `delivery-${deliveries.indexOf(existing) + 1}` }];
       }
       if (normalizedSql.startsWith("insert into signal_delivery_cooldowns")) {
         cooldowns.add(values.slice(0, 6).join(":"));
         return [];
       }
       throw new Error(`Unhandled test query: ${normalizedSql}`);
+  }
+
+  const database = {
+    enabled: true,
+    advisoryTails: new Map(),
+    advisoryActive: 0,
+    ordinaryQueriesInsideAdvisory: 0,
+    advisoryReleases: 0,
+    async query(sql, values = []) {
+      if (this.advisoryActive > 0) this.ordinaryQueriesInsideAdvisory += 1;
+      return executeQuery(sql, values);
     },
     async queryStrict(sql, values = []) {
-      return this.query(sql, values);
+      if (this.advisoryActive > 0) this.ordinaryQueriesInsideAdvisory += 1;
+      return executeQuery(sql, values);
+    },
+    async withTransaction(operation) {
+      return operation({ query: executeQuery });
     },
     async withAdvisoryTransaction(key, operation) {
       const previous = this.advisoryTails.get(key) ?? Promise.resolve();
@@ -338,9 +395,12 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
       const tail = previous.catch(() => undefined).then(() => gate);
       this.advisoryTails.set(key, tail);
       await previous.catch(() => undefined);
+      this.advisoryActive += 1;
       try {
-        return await operation({ query: (sql, values = []) => this.query(sql, values) });
+        return await operation({ query: executeQuery });
       } finally {
+        this.advisoryActive -= 1;
+        this.advisoryReleases += 1;
         release();
         if (this.advisoryTails.get(key) === tail) this.advisoryTails.delete(key);
       }
@@ -348,16 +408,13 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
   };
 
   const alertsService = {
-    sendFeishu: async (candidate, userId) => {
-      await database.query(
-        "insert into alert_deliveries (user_id, signal_event_id, channel, status) values ($1, $2, 'feishu', 'sent')",
-        [userId, candidate.signalEventId]
-      );
+    sendFeishu: async (candidate, userId, options) => {
+      alertCalls.push({ candidate, userId, options, advisoryActive: database.advisoryActive });
       return { sent: true };
     }
   };
 
-  return { alertsService, cooldowns, database, deliveries, inbox, signalEvents, signalsService };
+  return { alertCalls, alertsService, cooldowns, database, deliveries, inbox, signalEvents, signalsService };
 }
 
 async function testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys() {
@@ -819,6 +876,111 @@ async function testConcurrentSameUserDeliveriesReserveCooldown() {
   assert.equal(fixture.deliveries.filter(({ reason }) => reason === "db_cooldown").length, 1);
 }
 
+async function testAdvisoryReservationUsesOnlyItsClientAndReleasesBeforeFeishu() {
+  const fixture = createLifecycleFixture();
+  const { service } = createService(strategyResult, fixture);
+
+  await service["deliverInboxSignal"](
+    deliveryEvent("00000000-0000-0000-0000-000000000301"),
+    deliveryWatchlist()
+  );
+
+  assert.equal(fixture.database.ordinaryQueriesInsideAdvisory, 0, "locked callback must not reacquire the shared pool");
+  assert.equal(fixture.alertCalls.length, 1);
+  assert.equal(fixture.alertCalls[0].advisoryActive, 0, "Feishu must start only after the advisory transaction commits");
+  assert.equal(fixture.database.advisoryActive, 0);
+  assert.ok(fixture.database.advisoryReleases >= 1);
+}
+
+async function testConcurrentDistinctUsersDoNotBlockEachOther() {
+  const fixture = createLifecycleFixture();
+  let activeSends = 0;
+  let maxActiveSends = 0;
+  const alertsService = {
+    sendFeishu: async () => {
+      assert.equal(fixture.database.advisoryActive, 0, "external sends run after reservation transactions release");
+      activeSends += 1;
+      maxActiveSends = Math.max(maxActiveSends, activeSends);
+      await new Promise((resolve) => setImmediate(resolve));
+      activeSends -= 1;
+      return { sent: true };
+    }
+  };
+  const serviceA = createService(strategyResult, { ...fixture, alertsService }).service;
+  const serviceB = createService(strategyResult, { ...fixture, alertsService }).service;
+
+  await Promise.all([
+    serviceA["deliverInboxSignal"](
+      deliveryEvent("00000000-0000-0000-0000-000000000302"),
+      deliveryWatchlist()
+    ),
+    serviceB["deliverInboxSignal"](
+      deliveryEvent("00000000-0000-0000-0000-000000000303"),
+      { ...deliveryWatchlist(), user_id: USER_TWO_ID }
+    )
+  ]);
+
+  assert.equal(maxActiveSends, 2, "different users should not share a delivery lock");
+  assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 2);
+  assert.equal(fixture.database.ordinaryQueriesInsideAdvisory, 0);
+}
+
+async function testConcurrentSameSignalEventIsReservedOnceAcrossInstances() {
+  const fixture = createLifecycleFixture();
+  let sendCalls = 0;
+  const alertsService = {
+    sendFeishu: async () => {
+      sendCalls += 1;
+      await new Promise((resolve) => setImmediate(resolve));
+      return { sent: true };
+    }
+  };
+  const serviceA = createService(strategyResult, { ...fixture, alertsService }).service;
+  const serviceB = createService(strategyResult, { ...fixture, alertsService }).service;
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000304");
+
+  await Promise.all([
+    serviceA["deliverInboxSignal"](event, deliveryWatchlist()),
+    serviceB["deliverInboxSignal"](event, deliveryWatchlist())
+  ]);
+
+  assert.equal(sendCalls, 1);
+  assert.equal(fixture.deliveries.filter(({ signal_event_id }) => signal_event_id === event.id).length, 1);
+  assert.equal(fixture.deliveries.find(({ signal_event_id }) => signal_event_id === event.id)?.status, "sent");
+}
+
+async function testStalledFeishuTimesOutAfterReservationTransactionReleases() {
+  const previousTimeout = process.env.STRATEGY_FEISHU_TIMEOUT_MS;
+  process.env.STRATEGY_FEISHU_TIMEOUT_MS = "20";
+  try {
+    const fixture = createLifecycleFixture();
+    let advisoryActiveWhenSendStarted = null;
+    const alertsService = {
+      sendFeishu: async () => {
+        advisoryActiveWhenSendStarted = fixture.database.advisoryActive;
+        return new Promise(() => {});
+      }
+    };
+    const { service } = createService(strategyResult, { ...fixture, alertsService });
+    const event = deliveryEvent("00000000-0000-0000-0000-000000000305");
+    const completion = service["deliverInboxSignal"](event, deliveryWatchlist()).then(() => "completed");
+    const outcome = await Promise.race([
+      completion,
+      new Promise((resolve) => setTimeout(() => resolve("test_guard_timeout"), 500))
+    ]);
+
+    assert.equal(outcome, "completed", "stalled provider must be bounded by the formal delivery timeout");
+    assert.equal(advisoryActiveWhenSendStarted, 0);
+    assert.equal(fixture.database.advisoryActive, 0);
+    const delivery = fixture.deliveries.find(({ signal_event_id }) => signal_event_id === event.id);
+    assert.equal(delivery?.status, "failed");
+    assert.match(delivery?.reason ?? "", /feishu_delivery_timeout/);
+  } finally {
+    if (previousTimeout === undefined) delete process.env.STRATEGY_FEISHU_TIMEOUT_MS;
+    else process.env.STRATEGY_FEISHU_TIMEOUT_MS = previousTimeout;
+  }
+}
+
 async function testGlobalScanPersistsAndDeliversEachMatchOnce() {
   const fixture = createLifecycleFixture();
   const { service } = createService(
@@ -983,6 +1145,10 @@ const tests = [
   testGlobalScanFuturesFailureCreatesNoFormalLifecycle,
   testConcurrentSameUserDeliveriesReserveDailyLimit,
   testConcurrentSameUserDeliveriesReserveCooldown,
+  testAdvisoryReservationUsesOnlyItsClientAndReleasesBeforeFeishu,
+  testConcurrentDistinctUsersDoNotBlockEachOther,
+  testConcurrentSameSignalEventIsReservedOnceAcrossInstances,
+  testStalledFeishuTimesOutAfterReservationTransactionReleases,
   testGlobalScanPersistsAndDeliversEachMatchOnce,
   testGlobalScanPersistsBlockedUserMatchWithoutSending,
   testGlobalScannerHonorsOptOutAndStopsOnShutdown,

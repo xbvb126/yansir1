@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
-import { QueryResultRow } from "pg";
 import { AlertsService } from "../alerts/alerts.service";
 import { DatabaseService, DatabaseTransaction } from "../database/database.service";
 import { MarketService } from "../market/market.service";
@@ -230,6 +229,15 @@ type PerformanceState = {
   nextRunAt: string | null;
   lastResult: PerformanceRunSummary | null;
   lastError: string | null;
+};
+
+type DeliveryPreparation = {
+  candidate: ReturnType<typeof eventToAlertCandidate>;
+  entitlements: UserEntitlements;
+  pushSetting: UserPushSettingRow;
+  rule: Required<AlertRuleDto>;
+  dailyLimit: number;
+  cooldownMinutes: number;
 };
 
 type MarketDataLoadOptions = {
@@ -1578,77 +1586,140 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow) {
-    return this.withUserDeliveryLock(watchlist.user_id, () => {
-      if (!this.database.enabled) return this.deliverInboxSignalLocked(event, watchlist);
-      return this.database.withAdvisoryTransaction(
+    return this.withUserDeliveryLock(watchlist.user_id, async () => {
+      const preparation = await this.prepareDelivery(event, watchlist.user_id);
+      if (!this.database.enabled) {
+        await this.recordSkippedDelivery(event, watchlist.user_id, "database_unavailable");
+        return;
+      }
+
+      const reserved = await this.database.withAdvisoryTransaction(
         `formal-delivery:${watchlist.user_id}`,
-        (transaction) => this.deliverInboxSignalLocked(event, watchlist, transaction)
+        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction)
       );
+      if (!reserved) return;
+
+      const timeoutMs = formalDeliveryTimeoutMs();
+      let result: { sent?: boolean; failed?: boolean; skipped?: boolean; status?: number; reason?: string };
+      try {
+        result = await withPromiseTimeout(
+          this.alertsService.sendFeishu(preparation.candidate, watchlist.user_id, {
+            timeoutMs,
+            persistDelivery: false
+          }),
+          timeoutMs,
+          `feishu_delivery_timeout:${timeoutMs}ms`
+        );
+      } catch (error) {
+        result = {
+          sent: false,
+          failed: true,
+          reason: (error as Error).message
+        };
+      }
+
+      await this.finalizeReservedDelivery(event, watchlist.user_id, result);
+      if (result.sent) {
+        this.lastAlertAtByKey.set(alertCooldownKey(preparation.candidate, watchlist.user_id), Date.now());
+      }
+      return result;
     });
   }
 
-  private async deliverInboxSignalLocked(event: SignalEventRow, watchlist: WatchlistRow, transaction?: DatabaseTransaction) {
+  private async prepareDelivery(event: SignalEventRow, userId: string): Promise<DeliveryPreparation> {
     const channel = "feishu";
+    const entitlements = (await this.usersService.getCurrentEntitlements(userId)).entitlements;
+    const pushSetting = await this.loadUserPushSetting(userId, channel);
+    const rule = await this.currentAlertRule(userId);
+    return {
+      candidate: eventToAlertCandidate(event),
+      entitlements,
+      pushSetting,
+      rule,
+      dailyLimit: Math.max(0, Number(entitlements.maxPushPerDay || 0)),
+      cooldownMinutes: Math.max(0, Number(pushSetting.cooldown_minutes || rule.cooldownMinutes || 0))
+    };
+  }
+
+  private async reserveDelivery(
+    event: SignalEventRow,
+    watchlist: WatchlistRow,
+    preparation: DeliveryPreparation,
+    transaction: DatabaseTransaction
+  ) {
+    const channel = "feishu";
+    const existing = await transaction.query<{ status: string }>(
+      `
+        select status
+        from alert_deliveries
+        where user_id = $1::uuid
+          and signal_event_id = $2::uuid
+          and channel = $3::varchar
+        limit 1
+      `,
+      [watchlist.user_id, event.id, channel]
+    );
+    if (existing.length) return false;
+
     if (!watchlist.push_enabled) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled", transaction);
-      return;
+      return false;
     }
 
-    const entitlements = (await this.usersService.getCurrentEntitlements(watchlist.user_id)).entitlements;
+    const { entitlements, pushSetting, rule, dailyLimit, cooldownMinutes, candidate } = preparation;
     if (!entitlements.feishuAlerts) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "plan_or_feishu_disabled", transaction);
-      return;
+      return false;
     }
 
-    const pushSetting = await this.loadUserPushSetting(watchlist.user_id, channel);
     if (!pushSetting.enabled) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "push_setting_disabled", transaction);
-      return;
+      return false;
     }
     if (!pushSetting.target_encrypted && !pushSetting.binding_webhook_url && !pushSetting.target_masked) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "push_target_missing", transaction);
-      return;
+      return false;
     }
 
-    const rule = await this.currentAlertRule(watchlist.user_id);
     const minScore = Math.max(rule.minScore, entitlements.minAlertScore, Number(pushSetting.min_score || 0));
     if (!rule.directions.includes(event.direction) || Number(event.score) < minScore) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "below_push_setting_or_plan", transaction);
-      return;
+      return false;
     }
 
-    const dailyLimit = Math.max(0, Number(entitlements.maxPushPerDay || 0));
     if (!dailyLimit) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_not_allowed", transaction);
-      return;
+      return false;
     }
     const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel, transaction);
     if (sentToday >= dailyLimit) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_limit", transaction);
-      return;
+      return false;
     }
 
-    const cooldownMinutes = Math.max(0, Number(pushSetting.cooldown_minutes || rule.cooldownMinutes || 0));
     const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes, transaction);
     if (inDbCooldown) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "db_cooldown", transaction);
-      return;
+      return false;
     }
 
-    const candidate = eventToAlertCandidate(event);
     const cooldownRule = { ...rule, cooldownMinutes };
     const deliverable = filterCooldownCandidates([candidate], cooldownRule, this.lastAlertAtByKey, watchlist.user_id);
     if (!deliverable.length) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "memory_cooldown", transaction);
-      return;
+      return false;
     }
 
-    const result = await this.alertsService.sendFeishu(candidate, watchlist.user_id);
-    if (Boolean((result as { sent?: boolean }).sent)) {
-      await this.recordSentDelivery(event, watchlist.user_id, transaction);
-      await this.upsertDeliveryCooldown(event, watchlist.user_id, channel, transaction);
-      this.lastAlertAtByKey.set(alertCooldownKey(candidate, watchlist.user_id), Date.now());
-    }
+    const inserted = await transaction.query<{ id: string }>(
+      `
+        insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, payload)
+        values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'sending', $9::jsonb)
+        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do nothing
+        returning id::text
+      `,
+      [watchlist.user_id, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, JSON.stringify(event.payload ?? {})]
+    );
+    return inserted.length === 1;
   }
 
   private async withUserDeliveryLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
@@ -1670,9 +1741,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async recordSkippedDelivery(event: SignalEventRow, userId: string, reason: string, transaction?: DatabaseTransaction) {
-    await this.deliveryQuery(
-      transaction,
-      `
+    const sql = `
         insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, reason, skip_reason, payload)
         values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'skipped', $9::text, $9::text, $10::jsonb)
         on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
@@ -1680,26 +1749,44 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           reason = case when alert_deliveries.status = 'sent' then alert_deliveries.reason else excluded.reason end,
           skip_reason = case when alert_deliveries.status = 'sent' then alert_deliveries.skip_reason else excluded.skip_reason end,
           payload = case when alert_deliveries.status = 'sent' then alert_deliveries.payload else excluded.payload end
-      `,
-      [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, reason, JSON.stringify(event.payload ?? {})]
-    );
+      `;
+    const params = [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, reason, JSON.stringify(event.payload ?? {})];
+    if (transaction) await transaction.query(sql, params);
+    else await this.database.query(sql, params);
   }
 
-  private async recordSentDelivery(event: SignalEventRow, userId: string, transaction?: DatabaseTransaction) {
-    await this.deliveryQuery(
-      transaction,
-      `
-        insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, payload, sent_at)
-        values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'sent', $9::jsonb, now())
-        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
-          status = 'sent',
-          reason = null,
-          skip_reason = null,
-          payload = excluded.payload,
-          sent_at = now()
-      `,
-      [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, JSON.stringify(event.payload ?? {})]
-    );
+  private async finalizeReservedDelivery(
+    event: SignalEventRow,
+    userId: string,
+    result: { sent?: boolean; status?: number; reason?: string }
+  ) {
+    const status = result.sent ? "sent" : "failed";
+    const reason = result.sent ? null : result.reason ?? "feishu_delivery_not_sent";
+    await this.database.withTransaction(async (transaction) => {
+      const updated = await transaction.query<{ id: string }>(
+        `
+          update alert_deliveries
+          set status = $4::varchar,
+              http_status = $5::integer,
+              reason = $6::text,
+              skip_reason = null,
+              payload = $7::jsonb,
+              sent_at = case when $4::varchar = 'sent' then now() else sent_at end
+          where user_id = $1::uuid
+            and signal_event_id = $2::uuid
+            and channel = $3::varchar
+            and status = 'sending'
+          returning id::text
+        `,
+        [userId, event.id, "feishu", status, result.status ?? null, reason, JSON.stringify(event.payload ?? {})]
+      );
+      if (updated.length !== 1) {
+        throw new Error(`delivery_finalization_incomplete:${userId}:${event.id}`);
+      }
+      if (result.sent) {
+        await this.upsertDeliveryCooldown(event, userId, "feishu", transaction);
+      }
+    });
   }
 
   private async loadUserPushSetting(userId: string, channel: string) {
@@ -1748,16 +1835,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async countDailySentDeliveries(userId: string, channel: string, transaction?: DatabaseTransaction) {
+  private async countDailySentDeliveries(userId: string, channel: string, transaction: DatabaseTransaction) {
     if (!this.database.enabled) return 0;
-    const rows = await this.deliveryQuery<{ sent_count: string | number }>(
-      transaction,
+    const rows = await transaction.query<{ sent_count: string | number }>(
       `
         select count(*)::text as sent_count
         from alert_deliveries
         where user_id = $1::uuid
           and channel = $2::varchar
-          and status = 'sent'
+          and status in ('sending', 'sent')
           and coalesce(sent_at, created_at) >= date_trunc('day', now())
           and coalesce(sent_at, created_at) < date_trunc('day', now()) + interval '1 day'
       `,
@@ -1766,12 +1852,24 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return Number(rows[0]?.sent_count ?? 0);
   }
 
-  private async isDeliveryInCooldown(event: SignalEventRow, userId: string, channel: string, cooldownMinutes: number, transaction?: DatabaseTransaction) {
+  private async isDeliveryInCooldown(event: SignalEventRow, userId: string, channel: string, cooldownMinutes: number, transaction: DatabaseTransaction) {
     if (!this.database.enabled || cooldownMinutes <= 0) return false;
-    const rows = await this.deliveryQuery<{ in_cooldown: boolean }>(
-      transaction,
+    const rows = await transaction.query<{ in_cooldown: boolean }>(
       `
-        select exists (
+        select (
+          exists (
+            select 1
+            from alert_deliveries
+            where user_id = $1::uuid
+              and channel = $2::varchar
+              and symbol = $3::varchar
+              and timeframe = $4::varchar
+              and direction = $5::varchar
+              and coalesce(signal_type, 'unknown') = $6::varchar
+              and status in ('sending', 'sent')
+              and coalesce(sent_at, created_at) > now() - ($7::integer * interval '1 minute')
+          )
+          or exists (
           select 1
           from signal_delivery_cooldowns
           where user_id = $1::uuid
@@ -1781,6 +1879,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
             and direction = $5::varchar
             and signal_type = $6::varchar
             and last_sent_at > now() - ($7::integer * interval '1 minute')
+          )
         ) as in_cooldown
       `,
       [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown", cooldownMinutes]
@@ -1788,10 +1887,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return Boolean(rows[0]?.in_cooldown);
   }
 
-  private async upsertDeliveryCooldown(event: SignalEventRow, userId: string, channel: string, transaction?: DatabaseTransaction) {
+  private async upsertDeliveryCooldown(event: SignalEventRow, userId: string, channel: string, transaction: DatabaseTransaction) {
     if (!this.database.enabled) return;
-    await this.deliveryQuery(
-      transaction,
+    await transaction.query(
       `
         insert into signal_delivery_cooldowns (user_id, channel, symbol, timeframe, direction, signal_type, last_sent_at)
         values ($1::uuid, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, now())
@@ -1800,11 +1898,6 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       `,
       [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown"]
     );
-  }
-
-  private deliveryQuery<T extends QueryResultRow>(transaction: DatabaseTransaction | undefined, sql: string, params: unknown[] = []) {
-    if (transaction) return transaction.query<T>(sql, params);
-    return this.database.query<T>(sql, params);
   }
 
   private async loadUserWatchlists(userId: string, includeDisabled = false) {
@@ -2445,6 +2538,26 @@ function globalScanConcurrency() {
   const configured = Number(process.env.STRATEGY_GLOBAL_SCAN_CONCURRENCY || 8);
   if (!Number.isFinite(configured)) return 8;
   return Math.max(1, Math.min(Math.trunc(configured), 24));
+}
+
+function formalDeliveryTimeoutMs() {
+  const configured = Number(process.env.STRATEGY_FEISHU_TIMEOUT_MS || 10_000);
+  if (!Number.isFinite(configured) || configured <= 0) return 10_000;
+  return Math.max(10, Math.min(Math.round(configured), 60_000));
+}
+
+async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>) {
