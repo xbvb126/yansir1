@@ -45,4 +45,14 @@ assertProperty(".radar-workspace-chrome__status", "flex-direction", "column");
 assertProperty(".radar-workspace-chrome .ai-track-tabs button.active", "color", "#2F6BFF");
 assertProperty(".radar-workspace-chrome .ai-track-tabs button.active::after", "background", "#2F6BFF");
 
+assert.match(css, /\.ai-claw-quick-actions[\s\S]*grid-template-columns:\s*repeat\(2,/);
+assert.match(css, /\.radar-workspace__filters[\s\S]*overflow-x:\s*auto/);
+assert.match(css, /\.ai-claw-composer[\s\S]*min-height:\s*44px/);
+assert.match(css, /\.radar-signal-row[\s\S]*min-height:\s*44px/);
+assert.doesNotMatch(
+  css,
+  /(?:\.radar-timeline|\.live-command__queue)[^{]*\{[^}]*overflow-x:\s*auto/,
+  "the Radar timeline container should not opt into horizontal scrolling",
+);
+
 console.log("touch target tests passed");
