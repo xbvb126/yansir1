@@ -13,6 +13,7 @@
     "test:kline-realtime": "node tests/kline-realtime.test.mjs",
     "test:kline-strategy-source": "node tests/kline-lab-strategy-source.test.mjs",
     "test:radar-live": "node tests/live-signal-command.test.mjs",
+    "test:claw-layout": "node tests/ai-claw-layout.test.mjs",
     "test:touch-targets": "node tests/touch-targets.test.mjs",
     "test:view-routing": "node tests/view-routing.test.mjs"
   },
