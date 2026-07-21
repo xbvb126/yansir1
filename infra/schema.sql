@@ -132,7 +132,7 @@ create table if not exists watchlists (
   symbol varchar(32) not null,
   market varchar(32) not null default 'futures',
   enabled boolean not null default true,
-  timeframes text[] not null default array['5m', '15m', '1h', '4h'],
+  timeframes text[] not null default array['5m', '15m', '30m', '1h', '4h'],
   min_score integer not null default 65,
   signal_scope varchar(32) not null default 'all',
   push_enabled boolean not null default true,
@@ -297,7 +297,8 @@ create table if not exists audit_logs (
 );
 
 alter table watchlists add column if not exists enabled boolean not null default true;
-alter table watchlists add column if not exists timeframes text[] not null default array['5m', '15m', '1h', '4h'];
+alter table watchlists add column if not exists timeframes text[] not null default array['5m', '15m', '30m', '1h', '4h'];
+alter table watchlists alter column timeframes set default array['5m', '15m', '30m', '1h', '4h'];
 alter table watchlists add column if not exists min_score integer not null default 65;
 alter table watchlists add column if not exists signal_scope varchar(32) not null default 'all';
 alter table watchlists add column if not exists push_enabled boolean not null default true;

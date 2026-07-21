@@ -63,7 +63,7 @@ const svipEntitlements = {
   maxPushPerDay: 2000,
   dailySignalQuota: 2000,
   teamSeats: 5,
-  allowedTimeframes: ['5m', '15m', '1h', '4h'],
+  allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
   minAlertScore: 65,
   signalOutcomes: true,
   maxWatchlistSymbols: 200
@@ -108,6 +108,8 @@ assert.equal(isTimeframeAllowed('15m', {}), false);
 assert.equal(isTimeframeAllowed('5m', freeEntitlements), true);
 assert.equal(isTimeframeAllowed('15m', freeEntitlements), false);
 assert.equal(isTimeframeAllowed('15m', vipEntitlements), true);
+assert.equal(isTimeframeAllowed('30m', vipEntitlements), false);
+assert.equal(isTimeframeAllowed('30m', svipEntitlements), true);
 assert.equal(isTimeframeAllowed('4h', vipEntitlements), false);
 assert.equal(isTimeframeAllowed('4h', svipEntitlements), true);
 

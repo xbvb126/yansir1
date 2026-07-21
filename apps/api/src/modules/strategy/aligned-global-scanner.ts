@@ -28,12 +28,14 @@ export type GlobalScanStatus = {
 
 export type AlignedGlobalScannerOptions = {
   now: () => Date;
-  setTimer: (callback: () => void | Promise<void>, delayMs: number) => unknown;
+  setTimer: (callback: () => void, delayMs: number) => unknown;
   clearTimer: (timer: unknown) => void;
   executeSlot: (slot: GlobalScanSlot) => Promise<GlobalScanExecutionResult>;
 };
 
 export class AlignedGlobalScanner {
+  private static readonly SLOT_INTERVAL_MS = 5 * 60 * 1000;
+
   private activeTimer: unknown | null = null;
 
   private readonly status: GlobalScanStatus = {
@@ -92,25 +94,43 @@ export class AlignedGlobalScanner {
     timer = this.options.setTimer(
       () => {
         if (this.activeTimer === timer) this.activeTimer = null;
-        return this.run(slot);
+        this.handleTimer(slot);
       },
-      slot.runAt.getTime() - now.getTime()
+      Math.max(0, slot.runAt.getTime() - now.getTime())
     );
     this.activeTimer = timer;
+  }
+
+  private handleTimer(slot: GlobalScanSlot): void {
+    if (!this.status.enabled) return;
+
+    const now = this.options.now();
+    const elapsedSlots = Math.max(
+      0,
+      Math.floor((now.getTime() - slot.runAt.getTime()) / AlignedGlobalScanner.SLOT_INTERVAL_MS)
+    );
+    this.status.skippedOverlappingRuns += this.status.running ? elapsedSlots + 1 : elapsedSlots;
+    this.schedule();
+
+    if (this.status.running) return;
+    void this.run(slot).catch((error: unknown) => {
+      this.status.running = false;
+      this.status.lastFinishedAt = this.options.now().toISOString();
+      this.status.errors = [error instanceof Error ? error.message : String(error)];
+    });
   }
 
   private async run(slot: GlobalScanSlot): Promise<void> {
     if (!this.status.enabled) return;
 
-    if (this.status.running) {
-      this.status.skippedOverlappingRuns += 1;
-      return;
-    }
-
     this.status.running = true;
     this.status.lastSlotAt = slot.closedAt.toISOString();
     this.status.lastStartedAt = this.options.now().toISOString();
     this.status.lastTimeframes = [...slot.timeframes];
+    this.status.scannedSymbols = 0;
+    this.status.matchedSignals = 0;
+    this.status.failedSymbols = 0;
+    this.status.errors = [];
 
     try {
       const result = await this.options.executeSlot(slot);
@@ -123,7 +143,6 @@ export class AlignedGlobalScanner {
     } finally {
       this.status.running = false;
       this.status.lastFinishedAt = this.options.now().toISOString();
-      if (this.status.enabled) this.schedule();
     }
   }
 }

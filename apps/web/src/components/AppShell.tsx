@@ -317,7 +317,7 @@ const SCAN_HISTORY_STORAGE_KEY = "radar.scanHistory";
 const SCAN_HISTORY_LIMIT = 12;
 const STRATEGY_TRACK_STORAGE_KEY = "radar.strategyTrackRecords";
 const STRATEGY_TRACK_HISTORY_LIMIT = 80;
-const STRATEGY_TRACK_TIMEFRAMES = ["5m", "15m", "1h", "4h"];
+const STRATEGY_TRACK_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"];
 const MARKET_LIST_INITIAL_LIMIT = 30;
 const MARKET_LIST_PAGE_SIZE = 30;
 const defaultWatchlistSymbols = ["BTC", "ETH", "SOL"];
@@ -1454,7 +1454,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
                   <button type="button" onClick={resetStrategyFilters}>重置</button>
                 </div>
                 <div className="strategy-filter-row quick-row" role="group" aria-label="策略信号周期筛选">
-                  {["all", "5m", "15m", "1h", "4h"].map((item) => {
+                  {["all", "5m", "15m", "30m", "1h", "4h"].map((item) => {
                     const allowed = item === "all" || !currentUser.id || (entitlements.allowedTimeframes || ["5m"]).includes(item);
                     return <button key={`tf-${item}`} className={`${strategyFilterTimeframe === item ? "active" : ""} ${allowed ? "" : "locked"}`} type="button" aria-disabled={!allowed} onClick={() => allowed ? setStrategyFilterTimeframe(item) : setUpgradePrompt({ title: `升级解锁 ${item} 策略信号`, desc: `${entitlements.plan || "Free"} 当前可用周期 ${(entitlements.allowedTimeframes || ["5m"]).join(" / ")}。升级后可查看更多周期的历史和实时信号。` })}>{item === "all" ? "全部周期" : item}{allowed ? "" : " · 升级"}</button>;
                   })}
@@ -2481,7 +2481,7 @@ function fallbackPlansForDisplay(): Plan[] {
   return [
     { id: "free", code: "free", name: "Free", price: 0, signalQuota: 10, feishu: false, apiAccess: false, maxWatchlistSymbols: 5, allowedTimeframes: ["5m"], realtimeDelayHours: 8, historyDays: 7, minAlertScore: 80, maxPushPerDay: 0, signalOutcomes: false, features: ["全市场信号延迟 8 小时", "自选 5 个币", "周期 5m", "基础战绩预览"] },
     { id: "vip", code: "vip", name: "VIP", price: 199, signalQuota: 300, feishu: true, apiAccess: false, maxWatchlistSymbols: 50, allowedTimeframes: ["5m", "15m"], realtimeDelayHours: 0, historyDays: 30, minAlertScore: 65, maxPushPerDay: 300, signalOutcomes: true, features: ["每日 300 条实时推送", "自选 50 个币", "周期 5m / 15m", "完整战绩回看"] },
-    { id: "svip", code: "svip", name: "SVIP", price: 699, signalQuota: 2000, feishu: true, apiAccess: true, maxWatchlistSymbols: 200, allowedTimeframes: ["5m", "15m", "1h", "4h"], realtimeDelayHours: 0, historyDays: 180, minAlertScore: 65, maxPushPerDay: 2000, signalOutcomes: true, features: ["每日 2000 条实时推送", "自选 200 个币", "周期 5m / 15m / 1h / 4h", "API 订阅"] }
+    { id: "svip", code: "svip", name: "SVIP", price: 699, signalQuota: 2000, feishu: true, apiAccess: true, maxWatchlistSymbols: 200, allowedTimeframes: ["5m", "15m", "30m", "1h", "4h"], realtimeDelayHours: 0, historyDays: 180, minAlertScore: 65, maxPushPerDay: 2000, signalOutcomes: true, features: ["每日 2000 条实时推送", "自选 200 个币", "周期 5m / 15m / 30m / 1h / 4h", "API 订阅"] }
   ];
 }
 
@@ -3133,12 +3133,12 @@ function mergeStrategyRecords(records: RadarTimelineRecord[]) {
 }
 
 function strategyStatusText(status: "idle" | "scanning" | "ready" | "no-signal" | "error", watchlistCount: number, lastScan: string) {
-  if (!watchlistCount) return "先在我的关注里添加币种，系统会实时监听 5m / 15m / 1h / 4h K线收盘信号。";
+  if (!watchlistCount) return "先在我的关注里添加币种，系统会实时监听 5m / 15m / 30m / 1h / 4h K线收盘信号。";
   if (status === "scanning") return `正在检查 ${watchlistCount} 个追踪币种的实时K线信号`;
   if (status === "ready") return `实时多空信号已更新${lastScan ? `，最近信号 ${lastScan}` : ""}`;
   if (status === "no-signal") return `当前暂无新的 Pine V6 标准信号${lastScan ? `，最近信号 ${lastScan}` : ""}`;
   if (status === "error") return "策略信号实时监听异常，请稍后重试。";
-  return `实时监听中，覆盖 ${watchlistCount} 个币种的 5m / 15m / 1h / 4h。`;
+  return `实时监听中，覆盖 ${watchlistCount} 个币种的 5m / 15m / 30m / 1h / 4h。`;
 }
 
 function strategyScanSummaryText(response: { scan: StrategyScanAlertResponse["scan"] }) {

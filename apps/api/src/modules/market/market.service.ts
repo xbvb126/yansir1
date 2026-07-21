@@ -283,7 +283,18 @@ export class MarketService {
     });
   }
 
-  private async getKlinesWithParams(symbol: string, timeframe: string, params: { limit: number; startTime?: number; endTime?: number }): Promise<MarketKlinesResult> {
+  async getStrictKlinesBefore(symbol: string, timeframe: string, endTime: number, limit = 500): Promise<MarketKlinesResult> {
+    const result = await this.getKlinesWithParams(symbol, timeframe, {
+      endTime,
+      limit: Math.max(1, Math.min(Number(limit) || 500, 1000)),
+      strict: true
+    });
+    const candles = result.candles.filter((candle) => candle.close_time !== undefined && candle.close_time <= endTime);
+    if (!candles.length) throw new Error(`authoritative_market_data_unavailable:${result.symbol}:${timeframe}`);
+    return { ...result, candles };
+  }
+
+  private async getKlinesWithParams(symbol: string, timeframe: string, params: { limit: number; startTime?: number; endTime?: number; strict?: boolean }): Promise<MarketKlinesResult> {
     const normalizedSymbol = normalizeSymbol(symbol);
 
     try {
@@ -301,7 +312,7 @@ export class MarketService {
         source: "binance",
         candles: data.map(mapBinanceKline)
       };
-    } catch {
+    } catch (futuresError) {
       try {
         const url = new URL("/api/v3/klines", this.spotBaseUrl);
         url.searchParams.set("symbol", normalizedSymbol);
@@ -317,7 +328,12 @@ export class MarketService {
           source: "binance",
           candles: data.map(mapBinanceKline)
         };
-      } catch {
+      } catch (spotError) {
+        if (params.strict) {
+          const futuresMessage = futuresError instanceof Error ? futuresError.message : String(futuresError);
+          const spotMessage = spotError instanceof Error ? spotError.message : String(spotError);
+          throw new Error(`authoritative_market_data_unavailable:${normalizedSymbol}:${timeframe}:${futuresMessage};${spotMessage}`);
+        }
         return {
           symbol: normalizedSymbol,
           timeframe,

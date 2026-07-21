@@ -34,6 +34,11 @@ assert.deepEqual(normalizeKlineStreamRequest("eth", "15m"), {
   displaySymbol: "ETH",
   timeframe: "15m"
 });
+assert.deepEqual(normalizeKlineStreamRequest("eth", "30m"), {
+  symbol: "ETHUSDT",
+  displaySymbol: "ETH",
+  timeframe: "30m"
+});
 assert.deepEqual(normalizeKlineStreamRequest("BTCUSDT", "bad"), {
   symbol: "BTCUSDT",
   displaySymbol: "BTC",

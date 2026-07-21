@@ -17,6 +17,16 @@ const liveSignalCommandSource = readFileSync(join(process.cwd(), "src/features/r
 const liveCommandIndex = appShellSource.indexOf("<LiveSignalCommand");
 const trackingPanelIndex = appShellSource.indexOf('<section id="radar-tools-panel" className="radar-tools-panel"');
 const trackingHeaderIndex = appShellSource.indexOf("<RadarWorkspaceChrome");
+assert.match(
+  appShellSource,
+  /const STRATEGY_TRACK_TIMEFRAMES = \["5m", "15m", "30m", "1h", "4h"\]/,
+  "Radar tracking and watchlist defaults must include the scheduled 30m timeframe",
+);
+assert.match(
+  appShellSource,
+  /\["all", "5m", "15m", "30m", "1h", "4h"\]\.map/,
+  "Radar inbox filters must expose 30m signals",
+);
 assert.ok(liveCommandIndex > -1, "radar should render LiveSignalCommand");
 assert.ok(trackingPanelIndex > -1, "radar should render tracking tools panel");
 assert.ok(trackingHeaderIndex > -1, "radar should render workspace chrome");

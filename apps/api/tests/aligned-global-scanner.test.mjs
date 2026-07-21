@@ -21,6 +21,10 @@ function deferred() {
   return { promise, resolve };
 }
 
+async function flushAsyncWork() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 mkdirSync(outDir, { recursive: true });
 
 try {
@@ -64,7 +68,9 @@ try {
     assert.equal(scanner.getStatus().nextRunAt, "2026-07-21T14:05:05.000Z");
 
     now = new Date("2026-07-21T14:05:05.000Z");
-    await callback();
+    const callbackResult = callback();
+    assert.equal(callbackResult, undefined, "timer callbacks must not leak promises to setTimeout");
+    await flushAsyncWork();
 
     assert.deepEqual(executions, ["2026-07-21T14:05:00.000Z"]);
     assert.deepEqual(scanner.getStatus(), {
@@ -113,24 +119,98 @@ try {
     const initialTimerId = 1;
     const initialCallback = timers.get(initialTimerId);
     timers.delete(initialTimerId);
-    const firstRun = initialCallback();
+    initialCallback();
     await Promise.resolve();
-    await initialCallback();
+    initialCallback();
+    await flushAsyncWork();
 
     assert.equal(executions, 1);
     assert.equal(scanner.getStatus().skippedOverlappingRuns, 1);
 
     execution.resolve({ scannedSymbols: 1, matchedSignals: 0, failedSymbols: 0, errors: [] });
-    await firstRun;
+    await flushAsyncWork();
     assert.equal(timers.size, 1);
-    assert.equal(nextTimerId, 3);
+    assert.equal(nextTimerId, 4);
 
-    const nextTimerIdAfterRun = 2;
+    const nextTimerIdAfterRun = 3;
     scanner.stop();
-    assert.deepEqual(clearedTimers, [nextTimerIdAfterRun]);
+    assert.deepEqual(clearedTimers, [2, nextTimerIdAfterRun]);
     assert.equal(timers.size, 0);
     assert.equal(scanner.getStatus().enabled, false);
     assert.equal(scanner.getStatus().nextRunAt, null);
+  }
+
+  {
+    let now = new Date("2026-07-21T14:02:01.000Z");
+    let nextTimerId = 1;
+    const timers = new Map();
+    const execution = deferred();
+    const scanner = new AlignedGlobalScanner({
+      now: () => now,
+      setTimer: (fn) => {
+        const id = nextTimerId++;
+        timers.set(id, fn);
+        return id;
+      },
+      clearTimer: (id) => timers.delete(id),
+      executeSlot: async () => execution.promise
+    });
+
+    scanner.start();
+    const firstCallback = timers.get(1);
+    timers.delete(1);
+    now = new Date("2026-07-21T14:05:05.000Z");
+    firstCallback();
+    await Promise.resolve();
+    assert.equal(scanner.getStatus().nextRunAt, "2026-07-21T14:10:05.000Z", "a running scan must expose the next future boundary");
+    assert.equal(timers.size, 1, "only one future timer should exist while execution is running");
+
+    const missedCallback = [...timers.values()][0];
+    timers.clear();
+    now = new Date("2026-07-21T14:17:05.000Z");
+    missedCallback();
+    await flushAsyncWork();
+
+    assert.equal(scanner.getStatus().skippedOverlappingRuns, 2, "the 14:10 and 14:15 boundaries must both be counted as skipped");
+    assert.equal(scanner.getStatus().nextRunAt, "2026-07-21T14:20:05.000Z");
+    assert.equal(timers.size, 1, "overrun recovery must retain exactly one future timer");
+
+    execution.resolve({ scannedSymbols: 1, matchedSignals: 0, failedSymbols: 0, errors: [] });
+    await flushAsyncWork();
+    assert.equal(timers.size, 1, "completion must not add a duplicate timer");
+  }
+
+  {
+    let now = new Date("2026-07-21T14:02:01.000Z");
+    const timers = [];
+    let executions = 0;
+    const scanner = new AlignedGlobalScanner({
+      now: () => now,
+      setTimer: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      clearTimer: () => {},
+      executeSlot: async () => {
+        executions += 1;
+        if (executions === 1) return { scannedSymbols: 9, matchedSignals: 4, failedSymbols: 2, errors: ["partial"] };
+        throw new Error("top-level failure");
+      }
+    });
+
+    scanner.start();
+    now = new Date("2026-07-21T14:05:05.000Z");
+    timers.shift()();
+    await flushAsyncWork();
+    now = new Date("2026-07-21T14:10:05.000Z");
+    timers.shift()();
+    await flushAsyncWork();
+
+    const status = scanner.getStatus();
+    assert.equal(status.scannedSymbols, 0);
+    assert.equal(status.matchedSignals, 0);
+    assert.equal(status.failedSymbols, 0);
+    assert.deepEqual(status.errors, ["top-level failure"]);
   }
 
   {
@@ -150,7 +230,8 @@ try {
 
     scanner.start();
     now = new Date("2026-07-21T14:05:05.000Z");
-    await callback();
+    callback();
+    await flushAsyncWork();
 
     assert.equal(scanner.getStatus().running, false);
     assert.deepEqual(scanner.getStatus().errors, ["scanner unavailable"]);

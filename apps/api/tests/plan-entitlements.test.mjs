@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { StrategyService } from '../dist/modules/strategy/strategy.service.js';
 import { AlertsService } from '../dist/modules/alerts/alerts.service.js';
+import { buildEntitlements } from '../dist/modules/users/entitlements.js';
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -37,7 +39,7 @@ const svipEntitlements = {
   apiAccess: true,
   teamSeats: 5,
   minAlertScore: 65,
-  allowedTimeframes: ['5m', '15m', '1h', '4h'],
+  allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
   realtimeDelayHours: 0,
   historyDays: 180,
   maxPushPerDay: 2000,
@@ -277,6 +279,57 @@ async function testSvipInboxGetsFullPerformance() {
   assert.equal(response.signals[0].performance.maxFavorablePct, 0.12);
 }
 
+async function testThirtyMinuteSubscriptionAndInboxVisibilityIsExplicitlySvip() {
+  const fallbackEntitlements = buildEntitlements({
+    id: USER_ID,
+    name: 'SVIP user',
+    phone: '13800000000',
+    role: 'member',
+    plan: 'SVIP',
+    status: 'active',
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    signalUsed: 0,
+    signalQuota: 2000,
+    feishuEnabled: true,
+    teamSeats: '0/5'
+  });
+  assert.deepEqual(fallbackEntitlements.allowedTimeframes, ['5m', '15m', '30m', '1h', '4h']);
+  assert.equal(buildEntitlements({
+    id: USER_ID,
+    name: 'VIP user',
+    phone: '13800000001',
+    role: 'member',
+    plan: 'VIP',
+    status: 'active',
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    signalUsed: 0,
+    signalQuota: 300,
+    feishuEnabled: true,
+    teamSeats: '0/1'
+  }).allowedTimeframes.includes('30m'), false, '30m policy must remain an explicit SVIP entitlement');
+
+  const row = { ...sampleSignalRow(), timeframe: '30m' };
+  const db = createDb({ signalRows: [row] });
+  const service = strategyService({ entitlements: svipEntitlements, db });
+  const watchlist = await service.updateUserWatchlist({
+    items: [{ symbol: 'BTCUSDT', timeframes: ['30m'], enabled: true, minScore: 65 }]
+  }, USER_ID);
+  assert.deepEqual(db.watchlists[0].timeframes, ['30m']);
+  assert.deepEqual(watchlist.watchlist[0].timeframes, ['30m']);
+
+  const inbox = await service.getUserSignalInbox(USER_ID, { mode: 'all', timeframe: '30m' });
+  assert.ok(inbox.access.allowedTimeframes.includes('30m'));
+  assert.equal(inbox.signals[0].timeframe, '30m');
+  const countQuery = db.queries.find((query) => query.sql.includes('from user_signal_inbox inbox') && query.sql.includes('count(*)'));
+  assert.ok(countQuery.params[1].includes('30m'));
+  assert.deepEqual(countQuery.params[3], ['30m']);
+
+  const schemaSource = readFileSync(new URL('../../../infra/schema.sql', import.meta.url), 'utf8');
+  const seedSource = readFileSync(new URL('../../../infra/seed.sql', import.meta.url), 'utf8');
+  assert.match(schemaSource, /default array\['5m', '15m', '30m', '1h', '4h'\]/);
+  assert.match(seedSource, /'svip'[\s\S]*array\['5m', '15m', '30m', '1h', '4h'\]/i);
+}
+
 async function testPublicSignalsAreDelayedAndPreviewOnly() {
   const db = createDb({ signalRows: [sampleSignalRow()] });
   const service = strategyService({ db });
@@ -397,6 +450,7 @@ const tests = [
   testWatchlistTimeframeCapacityAndMinScore,
   testInboxAppliesPlanWindowAndPerformanceLock,
   testSvipInboxGetsFullPerformance,
+  testThirtyMinuteSubscriptionAndInboxVisibilityIsExplicitlySvip,
   testPublicSignalsAreDelayedAndPreviewOnly,
   testFeishuConfigPlanGuardsAndClamping,
   testFeishuDailyLimitRecordsSkippedDelivery,

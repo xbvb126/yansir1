@@ -75,7 +75,7 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
     apiAccess: true,
     teamSeats: 5,
     minAlertScore: 65,
-    allowedTimeframes: ["5m", "15m", "1h", "4h"],
+    allowedTimeframes: ["5m", "15m", "30m", "1h", "4h"],
     realtimeDelayHours: 0,
     historyDays: 180,
     maxPushPerDay: 2000,

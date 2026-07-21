@@ -37,6 +37,28 @@ try {
 
   const strictSymbols = await market.getStrictRealtimeKlineTriggerSymbols();
   assert.deepEqual(strictSymbols, [], "strict discovery must ignore a cached overview fallback and report failure");
+
+  const originalFetch = globalThis.fetch;
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return {
+      ok: true,
+      json: async () => [
+        [1784643000000, "1", "1", "1", "1", "1", 1784643299999, "1", 1, "1", "1", "0"],
+        [1784643300000, "2", "2", "2", "2", "2", 1784643599999, "2", 1, "2", "2", "0"]
+      ]
+    };
+  };
+  try {
+    const closedAt = 1784643300000;
+    const strictKlines = await market.getStrictKlinesBefore("BTCUSDT", "5m", closedAt - 1, 180);
+    assert.equal(strictKlines.source, "binance");
+    assert.deepEqual(strictKlines.candles.map(({ open_time }) => open_time), [1784643000000]);
+    assert.match(requestedUrls[0], /endTime=1784643299999/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
   console.log("market symbol discovery tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

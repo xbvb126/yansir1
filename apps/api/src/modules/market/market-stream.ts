@@ -1,6 +1,6 @@
 import { Candle } from "./market.types";
 
-export type KlineStreamTimeframe = "5m" | "15m" | "1h" | "4h";
+export type KlineStreamTimeframe = "5m" | "15m" | "30m" | "1h" | "4h";
 
 export type KlineStreamRequest = {
   symbol: string;
@@ -37,7 +37,7 @@ type BinanceKlineEnvelope = {
 };
 
 const DEFAULT_STREAM_BASE_URL = "wss://data-stream.binance.vision/stream";
-const VALID_TIMEFRAMES = new Set<KlineStreamTimeframe>(["5m", "15m", "1h", "4h"]);
+const VALID_TIMEFRAMES = new Set<KlineStreamTimeframe>(["5m", "15m", "30m", "1h", "4h"]);
 
 export function normalizeKlineStreamRequest(symbol = "BTCUSDT", timeframe = "5m"): KlineStreamRequest {
   const normalizedSymbol = normalizeMarketSymbol(symbol);

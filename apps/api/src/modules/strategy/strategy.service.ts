@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from "
 import { AlertsService } from "../alerts/alerts.service";
 import { DatabaseService } from "../database/database.service";
 import { MarketService } from "../market/market.service";
-import { Candle } from "../market/market.types";
+import { Candle, MarketKlinesResult } from "../market/market.types";
 import { SignalsService } from "../signals/signals.service";
 import { UserEntitlements } from "../users/entitlements";
 import { UsersService } from "../users/users.service";
@@ -19,9 +19,9 @@ import {
 } from "./strategy.client";
 
 const DEFAULT_SCAN_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "TONUSDT", "TRXUSDT", "DOTUSDT", "BCHUSDT", "LTCUSDT", "UNIUSDT", "ARBUSDT", "OPUSDT", "APTUSDT", "SUIUSDT", "FILUSDT"];
-const DEFAULT_STRATEGY_TIMEFRAMES = ["5m", "15m", "1h", "4h"];
+const DEFAULT_STRATEGY_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"];
 const MAX_SCAN_SYMBOLS = 600;
-const MAX_SCAN_TIMEFRAMES = 4;
+const MAX_SCAN_TIMEFRAMES = 5;
 const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 300;
 const MIN_SCHEDULE_INTERVAL_SECONDS = 30;
 const MAX_SCHEDULE_INTERVAL_SECONDS = 86400;
@@ -230,6 +230,11 @@ type PerformanceState = {
   lastError: string | null;
 };
 
+type MarketDataLoadOptions = {
+  strictClosedAt?: Date;
+  cache?: Map<string, Promise<MarketKlinesResult>>;
+};
+
 @Injectable()
 export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private lastScan: ScanResult | null = null;
@@ -245,6 +250,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private readonly realtimeBusyKeys = new Set<string>();
   private realtimeQueue: Array<{ symbol: string; timeframe: string; klineOpenTime: number }> = [];
   private realtimeWorkers = 0;
+  private readonly userDeliveryTails = new Map<string, Promise<void>>();
   private destroyed = false;
   private realtime: RealtimeState = {
     enabled: false,
@@ -353,11 +359,16 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private async runGlobalScanSlot(slot: GlobalScanSlot) {
     const symbols = await this.resolveGlobalScanSymbols();
+    const marketDataCache = new Map<string, Promise<MarketKlinesResult>>();
     const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => ({ symbol, timeframe })));
     const outcomes = await mapWithConcurrency(jobs, globalScanConcurrency(), async ({ symbol, timeframe }) => {
       try {
-        const run = await this.runStrategy({ symbol, timeframe, limit: 180 });
+        const run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
+          strictClosedAt: slot.closedAt,
+          cache: marketDataCache
+        });
         if (run.result.signals.length) {
+          if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
           const events = await this.loadSignalEventsForResult(run.result);
           await this.matchSignalEventsToUsers(events);
         }
@@ -389,8 +400,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   async runStrategy(payload: StrategyRunPayload, userId?: string) {
     if (userId !== undefined) await this.assertApiAccess(userId);
-    const enrichedPayload = await this.withMarketData(payload);
+    return this.executeStrategy(payload);
+  }
+
+  private async executeStrategy(payload: StrategyRunPayload, marketDataOptions?: MarketDataLoadOptions) {
+    const enrichedPayload = await this.withMarketData(payload, marketDataOptions);
     const result = await this.strategyClient.runStrategy(enrichedPayload);
+    if (marketDataOptions?.strictClosedAt) {
+      assertExpectedGlobalBarTime(result, payload.timeframe ?? "5m", marketDataOptions.strictClosedAt);
+    }
     const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result));
 
     return {
@@ -1523,6 +1541,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow) {
+    return this.withUserDeliveryLock(watchlist.user_id, () => this.deliverInboxSignalLocked(event, watchlist));
+  }
+
+  private async deliverInboxSignalLocked(event: SignalEventRow, watchlist: WatchlistRow) {
     const channel = "feishu";
     if (!watchlist.push_enabled) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled");
@@ -1582,6 +1604,24 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     if (Boolean((result as { sent?: boolean }).sent)) {
       await this.upsertDeliveryCooldown(event, watchlist.user_id, channel);
       this.lastAlertAtByKey.set(alertCooldownKey(candidate, watchlist.user_id), Date.now());
+    }
+  }
+
+  private async withUserDeliveryLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.userDeliveryTails.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.userDeliveryTails.set(userId, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.userDeliveryTails.get(userId) === tail) this.userDeliveryTails.delete(userId);
     }
   }
 
@@ -1759,8 +1799,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async withMarketData(payload: StrategyRunPayload): Promise<StrategyRunPayload> {
+  private async withMarketData(payload: StrategyRunPayload, options?: MarketDataLoadOptions): Promise<StrategyRunPayload> {
     if (payload.candles?.length) {
+      if (options?.strictClosedAt) throw new Error("non_authoritative_market_data:request");
       return {
         ...payload,
         market_data_source: "request"
@@ -1772,22 +1813,41 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const mtfTimeframe = payload.mtf_timeframe ?? "15m";
     const htfTimeframe = payload.htf_timeframe ?? "1h";
     const [klines, mtfKlines, htfKlines] = await Promise.all([
-      this.marketService.getKlines(payload.symbol, timeframe, limit),
-      this.marketService.getKlines(payload.symbol, mtfTimeframe, limit),
-      this.marketService.getKlines(payload.symbol, htfTimeframe, limit)
+      this.loadMarketKlines(payload.symbol, timeframe, limit, options),
+      this.loadMarketKlines(payload.symbol, mtfTimeframe, limit, options),
+      this.loadMarketKlines(payload.symbol, htfTimeframe, limit, options)
     ]);
+
+    const closedAt = options?.strictClosedAt;
+    const marketResults = closedAt
+      ? [klines, mtfKlines, htfKlines].map((result) => authoritativeClosedKlines(result, closedAt))
+      : [klines, mtfKlines, htfKlines];
+    const [baseResult, mtfResult, htfResult] = marketResults;
 
     return {
       ...payload,
-      symbol: klines.symbol,
-      timeframe: klines.timeframe,
-      mtf_timeframe: mtfKlines.timeframe,
-      htf_timeframe: htfKlines.timeframe,
-      candles: klines.candles,
-      mtf_candles: mtfKlines.candles,
-      htf_candles: htfKlines.candles,
-      market_data_source: klines.source
+      symbol: baseResult.symbol,
+      timeframe: baseResult.timeframe,
+      mtf_timeframe: mtfResult.timeframe,
+      htf_timeframe: htfResult.timeframe,
+      candles: baseResult.candles,
+      mtf_candles: mtfResult.candles,
+      htf_candles: htfResult.candles,
+      market_data_source: baseResult.source
     };
+  }
+
+  private loadMarketKlines(symbol: string, timeframe: string, limit: number, options?: MarketDataLoadOptions) {
+    if (!options?.strictClosedAt) return this.marketService.getKlines(symbol, timeframe, limit);
+
+    const endTime = options.strictClosedAt.getTime() - 1;
+    const cacheKey = `${normalizeOneSymbol(symbol)}:${timeframe}:${limit}:${endTime}`;
+    let request = options.cache?.get(cacheKey);
+    if (!request) {
+      request = this.marketService.getStrictKlinesBefore(symbol, timeframe, endTime, limit);
+      options.cache?.set(cacheKey, request);
+    }
+    return request;
   }
 
   private async currentAlertRule(userId?: string) {
@@ -2281,6 +2341,34 @@ function alertCooldownKey(signal: { symbol: string; direction: AlertDirection },
 
 function nextRunAt(intervalSeconds: number) {
   return new Date(Date.now() + intervalSeconds * 1000).toISOString();
+}
+
+function authoritativeClosedKlines(result: MarketKlinesResult, closedAt: Date): MarketKlinesResult {
+  if (result.source !== "binance") {
+    throw new Error(`non_authoritative_market_data:${result.symbol}:${result.timeframe}:${result.source}`);
+  }
+  const cutoff = closedAt.getTime();
+  const duration = timeframeDurationMs(result.timeframe);
+  const candles = result.candles.filter((candle) => {
+    const closesAt = candle.close_time === undefined ? candle.open_time + duration : candle.close_time + 1;
+    return closesAt <= cutoff;
+  });
+  if (!candles.length) throw new Error(`authoritative_market_data_unavailable:${result.symbol}:${result.timeframe}`);
+  return { ...result, candles };
+}
+
+function assertExpectedGlobalBarTime(result: StrategyRunResult, timeframe: string, closedAt: Date) {
+  const expected = closedAt.getTime() - timeframeDurationMs(timeframe);
+  const actual = Number(result.bar_time);
+  if (!Number.isFinite(actual) || actual !== expected || result.timeframe !== timeframe) {
+    throw new Error(`unexpected_global_scan_bar_time:${timeframe}:expected=${expected}:actual=${String(result.bar_time)}`);
+  }
+}
+
+function timeframeDurationMs(timeframe: string) {
+  const match = /^(\d+)(m|h)$/.exec(String(timeframe).trim().toLowerCase());
+  if (!match) throw new Error(`unsupported_timeframe:${timeframe}`);
+  return Number(match[1]) * (match[2] === "h" ? 60 : 1) * 60 * 1000;
 }
 
 function globalScanConcurrency() {

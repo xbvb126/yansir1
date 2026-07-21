@@ -54,7 +54,7 @@ const svipEntitlements = {
   apiAccess: true,
   teamSeats: 5,
   minAlertScore: 0,
-  allowedTimeframes: ["5m", "15m", "1h", "4h"],
+  allowedTimeframes: ["5m", "15m", "30m", "1h", "4h"],
   realtimeDelayHours: 0,
   historyDays: 180,
   maxPushPerDay: 2000,
@@ -129,6 +129,7 @@ function usersService() {
 function createService(result = strategyResult, overrides = {}) {
   const savedSignals = [];
   const strategyCalls = [];
+  const marketCalls = [];
   const strategyClient = {
     runStrategy: async (payload) => {
       strategyCalls.push(payload);
@@ -142,6 +143,30 @@ function createService(result = strategyResult, overrides = {}) {
       source: "test-market",
       candles: [{ open_time: 1783229700000, close_time: 1783229999999, open: 1, high: 1, low: 1, close: 1, volume: 1 }]
     }),
+    getStrictKlinesBefore: async (symbol, timeframe, endTime, limit) => {
+      const duration = timeframeDurationMs(timeframe);
+      const closedAt = endTime + 1;
+      const lastOpenTime = Math.floor(closedAt / duration) * duration - duration;
+      const defaultResult = {
+        symbol: String(symbol || "BTCUSDT").toUpperCase(),
+        timeframe,
+        source: "binance",
+        candles: [{
+          open_time: lastOpenTime,
+          close_time: lastOpenTime + duration - 1,
+          open: 1,
+          high: 1,
+          low: 1,
+          close: 1,
+          volume: 1
+        }]
+      };
+      const call = { symbol, timeframe, endTime, limit };
+      marketCalls.push(call);
+      return typeof overrides.strictKlines === "function"
+        ? overrides.strictKlines(call, defaultResult)
+        : defaultResult;
+    },
     getRealtimeKlineTriggerSymbols: async () => overrides.compatibleMarketSymbols ?? ["FALLBACKUSDT"],
     getStrictRealtimeKlineTriggerSymbols: async () => {
       if (typeof overrides.marketSymbols === "function") return overrides.marketSymbols();
@@ -164,23 +189,32 @@ function createService(result = strategyResult, overrides = {}) {
   return {
     service: new StrategyService(strategyClient, marketService, signalsService, alertsService, overrides.usersService ?? usersService(), database),
     savedSignals,
-    strategyCalls
+    strategyCalls,
+    marketCalls
   };
 }
 
-function globalStrategyResult(symbol, timeframe, withSignal = false) {
+function globalStrategyResult(symbol, timeframe, withSignal = false, barTime = strategyResult.bar_time) {
   return {
     ...strategyResult,
     symbol,
     timeframe,
+    bar_time: barTime,
     signals: withSignal ? [strategyResult.signals[0]] : []
   };
 }
 
-function createLifecycleFixture() {
+function timeframeDurationMs(timeframe) {
+  const match = /^(\d+)(m|h)$/.exec(String(timeframe));
+  if (!match) throw new Error(`Unsupported test timeframe: ${timeframe}`);
+  return Number(match[1]) * (match[2] === "h" ? 60 : 1) * 60_000;
+}
+
+function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
   const signalEvents = new Map();
   const inbox = new Map();
   const deliveries = [];
+  const cooldowns = new Set();
   let nextEventId = 1;
 
   const signalsService = {
@@ -243,7 +277,7 @@ function createLifecycleFixture() {
         return [{
           enabled: true,
           min_score: 0,
-          cooldown_minutes: 0,
+          cooldown_minutes: cooldownMinutes,
           target_encrypted: "https://example.test/webhook",
           target_masked: "https://example.test/***",
           binding_webhook_url: null
@@ -262,7 +296,10 @@ function createLifecycleFixture() {
       if (normalizedSql.includes("count(*)::text as sent_count") && normalizedSql.includes("from alert_deliveries")) {
         return [{ sent_count: deliveries.filter((delivery) => delivery.status === "sent").length }];
       }
-      if (normalizedSql.includes("from signal_delivery_cooldowns")) return [{ in_cooldown: false }];
+      if (normalizedSql.includes("from signal_delivery_cooldowns")) {
+        const key = values.slice(0, 6).join(":");
+        return [{ in_cooldown: cooldowns.has(key) }];
+      }
       if (normalizedSql.startsWith("insert into alert_deliveries")) {
         const skipped = normalizedSql.includes("'skipped'");
         deliveries.push({
@@ -274,7 +311,10 @@ function createLifecycleFixture() {
         });
         return [];
       }
-      if (normalizedSql.startsWith("insert into signal_delivery_cooldowns")) return [];
+      if (normalizedSql.startsWith("insert into signal_delivery_cooldowns")) {
+        cooldowns.add(values.slice(0, 6).join(":"));
+        return [];
+      }
       throw new Error(`Unhandled test query: ${normalizedSql}`);
     }
   };
@@ -289,7 +329,7 @@ function createLifecycleFixture() {
     }
   };
 
-  return { alertsService, database, deliveries, inbox, signalEvents, signalsService };
+  return { alertsService, cooldowns, database, deliveries, inbox, signalEvents, signalsService };
 }
 
 async function testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys() {
@@ -358,13 +398,13 @@ async function testGlobalScanRunsTheFullMarketWithBoundedPartialFailure() {
   let active = 0;
   let maxActive = 0;
   try {
-    const { service, strategyCalls } = createService(async ({ symbol, timeframe }) => {
+    const { service, strategyCalls } = createService(async ({ symbol, timeframe, candles }) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
       await new Promise((resolve) => setImmediate(resolve));
       active -= 1;
       if (symbol === "BADUSDT") throw new Error("strategy unavailable");
-      return globalStrategyResult(symbol, timeframe, symbol === "BTCUSDT");
+      return globalStrategyResult(symbol, timeframe, symbol === "BTCUSDT", candles.at(-1).open_time);
     });
 
     const result = await service["runGlobalScanSlot"]({
@@ -394,7 +434,7 @@ async function testGlobalScanIsIndependentOfUserScanEntitlements() {
     entitlements: { ...svipEntitlements, apiAccess: false, remainingSignals: 0 }
   });
   const { service, strategyCalls } = createService(
-    ({ symbol, timeframe }) => globalStrategyResult(symbol, timeframe, false),
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, false, candles.at(-1).open_time),
     { marketSymbols: ["BTCUSDT"], usersService: deniedUsersService }
   );
 
@@ -453,10 +493,202 @@ async function testGlobalScanCapsErrorsAndCountsFailedSymbolsOnce() {
   assert.equal(result.errors.length, 8);
 }
 
+async function testGlobalScanUsesOnlyClosedAuthoritativeCandlesAndDeduplicatesRequests() {
+  const closedAt = new Date("2026-07-21T16:00:00.000Z");
+  const dueTimeframes = ["5m", "15m", "30m", "1h", "4h"];
+  const { service, marketCalls, strategyCalls } = createService(
+    ({ symbol, timeframe, candles, mtf_candles: mtfCandles, htf_candles: htfCandles, market_data_source: source }) => {
+      const expectedBarTime = closedAt.getTime() - timeframeDurationMs(timeframe);
+      assert.equal(source, "binance");
+      assert.equal(candles.at(-1).open_time, expectedBarTime, `${timeframe} must evaluate the candle closed at the slot`);
+      assert.ok(
+        [...candles, ...mtfCandles, ...htfCandles].every((candle) => candle.close_time < closedAt.getTime()),
+        `${timeframe} base/context candles must all be closed before the slot cutoff`
+      );
+      return globalStrategyResult(symbol, timeframe, false, expectedBarTime);
+    },
+    {
+      marketSymbols: ["BTCUSDT"],
+      strictKlines: (_call, result) => ({
+        ...result,
+        candles: [
+          ...result.candles,
+          {
+            open_time: closedAt.getTime(),
+            close_time: closedAt.getTime() + timeframeDurationMs(result.timeframe) - 1,
+            open: 2,
+            high: 2,
+            low: 2,
+            close: 2,
+            volume: 2
+          }
+        ]
+      })
+    }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: closedAt.toISOString(),
+    closedAt,
+    runAt: new Date(closedAt.getTime() + 5_000),
+    timeframes: dueTimeframes
+  });
+
+  assert.equal(result.failedSymbols, 0);
+  assert.deepEqual(result.errors, []);
+  assert.equal(strategyCalls.length, dueTimeframes.length);
+  assert.equal(marketCalls.length, dueTimeframes.length, "five due jobs should share the five unique symbol/timeframe requests instead of issuing fifteen");
+  assert.deepEqual(new Set(marketCalls.map(({ timeframe }) => timeframe)), new Set(dueTimeframes));
+  assert.ok(marketCalls.every(({ endTime }) => endTime === closedAt.getTime() - 1));
+}
+
+async function testGlobalScanRejectsFixtureOrMixedMarketSourcesBeforeStrategyExecution() {
+  const fixture = createLifecycleFixture();
+  const { service, strategyCalls } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    {
+      ...fixture,
+      marketSymbols: ["BTCUSDT"],
+      strictKlines: (_call, result) => result.timeframe === "1h" ? { ...result, source: "fixture" } : result
+    }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /non_authoritative_market_data/);
+  assert.equal(strategyCalls.length, 0);
+  assert.equal(fixture.signalEvents.size, 0);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+async function testGlobalScanRejectsUnexpectedResultBarBeforePersistence() {
+  const fixture = createLifecycleFixture();
+  const closedAt = new Date("2026-07-21T14:05:00.000Z");
+  const { service } = createService(
+    ({ symbol, timeframe }) => globalStrategyResult(symbol, timeframe, true, closedAt.getTime()),
+    { ...fixture, marketSymbols: ["BTCUSDT"] }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: closedAt.toISOString(),
+    closedAt,
+    runAt: new Date(closedAt.getTime() + 5_000),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /unexpected_global_scan_bar_time/);
+  assert.equal(fixture.signalEvents.size, 0);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+async function testGlobalScanTreatsUnpersistedSignalsAsFailedFormalJobs() {
+  const fixture = createLifecycleFixture();
+  const signalsService = {
+    saveStrategySignals: async () => ({ persisted: false, count: 0 })
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, signalsService, marketSymbols: ["BTCUSDT"] }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /signal_persistence_unavailable/);
+  assert.equal(fixture.signalEvents.size, 0);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+function deliveryEvent(id, overrides = {}) {
+  return {
+    id,
+    symbol: "BTCUSDT",
+    timeframe: "5m",
+    direction: "long",
+    signal_type: "trend_long_signal",
+    title: "Concurrent signal",
+    reason: "test",
+    engine: "pine_v6",
+    price: "64000",
+    score: 90,
+    emitted_at: new Date("2026-07-21T14:05:00.000Z"),
+    payload: {},
+    ...overrides
+  };
+}
+
+function deliveryWatchlist() {
+  return {
+    id: "00000000-0000-0000-0000-000000000010",
+    user_id: USER_ID,
+    symbol: "BTCUSDT",
+    timeframes: ["5m"],
+    enabled: true,
+    min_score: 0,
+    signal_scope: "all",
+    push_enabled: true,
+    created_at: new Date("2026-07-21T00:00:00.000Z"),
+    updated_at: new Date("2026-07-21T00:00:00.000Z"),
+    disabled_at: null
+  };
+}
+
+async function testConcurrentSameUserDeliveriesReserveDailyLimit() {
+  const fixture = createLifecycleFixture();
+  const limitedUsersService = usersService();
+  limitedUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, maxPushPerDay: 1 }
+  });
+  const { service } = createService(strategyResult, { ...fixture, usersService: limitedUsersService });
+
+  await Promise.all([
+    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000101"), deliveryWatchlist()),
+    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000102"), deliveryWatchlist())
+  ]);
+
+  assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
+  assert.equal(fixture.deliveries.filter(({ reason }) => reason === "daily_push_limit").length, 1);
+}
+
+async function testConcurrentSameUserDeliveriesReserveCooldown() {
+  const fixture = createLifecycleFixture({ cooldownMinutes: 15 });
+  const cooldownUsersService = usersService();
+  cooldownUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, maxPushPerDay: 10 }
+  });
+  const { service } = createService(strategyResult, { ...fixture, usersService: cooldownUsersService });
+
+  await Promise.all([
+    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000201"), deliveryWatchlist()),
+    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000202"), deliveryWatchlist())
+  ]);
+
+  assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
+  assert.equal(fixture.deliveries.filter(({ reason }) => reason === "db_cooldown").length, 1);
+}
+
 async function testGlobalScanPersistsAndDeliversEachMatchOnce() {
   const fixture = createLifecycleFixture();
   const { service } = createService(
-    ({ symbol, timeframe }) => globalStrategyResult(symbol, timeframe, true),
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
     { ...fixture, marketSymbols: ["BTCUSDT"] }
   );
   const slot = {
@@ -485,7 +717,7 @@ async function testGlobalScanPersistsBlockedUserMatchWithoutSending() {
     entitlements: { ...svipEntitlements, apiAccess: false, remainingSignals: 0, feishuAlerts: false }
   });
   const { service, strategyCalls } = createService(
-    ({ symbol, timeframe }) => globalStrategyResult(symbol, timeframe, true),
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
     { ...fixture, marketSymbols: ["BTCUSDT"], usersService: blockedUsersService }
   );
 
@@ -599,18 +831,37 @@ async function testGlobalScanStatusContract() {
   }
 }
 
+const tests = [
+  testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys,
+  testAlertCandidatesExposeActionAndReduceReasonBranches,
+  testGlobalScanRunsTheFullMarketWithBoundedPartialFailure,
+  testGlobalScanIsIndependentOfUserScanEntitlements,
+  testGlobalScanRejectsEmptyDiscoveryWithoutFallback,
+  testGlobalScanRejectsDiscoveryFailureWithoutFallback,
+  testGlobalScanCapsErrorsAndCountsFailedSymbolsOnce,
+  testGlobalScanUsesOnlyClosedAuthoritativeCandlesAndDeduplicatesRequests,
+  testGlobalScanRejectsFixtureOrMixedMarketSourcesBeforeStrategyExecution,
+  testGlobalScanRejectsUnexpectedResultBarBeforePersistence,
+  testGlobalScanTreatsUnpersistedSignalsAsFailedFormalJobs,
+  testConcurrentSameUserDeliveriesReserveDailyLimit,
+  testConcurrentSameUserDeliveriesReserveCooldown,
+  testGlobalScanPersistsAndDeliversEachMatchOnce,
+  testGlobalScanPersistsBlockedUserMatchWithoutSending,
+  testGlobalScannerHonorsOptOutAndStopsOnShutdown,
+  testGlobalScanStatusContract
+];
+
 try {
-  await testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys();
-  await testAlertCandidatesExposeActionAndReduceReasonBranches();
-  await testGlobalScanRunsTheFullMarketWithBoundedPartialFailure();
-  await testGlobalScanIsIndependentOfUserScanEntitlements();
-  await testGlobalScanRejectsEmptyDiscoveryWithoutFallback();
-  await testGlobalScanRejectsDiscoveryFailureWithoutFallback();
-  await testGlobalScanCapsErrorsAndCountsFailedSymbolsOnce();
-  await testGlobalScanPersistsAndDeliversEachMatchOnce();
-  await testGlobalScanPersistsBlockedUserMatchWithoutSending();
-  await testGlobalScannerHonorsOptOutAndStopsOnShutdown();
-  await testGlobalScanStatusContract();
+  const failures = [];
+  for (const test of tests) {
+    try {
+      await test();
+    } catch (error) {
+      failures.push(error);
+      console.error(`FAIL ${test.name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, `${failures.length} strategy contract regression(s) failed`);
   console.log("strategy contract tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

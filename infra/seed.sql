@@ -18,7 +18,7 @@ insert into plans (
 values
   ('free', 'Free', 0, 10, false, false, false, false, 5, array['5m'], 8, 7, 80, 0, false),
   ('vip', 'VIP', 19900, 300, true, false, false, false, 50, array['5m', '15m'], 0, 30, 65, 300, true),
-  ('svip', 'SVIP', 69900, 2000, true, true, true, true, 200, array['5m', '15m', '1h', '4h'], 0, 180, 65, 2000, true)
+  ('svip', 'SVIP', 69900, 2000, true, true, true, true, 200, array['5m', '15m', '30m', '1h', '4h'], 0, 180, 65, 2000, true)
 on conflict (code) do update set
   name = excluded.name,
   monthly_price_cents = excluded.monthly_price_cents,
