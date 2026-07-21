@@ -10,6 +10,7 @@
     "test:entitlements": "npm run build && node tests/plan-entitlements.test.mjs",
     "test:market-stream": "node tests/market-stream.test.mjs",
     "test:global-scan-schedule": "node tests/global-scan-schedule.test.mjs",
+    "test:aligned-global-scanner": "node tests/aligned-global-scanner.test.mjs",
     "test:strategy-contract": "node tests/strategy-contract.test.mjs",
     "test:e2e:plans": "node tests/plan-e2e.test.mjs"
   },
