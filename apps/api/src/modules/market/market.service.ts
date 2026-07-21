@@ -149,7 +149,7 @@ export class MarketService {
   private readonly spotBaseUrl = process.env.BINANCE_SPOT_BASE_URL || "https://api.binance.com";
   private overviewCache: { expiresAt: number; value: Awaited<ReturnType<MarketService["buildOverview"]>> } | null = null;
   private overviewPromise: Promise<Awaited<ReturnType<MarketService["buildOverview"]>>> | null = null;
-  private tradableUsdtSymbolsCache: { expiresAt: number; value: string[] } | null = null;
+  private tradableUsdtSymbolsCache: { expiresAt: number; value: string[]; fallback: boolean } | null = null;
 
   async getOverview() {
     if (this.overviewCache && this.overviewCache.expiresAt > Date.now()) {
@@ -333,6 +333,26 @@ export class MarketService {
       return this.tradableUsdtSymbolsCache.value;
     }
 
+    const symbols = await this.discoverRealtimeKlineTriggerSymbols();
+    const fallback = !symbols.length;
+    const value = fallback ? FALLBACK_OVERVIEW_SYMBOLS : symbols;
+    this.tradableUsdtSymbolsCache = { expiresAt: Date.now() + (fallback ? 2 : 10) * 60 * 1000, value, fallback };
+    return value;
+  }
+
+  async getStrictRealtimeKlineTriggerSymbols(): Promise<string[]> {
+    if (this.tradableUsdtSymbolsCache && !this.tradableUsdtSymbolsCache.fallback && this.tradableUsdtSymbolsCache.expiresAt > Date.now()) {
+      return this.tradableUsdtSymbolsCache.value;
+    }
+
+    const symbols = await this.discoverRealtimeKlineTriggerSymbols();
+    if (symbols.length) {
+      this.tradableUsdtSymbolsCache = { expiresAt: Date.now() + 10 * 60 * 1000, value: symbols, fallback: false };
+    }
+    return symbols;
+  }
+
+  private async discoverRealtimeKlineTriggerSymbols(): Promise<string[]> {
     const [spotResult, futuresResult] = await Promise.allSettled([
       this.fetchSpotUsdtSymbols(),
       this.fetchFuturesUsdtSymbols()
@@ -341,9 +361,7 @@ export class MarketService {
     const futuresSymbols = futuresResult.status === "fulfilled" ? futuresResult.value : [];
     const futuresSet = new Set(futuresSymbols);
     const symbols = spotSymbols.length && futuresSymbols.length ? spotSymbols.filter((symbol) => futuresSet.has(symbol)) : [];
-    const value = symbols.length ? symbols : futuresSymbols.length ? futuresSymbols : spotSymbols.length ? spotSymbols : FALLBACK_OVERVIEW_SYMBOLS;
-    this.tradableUsdtSymbolsCache = { expiresAt: Date.now() + (value === FALLBACK_OVERVIEW_SYMBOLS ? 2 : 10) * 60 * 1000, value };
-    return value;
+    return symbols.length ? symbols : futuresSymbols.length ? futuresSymbols : spotSymbols;
   }
 
   private async getTickerSnapshot(symbol: string): Promise<TickerSnapshot> {

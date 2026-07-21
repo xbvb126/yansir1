@@ -238,11 +238,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private lastAlertAtByKey = new Map<string, number>();
   private scheduleTimer: ReturnType<typeof setInterval> | null = null;
   private performanceTimer: ReturnType<typeof setInterval> | null = null;
+  private realtimeStartupTimer: ReturnType<typeof setTimeout> | null = null;
+  private performanceStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private realtimeSockets: RuntimeWebSocket[] = [];
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly realtimeBusyKeys = new Set<string>();
   private realtimeQueue: Array<{ symbol: string; timeframe: string; klineOpenTime: number }> = [];
   private realtimeWorkers = 0;
+  private destroyed = false;
   private realtime: RealtimeState = {
     enabled: false,
     symbols: [],
@@ -300,7 +303,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     if (process.env.STRATEGY_GLOBAL_SCAN_ENABLED !== "false") this.globalScanner.start();
 
-    setTimeout(() => {
+    this.realtimeStartupTimer = setTimeout(() => {
+      this.realtimeStartupTimer = null;
+      if (this.destroyed) return;
       this.startRealtimeTracking({
         timeframes: DEFAULT_STRATEGY_TIMEFRAMES,
         minScore: DEFAULT_ALERT_RULE.minScore,
@@ -315,7 +320,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       });
     }, 1000);
 
-    setTimeout(() => {
+    this.performanceStartupTimer = setTimeout(() => {
+      this.performanceStartupTimer = null;
+      if (this.destroyed) return;
       this.startPerformanceUpdater({ runImmediately: true }).catch((error: unknown) => {
         this.performance = {
           ...this.performance,
@@ -328,6 +335,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy() {
+    this.destroyed = true;
+    if (this.realtimeStartupTimer) {
+      clearTimeout(this.realtimeStartupTimer);
+      this.realtimeStartupTimer = null;
+    }
+    if (this.performanceStartupTimer) {
+      clearTimeout(this.performanceStartupTimer);
+      this.performanceStartupTimer = null;
+    }
     this.globalScanner.stop();
   }
 
@@ -1396,7 +1412,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private async resolveGlobalScanSymbols() {
     let discovered: string[];
     try {
-      discovered = await this.marketService.getRealtimeKlineTriggerSymbols();
+      discovered = await this.marketService.getStrictRealtimeKlineTriggerSymbols();
     } catch {
       throw new Error("global_scan_symbols_unavailable");
     }

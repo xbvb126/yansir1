@@ -136,7 +136,8 @@ function createService(result = strategyResult, overrides = {}) {
       source: "test-market",
       candles: [{ open_time: 1783229700000, close_time: 1783229999999, open: 1, high: 1, low: 1, close: 1, volume: 1 }]
     }),
-    getRealtimeKlineTriggerSymbols: async () => {
+    getRealtimeKlineTriggerSymbols: async () => overrides.compatibleMarketSymbols ?? ["FALLBACKUSDT"],
+    getStrictRealtimeKlineTriggerSymbols: async () => {
       if (typeof overrides.marketSymbols === "function") return overrides.marketSymbols();
       return overrides.marketSymbols ?? ["BTCUSDT", "ETHUSDT", "BADUSDT"];
     }
@@ -257,11 +258,13 @@ function createLifecycleFixture() {
       }
       if (normalizedSql.includes("from signal_delivery_cooldowns")) return [{ in_cooldown: false }];
       if (normalizedSql.startsWith("insert into alert_deliveries")) {
+        const skipped = normalizedSql.includes("'skipped'");
         deliveries.push({
           user_id: values[0],
           signal_event_id: values[1],
           channel: "feishu",
-          status: "sent"
+          status: skipped ? "skipped" : "sent",
+          reason: skipped ? values[8] : null
         });
         return [];
       }
@@ -469,6 +472,35 @@ async function testGlobalScanPersistsAndDeliversEachMatchOnce() {
   assert.equal(new Set(sentKeys).size, sentKeys.length);
 }
 
+async function testGlobalScanPersistsBlockedUserMatchWithoutSending() {
+  const fixture = createLifecycleFixture();
+  const blockedUsersService = usersService();
+  blockedUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, apiAccess: false, remainingSignals: 0, feishuAlerts: false }
+  });
+  const { service, strategyCalls } = createService(
+    ({ symbol, timeframe }) => globalStrategyResult(symbol, timeframe, true),
+    { ...fixture, marketSymbols: ["BTCUSDT"], usersService: blockedUsersService }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 1);
+  assert.equal(strategyCalls.length, 1, "system execution must bypass the user's API entitlement and quota");
+  assert.equal(fixture.signalEvents.size, 1);
+  assert.equal(fixture.inbox.size, 1);
+  assert.equal(fixture.deliveries.filter((delivery) => delivery.status === "sent").length, 0);
+  assert.deepEqual(
+    fixture.deliveries.map(({ status, reason }) => ({ status, reason })),
+    [{ status: "skipped", reason: "plan_or_feishu_disabled" }]
+  );
+}
+
 async function testGlobalScannerHonorsOptOutAndStopsOnShutdown() {
   const previousEnabled = process.env.STRATEGY_GLOBAL_SCAN_ENABLED;
   const originalSetTimeout = globalThis.setTimeout;
@@ -485,18 +517,37 @@ async function testGlobalScannerHonorsOptOutAndStopsOnShutdown() {
   try {
     process.env.STRATEGY_GLOBAL_SCAN_ENABLED = "false";
     const disabled = createService().service;
+    let normalRealtimeStarts = 0;
+    let normalPerformanceStarts = 0;
+    disabled.startRealtimeTracking = async () => { normalRealtimeStarts += 1; };
+    disabled.startPerformanceUpdater = async () => { normalPerformanceStarts += 1; };
     disabled.onModuleInit();
     assert.equal(disabled.getGlobalScanStatus().enabled, false);
+    assert.equal(timers.length, 2, "opt-out must leave normal realtime and performance startup behavior intact");
+    await Promise.all(timers.map((timer) => timer.callback()));
+    assert.equal(normalRealtimeStarts, 1);
+    assert.equal(normalPerformanceStarts, 1);
+    disabled.onModuleDestroy();
+    timers.length = 0;
+    cleared.clear();
 
     delete process.env.STRATEGY_GLOBAL_SCAN_ENABLED;
     const enabled = createService().service;
+    let realtimeStarts = 0;
+    let performanceStarts = 0;
+    enabled.startRealtimeTracking = async () => { realtimeStarts += 1; };
+    enabled.startPerformanceUpdater = async () => { performanceStarts += 1; };
     enabled.onModuleInit();
     assert.equal(enabled.getGlobalScanStatus().enabled, true);
     assert.ok(enabled.getGlobalScanStatus().nextRunAt);
+    assert.equal(timers.length, 3, "global, realtime, and performance startup timers must be scheduled");
     enabled.onModuleDestroy();
     assert.equal(enabled.getGlobalScanStatus().enabled, false);
     assert.equal(enabled.getGlobalScanStatus().nextRunAt, null);
-    assert.ok(cleared.size >= 1);
+    assert.equal(cleared.size, 3, "destroy must cancel every pending startup timer");
+    await Promise.all(timers.map((timer) => timer.callback()));
+    assert.equal(realtimeStarts, 0, "a cleared realtime startup callback must remain inert after destroy");
+    assert.equal(performanceStarts, 0, "a cleared performance startup callback must remain inert after destroy");
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
@@ -514,6 +565,7 @@ try {
   await testGlobalScanRejectsDiscoveryFailureWithoutFallback();
   await testGlobalScanCapsErrorsAndCountsFailedSymbolsOnce();
   await testGlobalScanPersistsAndDeliversEachMatchOnce();
+  await testGlobalScanPersistsBlockedUserMatchWithoutSending();
   await testGlobalScannerHonorsOptOutAndStopsOnShutdown();
   console.log("strategy contract tests passed");
 } finally {
