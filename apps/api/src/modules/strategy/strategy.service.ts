@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, OnModuleInit } from "@nestjs/common";
+import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { AlertsService } from "../alerts/alerts.service";
 import { DatabaseService } from "../database/database.service";
 import { MarketService } from "../market/market.service";
@@ -7,6 +7,8 @@ import { SignalsService } from "../signals/signals.service";
 import { UserEntitlements } from "../users/entitlements";
 import { UsersService } from "../users/users.service";
 import { AlertDirection, AlertRuleDto } from "./dto/alert-rule.dto";
+import { AlignedGlobalScanner } from "./aligned-global-scanner";
+import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
   StrategyRealtimePayload,
@@ -229,7 +231,7 @@ type PerformanceState = {
 };
 
 @Injectable()
-export class StrategyService implements OnModuleInit {
+export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private lastScan: ScanResult | null = null;
   private alertRule: Required<AlertRuleDto> = DEFAULT_ALERT_RULE;
   private alertRuleByUserId = new Map<string, Required<AlertRuleDto>>();
@@ -277,6 +279,7 @@ export class StrategyService implements OnModuleInit {
     lastResult: null,
     lastError: null
   };
+  private readonly globalScanner: AlignedGlobalScanner;
 
   constructor(
     private readonly strategyClient: StrategyClient,
@@ -285,9 +288,18 @@ export class StrategyService implements OnModuleInit {
     private readonly alertsService: AlertsService,
     private readonly usersService: UsersService,
     private readonly database: DatabaseService
-  ) {}
+  ) {
+    this.globalScanner = new AlignedGlobalScanner({
+      now: () => new Date(),
+      setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+      executeSlot: (slot) => this.runGlobalScanSlot(slot)
+    });
+  }
 
   onModuleInit() {
+    if (process.env.STRATEGY_GLOBAL_SCAN_ENABLED !== "false") this.globalScanner.start();
+
     setTimeout(() => {
       this.startRealtimeTracking({
         timeframes: DEFAULT_STRATEGY_TIMEFRAMES,
@@ -313,6 +325,50 @@ export class StrategyService implements OnModuleInit {
         };
       });
     }, 4000);
+  }
+
+  onModuleDestroy() {
+    this.globalScanner.stop();
+  }
+
+  getGlobalScanStatus() {
+    return this.globalScanner.getStatus();
+  }
+
+  private async runGlobalScanSlot(slot: GlobalScanSlot) {
+    const symbols = await this.resolveGlobalScanSymbols();
+    const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => ({ symbol, timeframe })));
+    const outcomes = await mapWithConcurrency(jobs, globalScanConcurrency(), async ({ symbol, timeframe }) => {
+      try {
+        const run = await this.runStrategy({ symbol, timeframe, limit: 180 });
+        if (run.result.signals.length) {
+          const events = await this.loadSignalEventsForResult(run.result);
+          await this.matchSignalEventsToUsers(events);
+        }
+        return { ok: true, matchedSignals: run.result.signals.length } as const;
+      } catch (error) {
+        return { ok: false, error: `${symbol}:${timeframe}: ${(error as Error).message}` } as const;
+      }
+    });
+    const failedSymbols = new Set<string>();
+    const errors: string[] = [];
+    let matchedSignals = 0;
+
+    outcomes.forEach((outcome, index) => {
+      if (outcome.ok) {
+        matchedSignals += outcome.matchedSignals;
+        return;
+      }
+      failedSymbols.add(jobs[index].symbol);
+      if (errors.length < 8) errors.push(outcome.error);
+    });
+
+    return {
+      scannedSymbols: symbols.length,
+      matchedSignals,
+      failedSymbols: failedSymbols.size,
+      errors
+    };
   }
 
   async runStrategy(payload: StrategyRunPayload, userId?: string) {
@@ -1337,6 +1393,20 @@ export class StrategyService implements OnModuleInit {
     }
   }
 
+  private async resolveGlobalScanSymbols() {
+    let discovered: string[];
+    try {
+      discovered = await this.marketService.getRealtimeKlineTriggerSymbols();
+    } catch {
+      throw new Error("global_scan_symbols_unavailable");
+    }
+    if (!discovered.length) throw new Error("global_scan_symbols_unavailable");
+
+    const symbols = normalizeScanSymbols(discovered).slice(0, MAX_SCAN_SYMBOLS);
+    if (!symbols.length) throw new Error("global_scan_symbols_unavailable");
+    return symbols;
+  }
+
   private async resolveRealtimeSymbols(payload: StrategyRealtimePayload, rule: Required<AlertRuleDto>) {
     if (payload.symbols?.length) return normalizeScanSymbols(payload.symbols).slice(0, MAX_SCAN_SYMBOLS);
     try {
@@ -1408,11 +1478,12 @@ export class StrategyService implements OnModuleInit {
         [event.symbol, event.timeframe, Number(event.score)]
       );
       for (const watchlist of watchlists.filter((item) => signalScopeMatches(item.signal_scope, event.signal_type))) {
-        await this.database.query(
+        const inserted = await this.database.query<{ id: string }>(
           `
             insert into user_signal_inbox (user_id, signal_event_id, symbol, timeframe, side, score, matched_rule)
             values ($1, $2, $3, $4, $5, $6, $7::jsonb)
             on conflict (user_id, signal_event_id) do nothing
+            returning id::text
           `,
           [
             watchlist.user_id,
@@ -1430,7 +1501,7 @@ export class StrategyService implements OnModuleInit {
             })
           ]
         );
-        await this.deliverInboxSignal(event, watchlist);
+        if (inserted.length) await this.deliverInboxSignal(event, watchlist);
       }
     }
   }
@@ -2194,6 +2265,29 @@ function alertCooldownKey(signal: { symbol: string; direction: AlertDirection },
 
 function nextRunAt(intervalSeconds: number) {
   return new Date(Date.now() + intervalSeconds * 1000).toISOString();
+}
+
+function globalScanConcurrency() {
+  const configured = Number(process.env.STRATEGY_GLOBAL_SCAN_CONCURRENCY || 8);
+  if (!Number.isFinite(configured)) return 8;
+  return Math.max(1, Math.min(Math.trunc(configured), 24));
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  };
+
+  const workerCount = Math.min(items.length, Math.max(1, Math.trunc(concurrency)));
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
 }
 
 function mapStrategySignals(result: StrategyRunResult) {
