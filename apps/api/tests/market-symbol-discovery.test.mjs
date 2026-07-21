@@ -59,6 +59,35 @@ try {
   } finally {
     globalThis.fetch = originalFetch;
   }
+
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  const futuresOnlyUrls = [];
+  Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
+  globalThis.fetch = async (url) => {
+    const requestedUrl = String(url);
+    futuresOnlyUrls.push(requestedUrl);
+    if (requestedUrl.includes("fapi.binance.com")) {
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [
+        [1784643000000, "1", "1", "1", "1", "1", 1784643299999, "1", 1, "1", "1", "0"]
+      ]
+    };
+  };
+  try {
+    await assert.rejects(
+      market.getStrictKlinesBefore("BTCUSDT", "5m", 1784643299999, 180),
+      /authoritative_market_data_unavailable:BTCUSDT:5m/
+    );
+    assert.equal(futuresOnlyUrls.length, 1, "formal futures retrieval must not try the spot endpoint after a futures failure");
+    assert.match(futuresOnlyUrls[0], /fapi\.binance\.com/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(process, "platform", platformDescriptor);
+  }
   console.log("market symbol discovery tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

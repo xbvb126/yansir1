@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { QueryResultRow } from "pg";
 import { AlertsService } from "../alerts/alerts.service";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, DatabaseTransaction } from "../database/database.service";
 import { MarketService } from "../market/market.service";
 import { Candle, MarketKlinesResult } from "../market/market.types";
 import { SignalsService } from "../signals/signals.service";
@@ -135,6 +136,7 @@ type WatchlistRow = {
 
 type SignalEventRow = {
   id: string;
+  dedupe_key: string;
   symbol: string;
   timeframe: string;
   direction: AlertDirection;
@@ -359,9 +361,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private async runGlobalScanSlot(slot: GlobalScanSlot) {
     const symbols = await this.resolveGlobalScanSymbols();
-    const marketDataCache = new Map<string, Promise<MarketKlinesResult>>();
+    const marketDataCaches = new Map<string, Map<string, Promise<MarketKlinesResult>>>();
+    const remainingJobsBySymbol = new Map(symbols.map((symbol) => [symbol, slot.timeframes.length]));
     const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => ({ symbol, timeframe })));
     const outcomes = await mapWithConcurrency(jobs, globalScanConcurrency(), async ({ symbol, timeframe }) => {
+      let marketDataCache = marketDataCaches.get(symbol);
+      if (!marketDataCache) {
+        marketDataCache = new Map<string, Promise<MarketKlinesResult>>();
+        marketDataCaches.set(symbol, marketDataCache);
+      }
       try {
         const run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
           strictClosedAt: slot.closedAt,
@@ -369,12 +377,24 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         });
         if (run.result.signals.length) {
           if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
-          const events = await this.loadSignalEventsForResult(run.result);
+          if (run.persistence.count !== run.result.signals.length) {
+            throw new Error(`signal_persistence_incomplete:expected=${run.result.signals.length}:actual=${run.persistence.count}`);
+          }
+          const events = await this.loadSignalEventsForResult(run.result, true);
           await this.matchSignalEventsToUsers(events);
         }
         return { ok: true, matchedSignals: run.result.signals.length } as const;
       } catch (error) {
         return { ok: false, error: `${symbol}:${timeframe}: ${(error as Error).message}` } as const;
+      } finally {
+        const remainingJobs = (remainingJobsBySymbol.get(symbol) ?? 1) - 1;
+        if (remainingJobs <= 0) {
+          marketDataCache.clear();
+          marketDataCaches.delete(symbol);
+          remainingJobsBySymbol.delete(symbol);
+        } else {
+          remainingJobsBySymbol.set(symbol, remainingJobs);
+        }
       }
     });
     const failedSymbols = new Set<string>();
@@ -409,7 +429,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     if (marketDataOptions?.strictClosedAt) {
       assertExpectedGlobalBarTime(result, payload.timeframe ?? "5m", marketDataOptions.strictClosedAt);
     }
-    const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result));
+    const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result), {
+      strict: Boolean(marketDataOptions?.strictClosedAt)
+    });
 
     return {
       result,
@@ -1459,14 +1481,18 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return normalizeScanSymbols(rule.symbols?.length ? rule.symbols : DEFAULT_SCAN_SYMBOLS).slice(0, MAX_SCAN_SYMBOLS);
   }
 
-  private async loadSignalEventsForResult(result: StrategyRunResult) {
-    if (!this.database.enabled || !result.signals.length) return [];
-    const dedupeKeys = mapStrategySignals(result).map((signal) => signal.dedupeKey);
+  private async loadSignalEventsForResult(result: StrategyRunResult, strict = false) {
+    if (!result.signals.length) return [];
+    if (!this.database.enabled) {
+      if (strict) throw new Error("signal_event_lookup_incomplete:database_unavailable");
+      return [];
+    }
+    const dedupeKeys = Array.from(new Set(mapStrategySignals(result).map((signal) => signal.dedupeKey)));
     if (!dedupeKeys.length) return [];
-    return this.database.query<SignalEventRow>(
-      `
+    const sql = `
         select
           id::text,
+          dedupe_key,
           symbol,
           timeframe,
           direction,
@@ -1481,9 +1507,20 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         from signal_events
         where dedupe_key = any($1::varchar[])
         order by emitted_at desc
-      `,
-      [dedupeKeys]
-    );
+      `;
+    const rows = strict
+      ? await this.database.queryStrict<SignalEventRow>(sql, [dedupeKeys])
+      : await this.database.query<SignalEventRow>(sql, [dedupeKeys]);
+
+    if (strict) {
+      const persistedKeys = new Set(rows.map((row) => row.dedupe_key));
+      const found = dedupeKeys.filter((dedupeKey) => persistedKeys.has(dedupeKey)).length;
+      if (found !== dedupeKeys.length) {
+        throw new Error(`signal_event_lookup_incomplete:expected=${dedupeKeys.length}:actual=${found}`);
+      }
+    }
+
+    return rows;
   }
 
   private async matchSignalEventsToUsers(events: SignalEventRow[]) {
@@ -1541,54 +1578,60 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow) {
-    return this.withUserDeliveryLock(watchlist.user_id, () => this.deliverInboxSignalLocked(event, watchlist));
+    return this.withUserDeliveryLock(watchlist.user_id, () => {
+      if (!this.database.enabled) return this.deliverInboxSignalLocked(event, watchlist);
+      return this.database.withAdvisoryTransaction(
+        `formal-delivery:${watchlist.user_id}`,
+        (transaction) => this.deliverInboxSignalLocked(event, watchlist, transaction)
+      );
+    });
   }
 
-  private async deliverInboxSignalLocked(event: SignalEventRow, watchlist: WatchlistRow) {
+  private async deliverInboxSignalLocked(event: SignalEventRow, watchlist: WatchlistRow, transaction?: DatabaseTransaction) {
     const channel = "feishu";
     if (!watchlist.push_enabled) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled", transaction);
       return;
     }
 
     const entitlements = (await this.usersService.getCurrentEntitlements(watchlist.user_id)).entitlements;
     if (!entitlements.feishuAlerts) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "plan_or_feishu_disabled");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "plan_or_feishu_disabled", transaction);
       return;
     }
 
     const pushSetting = await this.loadUserPushSetting(watchlist.user_id, channel);
     if (!pushSetting.enabled) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "push_setting_disabled");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "push_setting_disabled", transaction);
       return;
     }
     if (!pushSetting.target_encrypted && !pushSetting.binding_webhook_url && !pushSetting.target_masked) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "push_target_missing");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "push_target_missing", transaction);
       return;
     }
 
     const rule = await this.currentAlertRule(watchlist.user_id);
     const minScore = Math.max(rule.minScore, entitlements.minAlertScore, Number(pushSetting.min_score || 0));
     if (!rule.directions.includes(event.direction) || Number(event.score) < minScore) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "below_push_setting_or_plan");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "below_push_setting_or_plan", transaction);
       return;
     }
 
     const dailyLimit = Math.max(0, Number(entitlements.maxPushPerDay || 0));
     if (!dailyLimit) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_not_allowed");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_not_allowed", transaction);
       return;
     }
-    const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel);
+    const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel, transaction);
     if (sentToday >= dailyLimit) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_limit");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_limit", transaction);
       return;
     }
 
     const cooldownMinutes = Math.max(0, Number(pushSetting.cooldown_minutes || rule.cooldownMinutes || 0));
-    const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes);
+    const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes, transaction);
     if (inDbCooldown) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "db_cooldown");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "db_cooldown", transaction);
       return;
     }
 
@@ -1596,13 +1639,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const cooldownRule = { ...rule, cooldownMinutes };
     const deliverable = filterCooldownCandidates([candidate], cooldownRule, this.lastAlertAtByKey, watchlist.user_id);
     if (!deliverable.length) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "memory_cooldown");
+      await this.recordSkippedDelivery(event, watchlist.user_id, "memory_cooldown", transaction);
       return;
     }
 
     const result = await this.alertsService.sendFeishu(candidate, watchlist.user_id);
     if (Boolean((result as { sent?: boolean }).sent)) {
-      await this.upsertDeliveryCooldown(event, watchlist.user_id, channel);
+      await this.recordSentDelivery(event, watchlist.user_id, transaction);
+      await this.upsertDeliveryCooldown(event, watchlist.user_id, channel, transaction);
       this.lastAlertAtByKey.set(alertCooldownKey(candidate, watchlist.user_id), Date.now());
     }
   }
@@ -1625,8 +1669,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async recordSkippedDelivery(event: SignalEventRow, userId: string, reason: string) {
-    await this.database.query(
+  private async recordSkippedDelivery(event: SignalEventRow, userId: string, reason: string, transaction?: DatabaseTransaction) {
+    await this.deliveryQuery(
+      transaction,
       `
         insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, reason, skip_reason, payload)
         values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'skipped', $9::text, $9::text, $10::jsonb)
@@ -1637,6 +1682,23 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           payload = case when alert_deliveries.status = 'sent' then alert_deliveries.payload else excluded.payload end
       `,
       [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, reason, JSON.stringify(event.payload ?? {})]
+    );
+  }
+
+  private async recordSentDelivery(event: SignalEventRow, userId: string, transaction?: DatabaseTransaction) {
+    await this.deliveryQuery(
+      transaction,
+      `
+        insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, payload, sent_at)
+        values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'sent', $9::jsonb, now())
+        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
+          status = 'sent',
+          reason = null,
+          skip_reason = null,
+          payload = excluded.payload,
+          sent_at = now()
+      `,
+      [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, JSON.stringify(event.payload ?? {})]
     );
   }
 
@@ -1686,9 +1748,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async countDailySentDeliveries(userId: string, channel: string) {
+  private async countDailySentDeliveries(userId: string, channel: string, transaction?: DatabaseTransaction) {
     if (!this.database.enabled) return 0;
-    const rows = await this.database.query<{ sent_count: string | number }>(
+    const rows = await this.deliveryQuery<{ sent_count: string | number }>(
+      transaction,
       `
         select count(*)::text as sent_count
         from alert_deliveries
@@ -1703,9 +1766,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return Number(rows[0]?.sent_count ?? 0);
   }
 
-  private async isDeliveryInCooldown(event: SignalEventRow, userId: string, channel: string, cooldownMinutes: number) {
+  private async isDeliveryInCooldown(event: SignalEventRow, userId: string, channel: string, cooldownMinutes: number, transaction?: DatabaseTransaction) {
     if (!this.database.enabled || cooldownMinutes <= 0) return false;
-    const rows = await this.database.query<{ in_cooldown: boolean }>(
+    const rows = await this.deliveryQuery<{ in_cooldown: boolean }>(
+      transaction,
       `
         select exists (
           select 1
@@ -1724,9 +1788,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return Boolean(rows[0]?.in_cooldown);
   }
 
-  private async upsertDeliveryCooldown(event: SignalEventRow, userId: string, channel: string) {
+  private async upsertDeliveryCooldown(event: SignalEventRow, userId: string, channel: string, transaction?: DatabaseTransaction) {
     if (!this.database.enabled) return;
-    await this.database.query(
+    await this.deliveryQuery(
+      transaction,
       `
         insert into signal_delivery_cooldowns (user_id, channel, symbol, timeframe, direction, signal_type, last_sent_at)
         values ($1::uuid, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, now())
@@ -1735,6 +1800,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       `,
       [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown"]
     );
+  }
+
+  private deliveryQuery<T extends QueryResultRow>(transaction: DatabaseTransaction | undefined, sql: string, params: unknown[] = []) {
+    if (transaction) return transaction.query<T>(sql, params);
+    return this.database.query<T>(sql, params);
   }
 
   private async loadUserWatchlists(userId: string, includeDisabled = false) {

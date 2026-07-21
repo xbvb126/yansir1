@@ -221,7 +221,10 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
     saveStrategySignals: async (signals) => {
       let inserted = 0;
       for (const signal of signals) {
-        if (signalEvents.has(signal.dedupeKey)) continue;
+        if (signalEvents.has(signal.dedupeKey)) {
+          inserted += 1;
+          continue;
+        }
         const event = {
           id: `00000000-0000-0000-0000-${String(nextEventId++).padStart(12, "0")}`,
           dedupe_key: signal.dedupeKey,
@@ -246,6 +249,7 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
 
   const database = {
     enabled: true,
+    advisoryTails: new Map(),
     query: async (sql, values = []) => {
       const normalizedSql = sql.replace(/\s+/g, " ").trim().toLowerCase();
       if (normalizedSql.includes("from signal_events") && normalizedSql.includes("dedupe_key = any")) {
@@ -302,13 +306,20 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
       }
       if (normalizedSql.startsWith("insert into alert_deliveries")) {
         const skipped = normalizedSql.includes("'skipped'");
-        deliveries.push({
+        const delivery = {
           user_id: values[0],
           signal_event_id: values[1],
           channel: "feishu",
           status: skipped ? "skipped" : "sent",
           reason: skipped ? values[8] : null
-        });
+        };
+        const existing = deliveries.find((item) =>
+          item.user_id === delivery.user_id
+          && item.signal_event_id === delivery.signal_event_id
+          && item.channel === delivery.channel
+        );
+        if (!existing) deliveries.push(delivery);
+        else if (existing.status !== "sent" || !skipped) Object.assign(existing, delivery);
         return [];
       }
       if (normalizedSql.startsWith("insert into signal_delivery_cooldowns")) {
@@ -316,6 +327,23 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
         return [];
       }
       throw new Error(`Unhandled test query: ${normalizedSql}`);
+    },
+    async queryStrict(sql, values = []) {
+      return this.query(sql, values);
+    },
+    async withAdvisoryTransaction(key, operation) {
+      const previous = this.advisoryTails.get(key) ?? Promise.resolve();
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      const tail = previous.catch(() => undefined).then(() => gate);
+      this.advisoryTails.set(key, tail);
+      await previous.catch(() => undefined);
+      try {
+        return await operation({ query: (sql, values = []) => this.query(sql, values) });
+      } finally {
+        release();
+        if (this.advisoryTails.get(key) === tail) this.advisoryTails.delete(key);
+      }
     }
   };
 
@@ -398,6 +426,7 @@ async function testGlobalScanRunsTheFullMarketWithBoundedPartialFailure() {
   let active = 0;
   let maxActive = 0;
   try {
+    const fixture = createLifecycleFixture();
     const { service, strategyCalls } = createService(async ({ symbol, timeframe, candles }) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
@@ -405,7 +434,7 @@ async function testGlobalScanRunsTheFullMarketWithBoundedPartialFailure() {
       active -= 1;
       if (symbol === "BADUSDT") throw new Error("strategy unavailable");
       return globalStrategyResult(symbol, timeframe, symbol === "BTCUSDT", candles.at(-1).open_time);
-    });
+    }, fixture);
 
     const result = await service["runGlobalScanSlot"]({
       key: "2026-07-21T14:15:00.000Z",
@@ -617,6 +646,109 @@ async function testGlobalScanTreatsUnpersistedSignalsAsFailedFormalJobs() {
   assert.equal(fixture.deliveries.length, 0);
 }
 
+async function testGlobalScanRequiresStrictConfiguredDatabasePersistence() {
+  const fixture = createLifecycleFixture();
+  const signalsService = {
+    saveStrategySignals: async (signals, options) => {
+      if (options?.strict) throw new Error("configured_database_write_failed");
+      return { persisted: true, count: signals.length };
+    }
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, signalsService, marketSymbols: ["BTCUSDT"] }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /configured_database_write_failed/);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+async function testGlobalScanRejectsPersistedCountMismatch() {
+  const fixture = createLifecycleFixture();
+  const signalsService = {
+    saveStrategySignals: async () => ({ persisted: true, count: 0 })
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, signalsService, marketSymbols: ["BTCUSDT"] }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /signal_persistence_incomplete/);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+async function testGlobalScanRejectsIncompleteStrictEventLookup() {
+  const fixture = createLifecycleFixture();
+  const compatibleQueryStrict = fixture.database.queryStrict.bind(fixture.database);
+  fixture.database.queryStrict = async (sql, values = []) => {
+    const normalizedSql = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalizedSql.includes("from signal_events") && normalizedSql.includes("dedupe_key = any")) return [];
+    return compatibleQueryStrict(sql, values);
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, marketSymbols: ["BTCUSDT"] }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /signal_event_lookup_incomplete/);
+  assert.equal(fixture.signalEvents.size, 1, "persistence completed before the lookup health failure");
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+async function testGlobalScanFuturesFailureCreatesNoFormalLifecycle() {
+  const fixture = createLifecycleFixture();
+  const { service, strategyCalls } = createService(strategyResult, {
+    ...fixture,
+    marketSymbols: ["BTCUSDT"],
+    strictKlines: async () => { throw new Error("authoritative_market_data_unavailable:BTCUSDT:5m:futures"); }
+  });
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(result.matchedSignals, 0);
+  assert.equal(result.failedSymbols, 1);
+  assert.match(result.errors[0], /authoritative_market_data_unavailable/);
+  assert.equal(strategyCalls.length, 0);
+  assert.equal(fixture.signalEvents.size, 0);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+}
+
 function deliveryEvent(id, overrides = {}) {
   return {
     id,
@@ -657,11 +789,12 @@ async function testConcurrentSameUserDeliveriesReserveDailyLimit() {
   limitedUsersService.getCurrentEntitlements = async () => ({
     entitlements: { ...svipEntitlements, maxPushPerDay: 1 }
   });
-  const { service } = createService(strategyResult, { ...fixture, usersService: limitedUsersService });
+  const serviceA = createService(strategyResult, { ...fixture, usersService: limitedUsersService }).service;
+  const serviceB = createService(strategyResult, { ...fixture, usersService: limitedUsersService }).service;
 
   await Promise.all([
-    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000101"), deliveryWatchlist()),
-    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000102"), deliveryWatchlist())
+    serviceA["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000101"), deliveryWatchlist()),
+    serviceB["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000102"), deliveryWatchlist())
   ]);
 
   assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
@@ -674,11 +807,12 @@ async function testConcurrentSameUserDeliveriesReserveCooldown() {
   cooldownUsersService.getCurrentEntitlements = async () => ({
     entitlements: { ...svipEntitlements, maxPushPerDay: 10 }
   });
-  const { service } = createService(strategyResult, { ...fixture, usersService: cooldownUsersService });
+  const serviceA = createService(strategyResult, { ...fixture, usersService: cooldownUsersService }).service;
+  const serviceB = createService(strategyResult, { ...fixture, usersService: cooldownUsersService }).service;
 
   await Promise.all([
-    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000201"), deliveryWatchlist()),
-    service["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000202"), deliveryWatchlist())
+    serviceA["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000201"), deliveryWatchlist()),
+    serviceB["deliverInboxSignal"](deliveryEvent("00000000-0000-0000-0000-000000000202"), deliveryWatchlist())
   ]);
 
   assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
@@ -843,6 +977,10 @@ const tests = [
   testGlobalScanRejectsFixtureOrMixedMarketSourcesBeforeStrategyExecution,
   testGlobalScanRejectsUnexpectedResultBarBeforePersistence,
   testGlobalScanTreatsUnpersistedSignalsAsFailedFormalJobs,
+  testGlobalScanRequiresStrictConfiguredDatabasePersistence,
+  testGlobalScanRejectsPersistedCountMismatch,
+  testGlobalScanRejectsIncompleteStrictEventLookup,
+  testGlobalScanFuturesFailureCreatesNoFormalLifecycle,
   testConcurrentSameUserDeliveriesReserveDailyLimit,
   testConcurrentSameUserDeliveriesReserveCooldown,
   testGlobalScanPersistsAndDeliversEachMatchOnce,

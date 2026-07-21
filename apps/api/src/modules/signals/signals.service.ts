@@ -19,7 +19,10 @@ export class SignalsService {
     return { signals: await this.deriveSignalsFromMarket(), source: "binance-derived" };
   }
 
-  async saveStrategySignals(signals: StrategySignalToPersist[]) {
+  async saveStrategySignals(signals: StrategySignalToPersist[], options: { strict?: boolean } = {}) {
+    if (options.strict) {
+      return this.signalsRepository.saveStrategySignalsStrict(signals);
+    }
     return this.signalsRepository.saveStrategySignals(signals);
   }
 

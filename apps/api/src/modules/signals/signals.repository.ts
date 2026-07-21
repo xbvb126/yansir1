@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, DatabaseTransaction } from "../database/database.service";
 import { SignalRecord } from "../shared/mocks";
 
 type SignalRow = {
@@ -86,9 +86,24 @@ export class SignalsRepository {
       };
     }
 
+    return this.persistStrategySignals(signals, this.database, false);
+  }
+
+  async saveStrategySignalsStrict(signals: StrategySignalToPersist[]) {
+    if (!this.database.enabled || !signals.length) {
+      return {
+        persisted: false,
+        count: 0
+      };
+    }
+
+    return this.database.withTransaction((transaction) => this.persistStrategySignals(signals, transaction, true));
+  }
+
+  private async persistStrategySignals(signals: StrategySignalToPersist[], transaction: DatabaseTransaction, strict: boolean) {
     let count = 0;
     for (const signal of signals) {
-      const existingRows = await this.database.query<{ signal_id: string }>(
+      const existingRows = await transaction.query<{ signal_id: string }>(
         `
           select id::text as signal_id
           from signals
@@ -104,7 +119,7 @@ export class SignalsRepository {
 
       let signalId = existingRows[0]?.signal_id;
       if (!signalId) {
-        const insertedRows = await this.database.query<{ signal_id: string }>(
+        const insertedRows = await transaction.query<{ signal_id: string }>(
           `
             insert into signals (symbol, market, direction, signal_type, title, reason, score, source)
             values ($1::varchar, 'futures', $2::varchar, $3::varchar, $4::varchar, $5::text, $6::integer, $7::varchar)
@@ -124,10 +139,11 @@ export class SignalsRepository {
       }
 
       if (!signalId) {
+        if (strict) throw new Error(`signal_persistence_incomplete:${signal.dedupeKey}:signal`);
         continue;
       }
 
-      const eventRows = await this.database.query<{ id: string }>(
+      const eventRows = await transaction.query<{ id: string }>(
         `
           insert into signal_events (
             signal_id,
@@ -179,7 +195,13 @@ export class SignalsRepository {
 
       if (eventRows.length) {
         count += 1;
+      } else if (strict) {
+        throw new Error(`signal_persistence_incomplete:${signal.dedupeKey}:event`);
       }
+    }
+
+    if (strict && count !== signals.length) {
+      throw new Error(`signal_persistence_incomplete:expected=${signals.length}:actual=${count}`);
     }
 
     return {

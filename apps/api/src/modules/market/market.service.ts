@@ -313,6 +313,10 @@ export class MarketService {
         candles: data.map(mapBinanceKline)
       };
     } catch (futuresError) {
+      if (params.strict) {
+        const futuresMessage = futuresError instanceof Error ? futuresError.message : String(futuresError);
+        throw new Error(`authoritative_market_data_unavailable:${normalizedSymbol}:${timeframe}:futures:${futuresMessage}`);
+      }
       try {
         const url = new URL("/api/v3/klines", this.spotBaseUrl);
         url.searchParams.set("symbol", normalizedSymbol);
@@ -329,11 +333,6 @@ export class MarketService {
           candles: data.map(mapBinanceKline)
         };
       } catch (spotError) {
-        if (params.strict) {
-          const futuresMessage = futuresError instanceof Error ? futuresError.message : String(futuresError);
-          const spotMessage = spotError instanceof Error ? spotError.message : String(spotError);
-          throw new Error(`authoritative_market_data_unavailable:${normalizedSymbol}:${timeframe}:${futuresMessage};${spotMessage}`);
-        }
         return {
           symbol: normalizedSymbol,
           timeframe,
