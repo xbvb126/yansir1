@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "./liveSignalModel";
-import { filterLiveSignals, formatDirectionLabel, formatSignalStatus, formatSignalTime, sortLiveSignals } from "./liveSignalModel";
+import { filterLiveSignals, formatDirectionLabel, sortLiveSignals } from "./liveSignalModel";
 
 type LiveSignalCommandProps = {
   signals: LiveSignal[];
@@ -35,7 +35,6 @@ type RealtimeSignalQueueProps = {
   selectedSignalId?: string;
   emptyState: LiveSignalEmptyState;
   totalSignalCount: number;
-  now: number;
   onSelectSignal: (signalId?: string) => void;
   onOpenDetail: (symbol: string) => void;
   onOpenValueClaw: (signalId: string) => void;
@@ -59,7 +58,6 @@ export function LiveSignalCommand({
   selectedSignalId,
   activeFilter,
   emptyState,
-  now = Date.now(),
   onSelectSignal,
   onOpenDetail,
   onOpenValueClaw,
@@ -120,7 +118,6 @@ export function LiveSignalCommand({
           selectedSignalId={selectedSignal?.id}
           emptyState={emptyState}
           totalSignalCount={visibleSignals.length}
-          now={now}
           onSelectSignal={onSelectSignal}
           onOpenDetail={onOpenDetail}
           onOpenValueClaw={onOpenValueClaw}
@@ -136,7 +133,6 @@ function RealtimeSignalQueue({
   selectedSignalId,
   emptyState,
   totalSignalCount,
-  now,
   onSelectSignal,
   onOpenDetail,
   onOpenValueClaw,
@@ -180,30 +176,15 @@ function RealtimeSignalQueue({
             <button
               type="button"
               className={`live-command__row is-${signal.tone} ${selected ? "is-active" : ""}`.trim()}
+              aria-expanded={selected}
               onClick={() => onSelectSignal(resolveNextSelectedSignalId(selectedSignalId, signal.id))}
             >
-              <span className="live-command__symbol">
-                <strong>{signal.symbol}</strong>
-                <span className={`live-command__badge is-${signal.tone}`}>{formatSignalKind(signal)}</span>
-                {signal.source === "strategy" && !isWaitingStrategySignal(signal) && (
-                  <span className={`live-command__badge is-direction is-${signal.tone}`}>{formatDirectionLabel(signal.direction)}</span>
-                )}
-              </span>
-              {signal.source === "market" ? (
-                <span className="live-command__price">
-                  <strong>{formatMarketPrice(signal)}</strong>
-                  <em className={changeToneClass(signal)}>{formatMarketChange(signal)}</em>
-                </span>
-              ) : (
-                <span className="live-command__score">
-                  <strong>{isWaitingStrategySignal(signal) ? "--" : signal.score}</strong>
-                  <small>{isWaitingStrategySignal(signal) ? "未命中" : "策略分"}</small>
-                </span>
-              )}
-              <span className="live-command__meta">
-                {formatSignalMeta(signal, now)}
-              </span>
-              <p className="live-command__trigger">{signal.trigger}</p>
+              <time>{formatClock(signal.generatedAt)}</time>
+              <span className="radar-signal-row__pair">{signal.symbol}</span>
+              <span className="radar-signal-row__timeframe">{signal.timeframe || "--"}</span>
+              <span className="radar-signal-row__direction">{formatDirectionLabel(signal.direction)}</span>
+              <span className="radar-signal-row__score">{isWaitingStrategySignal(signal) ? "--" : signal.score}</span>
+              <span className="radar-signal-row__price">{formatTriggerPrice(signal)}</span>
             </button>
             {selected && (
               <SelectedSignalPanel
@@ -258,40 +239,21 @@ function SelectedSignalPanel({
           </button>
         </div>
 
-        <dl className="live-command__facts live-command__facts-grid">
-          <div className="is-emphasis">
-            <dt>异动类型</dt>
-            <dd>{formatMarketMovementType(signal)}</dd>
-          </div>
-          <div>
-            <dt>现价</dt>
-            <dd>{formatMarketPrice(signal)}</dd>
-          </div>
-          <div className={changeToneClass(signal) === "is-positive" ? "is-positive" : undefined}>
-            <dt>24H 涨跌</dt>
-            <dd>{formatMarketChange(signal)}</dd>
-          </div>
-          <div>
-            <dt>成交状态</dt>
-            <dd>{formatMarketActivity(signal)}</dd>
-          </div>
-        </dl>
-
         <div className="live-command__note">
-          <span>观察重点</span>
-          <p>{buildMarketObservation(signal)}</p>
+          <span>触发原因</span>
+          <p>{signal.trigger}</p>
         </div>
         <div className="live-command__note">
-          <span>策略状态</span>
-          <p>暂未触发 Yansir 策略信号，不生成交易方向。</p>
+          <span>市场事实</span>
+          <p>24H {formatMarketChange(signal)} · {formatMarketActivity(signal)}</p>
         </div>
 
         <div className="live-command__actions">
           <button type="button" className="market-primary" onClick={() => onOpenDetail(signal.symbol)}>
-            策略追踪
+            币种详情
           </button>
           <button type="button" onClick={() => onOpenValueClaw(signal.id)}>
-            ValueClaw
+            AIClaw 复核
           </button>
           <button type="button" onClick={() => onToggleWatch(signal.symbol)}>
             加入观察
@@ -310,40 +272,21 @@ function SelectedSignalPanel({
         </button>
       </div>
 
-      <dl className="live-command__facts live-command__facts-grid">
-        <div className="is-emphasis">
-          <dt>信号来源</dt>
-          <dd>Yansir 策略引擎</dd>
-        </div>
-        <div className={signal.direction === "short" ? "is-risk" : signal.direction === "long" ? "is-positive" : undefined}>
-          <dt>方向</dt>
-          <dd>{formatDirectionLabel(signal.direction)}</dd>
-        </div>
-        <div>
-          <dt>策略分</dt>
-          <dd>{formatStrategyScore(signal)}</dd>
-        </div>
-        <div>
-          <dt>置信度</dt>
-          <dd>{formatStrategyConfidence(signal)}</dd>
-        </div>
-      </dl>
-
       <div className="live-command__note">
         <span>触发原因</span>
         <p>{signal.trigger}</p>
       </div>
       <div className="live-command__note">
-        <span>AI 边界</span>
-        <p>仅用于解释和复核，策略信号保持最高优先级。</p>
+        <span>{signal.tone === "risk" ? "风险事实" : "策略事实"}</span>
+        <p>{signal.tone === "risk" ? signal.risk : `${signal.strategyName} · ${formatStrategyScore(signal)}`}</p>
       </div>
 
       <div className="live-command__actions">
         <button type="button" onClick={() => onOpenDetail(signal.symbol)}>
-          信号详情
+          币种详情
         </button>
         <button type="button" onClick={() => onOpenValueClaw(signal.id)}>
-          ValueClaw
+          AIClaw 复核
         </button>
         <button type="button" onClick={() => onToggleWatch(signal.symbol)}>
           加入观察
@@ -357,41 +300,20 @@ function isWaitingStrategySignal(signal: LiveSignal) {
   return signal.source === "strategy" && signal.status === "no-signal";
 }
 
-function formatSignalKind(signal: LiveSignal) {
-  if (signal.source === "market") return formatMarketMovementType(signal);
-  if (signal.action === "add_long") return "\u52a0\u591a";
-  if (signal.action === "add_short") return "\u52a0\u7a7a";
-  if (signal.action === "reduce_long") return "\u51cf\u591a";
-  if (signal.action === "reduce_short") return "\u51cf\u7a7a";
-  return isWaitingStrategySignal(signal) ? "等待信号" : "命中策略";
-}
-
 function formatStrategyScore(signal: LiveSignal) {
   return isWaitingStrategySignal(signal) ? "--" : `${signal.score}/100`;
 }
 
-function formatStrategyConfidence(signal: LiveSignal) {
-  return isWaitingStrategySignal(signal) ? "--" : `${signal.confidence}/100`;
+function formatClock(generatedAt: string) {
+  const timestamp = Date.parse(generatedAt);
+  if (!Number.isFinite(timestamp)) return "--:--";
+  return new Date(timestamp).toISOString().slice(11, 16);
 }
 
-function formatSignalMeta(signal: LiveSignal, now: number) {
-  if (signal.source === "market") {
-    return `24H ${formatMarketChange(signal)} · ${formatMarketActivity(signal)}`;
-  }
-  return `${signal.strategyName} · ${formatSignalTime(signal.generatedAt, now)}`;
-}
-
-function formatMarketMovementType(signal: LiveSignal) {
-  if (signal.tone === "risk") return signal.risk && signal.risk !== "策略风险模型" ? signal.risk : "风险观察";
-  const changeValue = parseChange(signal.change24h);
-  if (changeValue >= 3 || signal.score >= 70) return "市场急涨";
-  return "市场观察";
-}
-
-function formatMarketPrice(signal: LiveSignal) {
-  const rawPrice = signal.price;
-  if (rawPrice === undefined || rawPrice === null || rawPrice === "") return "--";
-  return String(rawPrice);
+function formatTriggerPrice(signal: LiveSignal) {
+  const value = signal.triggerPrice;
+  if (value === undefined || value === null || value === "") return "--";
+  return String(value);
 }
 
 function formatMarketChange(signal: LiveSignal) {
@@ -404,23 +326,10 @@ function formatMarketChange(signal: LiveSignal) {
   return `${value > 0 ? "+" : ""}${text}`;
 }
 
-function changeToneClass(signal: LiveSignal) {
-  const value = parseChange(signal.change24h);
-  if (!Number.isFinite(value)) return undefined;
-  if (value > 0) return "is-positive";
-  if (value < 0) return "is-negative";
-  return undefined;
-}
-
 function formatMarketActivity(signal: LiveSignal) {
   if (signal.tone === "risk") return "风险放大";
   if (parseChange(signal.change24h) >= 3 || signal.score >= 70) return "活跃放大";
   return "波动正常";
-}
-
-function buildMarketObservation(signal: LiveSignal) {
-  if (signal.tone === "risk") return "价格回落或资金拥挤正在扩大，建议等待二次确认。";
-  return "确认成交量能否延续，同时跟踪资金费率和下一轮策略扫描。";
 }
 
 function parseChange(value: LiveSignal["change24h"]) {

@@ -26,6 +26,8 @@ export type RawRadarSignal = {
   createdAt?: string;
   timestamp?: string | number;
   time?: string;
+  timeframe?: string;
+  triggerPrice?: number | string;
   price?: number | string;
   change24h?: number | string;
   source?: LiveSignalSource;
@@ -50,6 +52,8 @@ export type LiveSignal = {
   strategyName: string;
   trigger: string;
   generatedAt: string;
+  timeframe?: string;
+  triggerPrice?: number | string;
   price?: number | string;
   change24h?: number | string;
   source: LiveSignalSource;
@@ -132,6 +136,8 @@ export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal 
     strategyName: signal.strategyName ?? signal.strategy ?? "Yansir 策略",
     trigger: signal.trigger ?? signal.reason ?? signal.body ?? signal.title ?? "策略触发已确认",
     generatedAt,
+    timeframe: signal.timeframe,
+    triggerPrice: signal.triggerPrice ?? signal.price,
     price: signal.price,
     change24h: signal.change24h,
     source: signal.source === "market" ? "market" : "strategy",

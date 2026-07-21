@@ -82,16 +82,6 @@ assert.doesNotMatch(
   /live-command__header|live-command__status|<h1>实时雷达<\/h1>|StrategyStatusPanel/,
   "radar list component should not render the duplicate title/status block",
 );
-assert.match(
-  liveSignalCommandSource,
-  /add_long|add_short/,
-  "radar list should explicitly label add actions",
-);
-assert.match(
-  liveSignalCommandSource,
-  /reduce_long|reduce_short/,
-  "radar list should explicitly label reduce actions",
-);
 assert.doesNotMatch(
   appShellSource,
   /if\s*\(\s*selectedDetailSignal\s*\)\s*{\s*return\s*\(/,
@@ -230,6 +220,8 @@ const baseSignal = module.toLiveSignal(
     status: "active",
     strategyName: "动量突破",
     trigger: "放量突破已确认",
+    timeframe: "5m",
+    price: "64000.50",
     generatedAt: "2026-07-04T08:00:00.000Z",
   },
   0,
@@ -240,6 +232,8 @@ assert.equal(baseSignal.direction, "long");
 assert.equal(baseSignal.source, "strategy");
 assert.equal(baseSignal.score, 87);
 assert.equal(baseSignal.confidence, 91);
+assert.equal(baseSignal.timeframe, "5m");
+assert.equal(baseSignal.triggerPrice, "64000.50");
 
 const addSignal = module.toLiveSignal(
   {
@@ -422,10 +416,10 @@ const collapsedMarkup = renderToStaticMarkup(
 );
 
 assert.match(collapsedMarkup, /ETHUSDT/);
-assert.match(collapsedMarkup, /命中策略/);
+assert.match(collapsedMarkup, /aria-expanded="false"/);
 assert.doesNotMatch(collapsedMarkup, /实时雷达|Yansir Crypto/);
 assert.doesNotMatch(collapsedMarkup, /live-command__row-detail/);
-assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|信号详情|市场异动详情/);
+assert.doesNotMatch(collapsedMarkup, /触发原因|币种详情|AIClaw 复核|市场异动详情/);
 
 const markup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
@@ -444,12 +438,19 @@ const markup = renderToStaticMarkup(
 );
 
 assert.match(markup, /策略信号详情/);
-assert.match(markup, /Yansir 策略引擎/);
-assert.match(markup, /信号详情/);
-assert.match(markup, /策略信号保持最高优先级/);
+assert.match(markup, /币种详情/);
+assert.match(markup, /AIClaw 复核/);
+assert.match(markup, /加入观察/);
+assert.match(markup, /aria-expanded="true"/);
+assert.match(markup, /<time>08:01<\/time><span class="radar-signal-row__pair">ETHUSDT<\/span><span class="radar-signal-row__timeframe">--<\/span><span class="radar-signal-row__direction">做空<\/span><span class="radar-signal-row__score">76<\/span><span class="radar-signal-row__price">--<\/span>/);
+assert.match(markup, /<time>08:00<\/time><span class="radar-signal-row__pair">BTCUSDT<\/span><span class="radar-signal-row__timeframe">5m<\/span><span class="radar-signal-row__direction">做多<\/span><span class="radar-signal-row__score">87<\/span><span class="radar-signal-row__price">64000\.50<\/span>/);
+assert.match(markup, /看空|风险/);
 assert.match(markup, /做空/);
 assert.match(markup, /live-command__row-detail/);
-assert.doesNotMatch(markup, /市场异动详情|策略状态|实时雷达|Yansir Crypto|币种详情/);
+assert.equal((markup.match(/>币种详情<\/button>/g) || []).length, 1);
+assert.equal((markup.match(/>AIClaw 复核<\/button>/g) || []).length, 1);
+assert.equal((markup.match(/>加入观察<\/button>/g) || []).length, 1);
+assert.doesNotMatch(markup, /市场异动详情|策略状态|实时雷达|Yansir Crypto|ValueClaw/);
 assert.doesNotMatch(markup, /Realtime Radar|Signal Detail|Signal source|Direction|Confidence|Strategy listener active|strategy signals|s ago|LONG|SHORT|NEUTRAL/);
 
 const actionMarkup = renderToStaticMarkup(
@@ -468,9 +469,8 @@ const actionMarkup = renderToStaticMarkup(
   }),
 );
 
-assert.match(actionMarkup, /\u52a0\u591a/);
-assert.match(actionMarkup, /\u51cf\u7a7a/);
-assert.doesNotMatch(actionMarkup, /\u547d\u4e2d\u7b56\u7565/);
+assert.match(actionMarkup, /做多/);
+assert.match(actionMarkup, /做空/);
 
 const selectedRowIndex = markup.indexOf("ETHUSDT");
 const followingRowIndex = markup.indexOf("BTCUSDT");
@@ -497,12 +497,12 @@ const marketMarkup = renderToStaticMarkup(
 );
 
 assert.match(marketMarkup, /市场异动详情/);
-assert.match(marketMarkup, /异动类型/);
 assert.match(marketMarkup, /13\.51/);
 assert.match(marketMarkup, /\+90\.67%/);
-assert.match(marketMarkup, /策略状态/);
-assert.match(marketMarkup, /策略追踪/);
-assert.doesNotMatch(marketMarkup, /策略信号详情|AI 边界|信号详情/);
+assert.match(marketMarkup, /市场事实/);
+assert.match(marketMarkup, /币种详情/);
+assert.match(marketMarkup, /AIClaw 复核/);
+assert.doesNotMatch(marketMarkup, /策略信号详情|AI 边界|策略状态|策略追踪/);
 
 const waitingMarkup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
@@ -520,9 +520,8 @@ const waitingMarkup = renderToStaticMarkup(
   }),
 );
 
-assert.match(waitingMarkup, /等待信号/);
-assert.match(waitingMarkup, /策略分<\/dt><dd>--<\/dd>/);
-assert.match(waitingMarkup, /置信度<\/dt><dd>--<\/dd>/);
+assert.match(waitingMarkup, /radar-signal-row__direction">观望<\/span>/);
+assert.match(waitingMarkup, /radar-signal-row__score">--<\/span>/);
 assert.doesNotMatch(waitingMarkup, /96\/100/);
 
 const manySignals = Array.from({ length: 35 }, (_, index) =>
