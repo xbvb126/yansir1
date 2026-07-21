@@ -165,7 +165,7 @@ Response:
 
 `GlobalScanStatus` fields are `enabled`, `running`, `lastSlotAt`, `lastStartedAt`, `lastFinishedAt`, `nextRunAt`, `lastTimeframes`, `scannedSymbols`, `matchedSignals`, `failedSymbols`, `skippedOverlappingRuns`, and `errors`.
 
-Response when `FEISHU_WEBHOOK_URL` is not configured:
+### `POST /api/strategy/scan/alert` response when `FEISHU_WEBHOOK_URL` is not configured
 
 ```json
 {
