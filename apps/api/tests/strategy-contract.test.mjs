@@ -14,11 +14,17 @@ const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuil
 const esbuildCommand = process.platform === "win32" ? process.execPath : esbuildBin;
 const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
 const serviceSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.service.ts"), "utf8");
+const controllerSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.controller.ts"), "utf8");
 
 assert.match(serviceSource, /function normalizeSignalPayload/);
 assert.match(serviceSource, /function signalActionFromPayload/);
 assert.match(serviceSource, /action:\s*signalActionFromPayload\(payload\)/);
 assert.match(serviceSource, /payload,\s*\n\s*performance:/);
+assert.match(controllerSource, /@Get\("scan\/global\/status"\)/);
+assert.ok(
+  controllerSource.indexOf('@Get("scan/global/status")') < controllerSource.indexOf('@Post("scan/schedule/start")'),
+  "global scanner status must be declared before user schedule routes"
+);
 
 execFileSync(esbuildCommand, [
   ...esbuildArgsPrefix,
@@ -522,7 +528,7 @@ async function testGlobalScannerHonorsOptOutAndStopsOnShutdown() {
     disabled.startRealtimeTracking = async () => { normalRealtimeStarts += 1; };
     disabled.startPerformanceUpdater = async () => { normalPerformanceStarts += 1; };
     disabled.onModuleInit();
-    assert.equal(disabled.getGlobalScanStatus().enabled, false);
+    assert.equal(disabled.getGlobalScanStatus().scanner.enabled, false);
     assert.equal(timers.length, 2, "opt-out must leave normal realtime and performance startup behavior intact");
     await Promise.all(timers.map((timer) => timer.callback()));
     assert.equal(normalRealtimeStarts, 1);
@@ -538,16 +544,53 @@ async function testGlobalScannerHonorsOptOutAndStopsOnShutdown() {
     enabled.startRealtimeTracking = async () => { realtimeStarts += 1; };
     enabled.startPerformanceUpdater = async () => { performanceStarts += 1; };
     enabled.onModuleInit();
-    assert.equal(enabled.getGlobalScanStatus().enabled, true);
-    assert.ok(enabled.getGlobalScanStatus().nextRunAt);
+    assert.equal(enabled.getGlobalScanStatus().scanner.enabled, true);
+    assert.ok(enabled.getGlobalScanStatus().scanner.nextRunAt);
     assert.equal(timers.length, 3, "global, realtime, and performance startup timers must be scheduled");
     enabled.onModuleDestroy();
-    assert.equal(enabled.getGlobalScanStatus().enabled, false);
-    assert.equal(enabled.getGlobalScanStatus().nextRunAt, null);
+    assert.equal(enabled.getGlobalScanStatus().scanner.enabled, false);
+    assert.equal(enabled.getGlobalScanStatus().scanner.nextRunAt, null);
     assert.equal(cleared.size, 3, "destroy must cancel every pending startup timer");
     await Promise.all(timers.map((timer) => timer.callback()));
     assert.equal(realtimeStarts, 0, "a cleared realtime startup callback must remain inert after destroy");
     assert.equal(performanceStarts, 0, "a cleared performance startup callback must remain inert after destroy");
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    if (previousEnabled === undefined) delete process.env.STRATEGY_GLOBAL_SCAN_ENABLED;
+    else process.env.STRATEGY_GLOBAL_SCAN_ENABLED = previousEnabled;
+  }
+}
+
+async function testGlobalScanStatusContract() {
+  const previousEnabled = process.env.STRATEGY_GLOBAL_SCAN_ENABLED;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const timers = [];
+  globalThis.setTimeout = (callback, delay) => {
+    const timer = { callback, delay };
+    timers.push(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = () => {};
+
+  try {
+    delete process.env.STRATEGY_GLOBAL_SCAN_ENABLED;
+    const { service } = createService();
+    service.onModuleInit();
+
+    assert.deepEqual(service.getGlobalScanStatus(), {
+      scanner: service["globalScanner"].getStatus()
+    });
+
+    const { scanner } = service.getGlobalScanStatus();
+    assert.equal(scanner.enabled, true);
+    assert.match(scanner.nextRunAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.deepEqual(scanner.errors, []);
+    for (const counter of ["scannedSymbols", "matchedSignals", "failedSymbols", "skippedOverlappingRuns"]) {
+      assert.equal(typeof scanner[counter], "number", `${counter} must be numeric`);
+    }
+    service.onModuleDestroy();
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
@@ -567,6 +610,7 @@ try {
   await testGlobalScanPersistsAndDeliversEachMatchOnce();
   await testGlobalScanPersistsBlockedUserMatchWithoutSending();
   await testGlobalScannerHonorsOptOutAndStopsOnShutdown();
+  await testGlobalScanStatusContract();
   console.log("strategy contract tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

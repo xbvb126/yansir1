@@ -348,7 +348,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   getGlobalScanStatus() {
-    return this.globalScanner.getStatus();
+    return { scanner: this.globalScanner.getStatus() };
   }
 
   private async runGlobalScanSlot(slot: GlobalScanSlot) {

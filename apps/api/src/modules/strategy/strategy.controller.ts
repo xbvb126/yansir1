@@ -62,6 +62,11 @@ export class StrategyController {
     return this.strategyService.getPublicDelayedSignals(query);
   }
 
+  @Get("scan/global/status")
+  getGlobalScanStatus() {
+    return this.strategyService.getGlobalScanStatus();
+  }
+
   @Post("scan/schedule/start")
   startSchedule(@Body() payload: StrategySchedulePayload, @Headers("authorization") authorization?: string, @Headers("x-radar-user-id") userId?: string) {
     return this.strategyService.startScanSchedule(payload, authorization || userId);

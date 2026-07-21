@@ -17,6 +17,7 @@ GET  /api/signals
 GET  /api/signals/:id/performance
 GET  /api/strategy/scan/latest
 GET  /api/strategy/scan/schedule
+GET  /api/strategy/scan/global/status
 POST /api/strategy/run
 POST /api/strategy/scan
 POST /api/strategy/scan/alert
@@ -47,6 +48,7 @@ Current implementation notes:
 - `/api/strategy/scan/schedule/start` starts an in-memory recurring scan-to-alert task.
 - `/api/strategy/scan/schedule` returns the current in-memory schedule state and last run result.
 - `/api/strategy/scan/schedule/stop` stops the recurring scan task.
+- `/api/strategy/scan/global/status` reports the automatic system-level global scanner. It is UTC-aligned and runs 5 seconds after each closed-candle boundary; it is not controlled by the user schedule start/stop endpoints.
 - Scan and alert endpoints enforce current user entitlements. Free/VIP/SVIP limits affect symbol count, remaining quota, allowed timeframe, Feishu delivery, and minimum alert score.
 - If `DATABASE_URL` is not configured or Postgres is unavailable, read APIs fall back to local mock data and strategy persistence returns `persisted: false`.
 - Vite proxies `/api/*` from `http://localhost:3200` to the NestJS API on `http://localhost:3101`.
@@ -135,6 +137,33 @@ POST /api/strategy/scan/schedule/stop
 ```
 
 The current scheduler is process-memory only. It is suitable for MVP validation and will be replaced by Redis/Postgres-backed scheduled tasks for production.
+
+## `GET /api/strategy/scan/global/status`
+
+This read-only endpoint reports the automatic system-level global market scanner. The scanner schedules one-shot runs aligned to UTC closed-candle boundaries, with a five-second delay after every close. It is independent of `POST /api/strategy/scan/schedule/start` and `POST /api/strategy/scan/schedule/stop`, which control only the user-configured recurring scan.
+
+Response:
+
+```json
+{
+  "scanner": {
+    "enabled": true,
+    "running": false,
+    "lastSlotAt": "2026-07-21T14:05:00.000Z",
+    "lastStartedAt": "2026-07-21T14:05:05.000Z",
+    "lastFinishedAt": "2026-07-21T14:05:06.000Z",
+    "nextRunAt": "2026-07-21T14:10:05.000Z",
+    "lastTimeframes": ["5m"],
+    "scannedSymbols": 120,
+    "matchedSignals": 3,
+    "failedSymbols": 1,
+    "skippedOverlappingRuns": 0,
+    "errors": []
+  }
+}
+```
+
+`GlobalScanStatus` fields are `enabled`, `running`, `lastSlotAt`, `lastStartedAt`, `lastFinishedAt`, `nextRunAt`, `lastTimeframes`, `scannedSymbols`, `matchedSignals`, `failedSymbols`, `skippedOverlappingRuns`, and `errors`.
 
 Response when `FEISHU_WEBHOOK_URL` is not configured:
 
