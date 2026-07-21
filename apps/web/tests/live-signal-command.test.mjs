@@ -8,16 +8,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const outfile = join(process.cwd(), "tmp-tests", "live-signal-command.mjs");
 const componentOutfile = join(process.cwd(), "tmp-tests", "LiveSignalCommand.mjs");
+const chromeOutfile = join(process.cwd(), "tmp-tests", "RadarWorkspaceChrome.mjs");
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
 const liveSignalCommandSource = readFileSync(join(process.cwd(), "src/features/radar/LiveSignalCommand.tsx"), "utf8");
 const liveCommandIndex = appShellSource.indexOf("<LiveSignalCommand");
 const trackingPanelIndex = appShellSource.indexOf('<section id="radar-tools-panel" className="radar-tools-panel"');
-const trackingHeaderIndex = appShellSource.indexOf('<header className="ai-track-header">');
+const trackingHeaderIndex = appShellSource.indexOf("<RadarWorkspaceChrome");
 assert.ok(liveCommandIndex > -1, "radar should render LiveSignalCommand");
 assert.ok(trackingPanelIndex > -1, "radar should render tracking tools panel");
-assert.ok(trackingHeaderIndex > -1, "radar should keep tracking tools");
+assert.ok(trackingHeaderIndex > -1, "radar should render workspace chrome");
 assert.ok(
   trackingPanelIndex < liveCommandIndex,
   "radar tracking tools should render before the signal list",
@@ -35,21 +36,6 @@ assert.match(
   appShellSource,
   /useState<"ai" \| "strategy" \| "mine">\("strategy"\)/,
   "radar should default to strategy signals",
-);
-assert.match(
-  appShellSource,
-  />策略信号<\/button>/,
-  "radar should label the primary strategy source as strategy signals",
-);
-assert.match(
-  appShellSource,
-  />市场异动<\/button>/,
-  "radar should label market tracking as market movement",
-);
-assert.match(
-  appShellSource,
-  />我的关注<\/button>/,
-  "radar should label personal tracking as watchlist focus",
 );
 assert.doesNotMatch(
   appShellSource,
@@ -171,6 +157,46 @@ assert.match(
   /payload:\s*record\.payload/,
   "AppShell toLiveSignal handoff should keep radar signal payload available",
 );
+
+await build({
+  entryPoints: ["src/features/radar/RadarWorkspaceChrome.tsx"],
+  outfile: chromeOutfile,
+  bundle: true,
+  external: ["react", "react/jsx-runtime"],
+  format: "esm",
+  jsx: "automatic",
+  platform: "node",
+  target: "node18",
+});
+
+const chromeModule = await import(pathToFileURL(chromeOutfile).href);
+const chromeMarkup = renderToStaticMarkup(
+  React.createElement(chromeModule.RadarWorkspaceChrome, {
+    activeSource: "strategy",
+    onSourceChange: () => undefined,
+    listenerLabel: "监听中",
+    latestScanLabel: "14:02:00",
+    categoryItems: [
+      { id: "all", label: "全部", count: 24 },
+      { id: "long", label: "看多" },
+      { id: "short", label: "看空" },
+      { id: "breakout", label: "趋势突破" },
+      { id: "rebound", label: "回调反弹" },
+      { id: "volume", label: "成交量异动" },
+      { id: "capital", label: "资金异动" },
+    ],
+    activeCategory: "all",
+    onCategoryChange: () => undefined,
+    onOpenFilters: () => undefined,
+  }),
+);
+
+assert.match(chromeMarkup, /雷达/);
+assert.match(chromeMarkup, /监听中/);
+assert.match(chromeMarkup, /最后扫描 14:02:00/);
+assert.match(chromeMarkup, /市场异动.*策略信号.*我的/s);
+assert.match(chromeMarkup, /全部.*看多.*看空.*趋势突破.*回调反弹.*成交量异动.*资金异动/s);
+assert.match(chromeMarkup, /aria-label="高级筛选"/);
 
 await build({
   entryPoints: ["src/features/radar/liveSignalModel.ts"],
