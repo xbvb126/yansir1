@@ -257,7 +257,7 @@ Start it in `onModuleInit()` unless `STRATEGY_GLOBAL_SCAN_ENABLED === "false"`; 
 Implement `runGlobalScanSlot(slot)` so it:
 
 ```ts
-const symbols = await this.resolveRealtimeSymbols({}, DEFAULT_ALERT_RULE);
+const symbols = await this.resolveGlobalScanSymbols();
 const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => ({ symbol, timeframe })));
 const outcomes = await mapWithConcurrency(jobs, globalScanConcurrency(), async ({ symbol, timeframe }) => {
   try {
@@ -274,6 +274,8 @@ const outcomes = await mapWithConcurrency(jobs, globalScanConcurrency(), async (
 ```
 
 Return `scannedSymbols: symbols.length`, sum matched signals, count unique symbols with one or more failed timeframe jobs in `failedSymbols`, and cap `errors` at 8 entries. `globalScanConcurrency()` reads `STRATEGY_GLOBAL_SCAN_CONCURRENCY`, defaults to 8, and clamps to 1–24. `mapWithConcurrency()` must preserve all results without starting more workers than the limit.
+
+Implement `resolveGlobalScanSymbols()` as a strict system-level discovery method: call `marketService.getRealtimeKlineTriggerSymbols()`, normalize and cap the returned symbols, and throw `global_scan_symbols_unavailable` when discovery throws or returns an empty list. Do not reuse `resolveRealtimeSymbols()` because its watchlist/default fallback would make an incomplete market scan look successful.
 
 - [ ] **Step 4: Prevent repeated inbox delivery for an existing match**
 
