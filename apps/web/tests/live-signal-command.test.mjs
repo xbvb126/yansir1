@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 const outfile = join(process.cwd(), "tmp-tests", "live-signal-command.mjs");
 const componentOutfile = join(process.cwd(), "tmp-tests", "LiveSignalCommand.mjs");
 const chromeOutfile = join(process.cwd(), "tmp-tests", "RadarWorkspaceChrome.mjs");
+const presentationOutfile = join(process.cwd(), "tmp-tests", "radarSourcePresentation.mjs");
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
@@ -157,6 +158,84 @@ assert.match(
   /payload:\s*record\.payload/,
   "AppShell toLiveSignal handoff should keep radar signal payload available",
 );
+assert.match(appShellSource, /timeframe:\s*record\.timeframe/, "AppShell should pass the authoritative timeframe to the live signal model");
+assert.match(appShellSource, /triggerPrice:\s*record\.triggerPrice/, "AppShell should pass the authoritative trigger price to the live signal model");
+assert.doesNotMatch(
+  appShellSource,
+  /triggerPrice:\s*row\?\.price/,
+  "AppShell must not substitute current market price for trigger price",
+);
+
+await build({
+  entryPoints: ["src/features/radar/radarSourcePresentation.ts"],
+  outfile: presentationOutfile,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node18",
+});
+
+const presentationModule = await import(pathToFileURL(presentationOutfile).href);
+const inboxFacts = presentationModule.strategyInboxSignalFacts({ timeframe: "15m", price: 186.32 });
+assert.deepEqual(inboxFacts, { timeframe: "15m", triggerPrice: 186.32 });
+assert.deepEqual(
+  presentationModule.strategyInboxSignalFacts({ timeframe: "1h" }),
+  { timeframe: "1h", triggerPrice: undefined },
+  "an inbox record without an execution price must keep trigger price undefined",
+);
+const scanFacts = presentationModule.strategyScanSignalFacts(
+  { timeframe: "4h" },
+  { price: 3518.9 },
+);
+assert.deepEqual(scanFacts, { timeframe: "4h", triggerPrice: 3518.9 });
+assert.deepEqual(
+  presentationModule.strategyScanSignalFacts({ timeframe: "5m" }, {}),
+  { timeframe: "5m", triggerPrice: undefined },
+  "a scan record without an execution price must keep trigger price undefined",
+);
+
+const sourceCases = [
+  {
+    source: "strategy",
+    expectedTitle: "暂无符合条件的策略信号",
+    expectedSource: "信号来源：Yansir 策略引擎",
+    expectedPrefix: "最后扫描",
+  },
+  {
+    source: "ai",
+    expectedTitle: "暂无符合条件的市场异动",
+    expectedSource: "信号来源：市场行情与雷达规则",
+    expectedPrefix: "行情更新",
+  },
+  {
+    source: "mine",
+    expectedTitle: "我的关注暂无符合条件的异动",
+    expectedSource: "信号来源：我的关注列表与市场行情",
+    expectedPrefix: "自选更新",
+  },
+];
+
+for (const sourceCase of sourceCases) {
+  const presentation = presentationModule.buildRadarSourcePresentation({
+    source: sourceCase.source,
+    strategyStatus: "no-signal",
+    strategyLastScan: "14:02",
+    marketLastUpdate: "14:01",
+    scopeLabel: "测试范围",
+    filterLabel: "全部",
+    watchlistCount: sourceCase.source === "mine" ? 2 : 0,
+  });
+  assert.equal(presentation.emptyState.title, sourceCase.expectedTitle);
+  assert.ok(presentation.emptyState.meta.includes(sourceCase.expectedSource));
+  assert.equal(presentation.latestPrefix, sourceCase.expectedPrefix);
+  if (sourceCase.source !== "strategy") {
+    assert.doesNotMatch(
+      `${presentation.listenerLabel} ${presentation.emptyState.title} ${presentation.emptyState.description} ${presentation.emptyState.meta.join(" ")}`,
+      /Yansir 策略|策略引擎|策略信号/,
+      `${sourceCase.source} zero-result presentation must not claim strategy provenance`,
+    );
+  }
+}
 
 await build({
   entryPoints: ["src/features/radar/RadarWorkspaceChrome.tsx"],

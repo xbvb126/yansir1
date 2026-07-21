@@ -19334,3 +19334,12 @@ button.locked,
     width: 608px;
   }
 }
+
+@media (max-width: 359px) {
+  .radar-tracking-screen .radar-signal-row,
+  .radar-tracking-screen .live-command__row {
+    grid-template-columns: 36px minmax(0, 1fr) 30px 36px 28px minmax(0, 54px);
+    gap: 4px;
+    padding: 9px 8px;
+  }
+}

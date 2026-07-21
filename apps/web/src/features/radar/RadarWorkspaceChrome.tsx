@@ -10,6 +10,7 @@ export type RadarWorkspaceChromeProps = {
   activeSource: RadarSource;
   onSourceChange: (source: RadarSource) => void;
   listenerLabel: string;
+  latestPrefix?: string;
   latestScanLabel: string;
   categoryItems: RadarCategoryItem[];
   activeCategory: string;
@@ -27,6 +28,7 @@ export function RadarWorkspaceChrome({
   activeSource,
   onSourceChange,
   listenerLabel,
+  latestPrefix = "最后扫描",
   latestScanLabel,
   categoryItems,
   activeCategory,
@@ -39,7 +41,7 @@ export function RadarWorkspaceChrome({
         <h1>雷达</h1>
         <div className="radar-workspace-chrome__status" aria-live="polite">
           <strong>{listenerLabel}</strong>
-          <span>最后扫描 {latestScanLabel}</span>
+          <span>{latestPrefix} {latestScanLabel}</span>
         </div>
       </div>
 

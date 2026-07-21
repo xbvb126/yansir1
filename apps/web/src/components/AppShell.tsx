@@ -10,6 +10,7 @@ import { RadarWorkspaceChrome } from "../features/radar/RadarWorkspaceChrome";
 import type { RadarCategoryItem } from "../features/radar/RadarWorkspaceChrome";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
+import { buildRadarSourcePresentation, strategyInboxSignalFacts, strategyScanSignalFacts } from "../features/radar/radarSourcePresentation";
 import { BottomNav, ViewName } from "./BottomNav";
 
 type Direction = "long" | "short" | "flat";
@@ -188,6 +189,8 @@ type RadarTimelineRecord = ScanRecord & {
   score?: number;
   direction?: Direction;
   action?: string | null;
+  timeframe?: string;
+  triggerPrice?: number | string;
   strategyName?: string;
   trigger?: string;
   risk?: string;
@@ -1114,26 +1117,14 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       strategyName: waitingStrategySignal ? "已纳入全市场策略扫描" : record.strategyName ?? record.tags[2] ?? "Yansir 策略",
       trigger: record.trigger ?? record.body,
       generatedAt: new Date(timestamp).toISOString(),
+      timeframe: record.timeframe,
+      triggerPrice: record.triggerPrice,
       price: row?.price,
       change24h: row?.change,
       source,
       payload: record.payload
     }, index);
   }), [filteredSignals, rows, scanBaseTime, trackingSection]);
-  const listeningStatus: StrategyListeningStatus = strategyStatus === "error"
-    ? "degraded"
-    : strategyStatus === "idle" || strategyStatus === "no-signal"
-      ? "paused"
-      : "live";
-  const listenerLabel = strategyStatus === "error"
-    ? "监听异常"
-    : strategyStatus === "scanning"
-      ? "扫描中"
-      : strategyStatus === "ready"
-        ? "数据已更新"
-        : strategyStatus === "no-signal"
-          ? "本轮无信号"
-          : "等待监听";
   const liveFilterLabels: Record<LiveSignalFilter, string> = {
     now: "全部",
     long: "做多",
@@ -1141,6 +1132,9 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     watch: "观察"
   };
   const latestScanLabel = strategyLastScan || formatClockTime(scanBaseTime);
+  const marketLastUpdateLabel = stats.updatedAt
+    ? formatStrategyScanTime(stats.updatedAt)
+    : formatClockTime(scanBaseTime);
   const activeScopeLabel = trackingSection === "strategy"
     ? strategyHistoryMode === "current"
       ? "全市场策略信号"
@@ -1148,20 +1142,23 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     : trackingSection === "mine"
       ? "我的关注信号"
       : "全市场雷达信号";
+  const sourcePresentation = buildRadarSourcePresentation({
+    source: trackingSection,
+    strategyStatus,
+    strategyLastScan: latestScanLabel,
+    marketLastUpdate: marketLastUpdateLabel,
+    scopeLabel: activeScopeLabel,
+    filterLabel: liveFilterLabels[activeLiveFilter],
+    watchlistCount: watchlistSymbols.length
+  });
+  const listeningStatus: StrategyListeningStatus = sourcePresentation.listeningStatus;
+  const listenerLabel = sourcePresentation.listenerLabel;
   const liveEmptyState = {
-    title: strategyStatus === "error" ? "策略信号暂时延迟" : "暂无符合条件的策略信号",
-    description:
-      strategyStatus === "error"
-        ? "正在使用最近一次策略数据，新的信号恢复后会自动更新。"
-        : "策略引擎没有发现满足当前筛选条件的信号，这不是 AI 判断缺席。",
-    meta: [
-      "信号来源：Yansir 策略引擎",
-      `最近扫描：${latestScanLabel}`,
-      `当前范围：${activeScopeLabel}`,
-      `当前筛选：${liveFilterLabels[activeLiveFilter]}`
-    ],
+    title: sourcePresentation.emptyState.title,
+    description: sourcePresentation.emptyState.description,
+    meta: sourcePresentation.emptyState.meta,
     primaryAction: {
-      label: "放宽筛选",
+      label: sourcePresentation.emptyState.primaryActionLabel,
       onClick: () => {
         setActiveLiveFilter("now");
         setActiveRadarCategory("all");
@@ -1170,8 +1167,12 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
       }
     },
     secondaryAction: {
-      label: "查看扫描记录",
-      onClick: () => setTrackingSection("strategy")
+      label: sourcePresentation.emptyState.secondaryActionLabel,
+      onClick: () => {
+        if (trackingSection === "ai") setTrackingSection("mine");
+        else if (trackingSection === "mine") onNavigate("data");
+        else setTrackingSection("strategy");
+      }
     }
   };
 
@@ -1413,7 +1414,8 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         activeSource={trackingSection}
         onSourceChange={setTrackingSection}
         listenerLabel={listenerLabel}
-        latestScanLabel={latestScanLabel}
+        latestPrefix={sourcePresentation.latestPrefix}
+        latestScanLabel={sourcePresentation.latestLabel}
         categoryItems={radarCategoryItems}
         activeCategory={activeRadarCategory}
         onCategoryChange={selectRadarCategory}
@@ -3045,6 +3047,7 @@ function strategyInboxToRecord(signal: StrategyInboxSignal): RadarTimelineRecord
     tone: signal.direction === "short" ? "danger" : "success",
     score: signal.score,
     direction: signal.direction,
+    ...strategyInboxSignalFacts(signal),
     action: signal.action ?? signal.payload?.action ?? null,
     payload: signal.payload,
     strategyName: signal.engine || signal.signalType || "Pine V6",
@@ -3082,6 +3085,7 @@ function strategyScanToRecords(response: { scan: StrategyScanAlertResponse["scan
         tone,
         score,
         direction: signal.side,
+        ...strategyScanSignalFacts(item.result || {}, signal),
         action: signal.action ?? null,
         payload: {
           action: signal.action ?? null,

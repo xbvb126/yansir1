@@ -79,6 +79,27 @@ assert.throws(
 );
 assertNoHorizontalScrolling(".radar-tracking-screen .live-command__queue");
 
+const narrowMediaMatch = css.match(/@media\s*\(max-width:\s*359px\)\s*\{([\s\S]*)\}\s*$/);
+assert.ok(narrowMediaMatch, "radar should define a dedicated 320px-width layout");
+const narrowRowBody = selectorBlock(
+  ".radar-tracking-screen .radar-signal-row",
+  narrowMediaMatch[1],
+);
+const narrowColumns = narrowRowBody.match(/grid-template-columns\s*:\s*([^;]+)/)?.[1]?.trim();
+assert.equal(
+  narrowColumns,
+  "36px minmax(0, 1fr) 30px 36px 28px minmax(0, 54px)",
+  "the 320px row should reserve one shrinkable symbol column and compact fixed facts",
+);
+const narrowGap = Number(narrowRowBody.match(/gap\s*:\s*(\d+)px/)?.[1]);
+const narrowPadding = Number(narrowRowBody.match(/padding\s*:\s*\d+px\s+(\d+)px/)?.[1]);
+const fixedColumnWidth = 36 + 30 + 36 + 28 + 54;
+assert.ok(
+  fixedColumnWidth + narrowGap * 5 + narrowPadding * 2 < 320,
+  "fixed columns, gaps, and padding must leave positive width for the shrinkable symbol column at 320px",
+);
+assertNoHorizontalScrolling(".radar-tracking-screen .live-command__queue");
+
 for (const declaration of [
   "overflow: auto",
   "overflow: scroll",
