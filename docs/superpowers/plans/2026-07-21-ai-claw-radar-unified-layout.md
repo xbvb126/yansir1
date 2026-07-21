@@ -63,8 +63,6 @@ assert.match(
 assert.equal(module.buildAIClawPrompt("signal"), "解读最近的 Yansir 策略信号");
 ```
 
-Also read `AIClawExperience.tsx` as source and assert the required labels `今天想先看什么？`, `信号上下文`, `向 AIClaw 提问`, and `aria-live="polite"`.
-
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `npm.cmd run test:claw-layout -w apps/web`
@@ -101,7 +99,7 @@ export const AI_CLAW_QUICK_ACTIONS = [
 
 Run: `npm.cmd run test:claw-layout -w apps/web`
 
-Expected: prompt assertions PASS; source assertions still FAIL because the component is not yet created.
+Expected: all prompt-module assertions PASS.
 
 - [ ] **Step 5: Commit the prompt contract**
 
