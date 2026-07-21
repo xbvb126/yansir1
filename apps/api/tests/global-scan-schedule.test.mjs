@@ -32,6 +32,14 @@ try {
   assert.equal(at140201.runAt.toISOString(), "2026-07-21T14:05:05.000Z");
   assert.equal(at140201.key, "2026-07-21T14:05:00.000Z");
 
+  const beforeGraceExpires = nextGlobalScanSlot(new Date("2026-07-21T14:00:04.999Z"));
+  assert.equal(beforeGraceExpires.closedAt.toISOString(), "2026-07-21T14:00:00.000Z");
+  assert.equal(beforeGraceExpires.runAt.toISOString(), "2026-07-21T14:00:05.000Z");
+
+  const atGraceExpiry = nextGlobalScanSlot(new Date("2026-07-21T14:00:05.000Z"));
+  assert.equal(atGraceExpiry.closedAt.toISOString(), "2026-07-21T14:05:00.000Z");
+  assert.equal(atGraceExpiry.runAt.toISOString(), "2026-07-21T14:05:05.000Z");
+
   assert.deepEqual(timeframesForClosedSlot(new Date("2026-07-21T14:05:00.000Z")), ["5m"]);
   assert.deepEqual(timeframesForClosedSlot(new Date("2026-07-21T14:15:00.000Z")), ["5m", "15m"]);
   assert.deepEqual(timeframesForClosedSlot(new Date("2026-07-21T14:30:00.000Z")), ["5m", "15m", "30m"]);
