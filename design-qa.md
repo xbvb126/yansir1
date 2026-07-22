@@ -82,6 +82,27 @@ final result: passed
 
 ---
 
+# Unified Page Width QA
+
+- Desktop viewport override: `956 x 918` (`clientWidth=941` with classic scrollbar)
+- Mobile viewport override: `390 x 844` (`clientWidth=375` with classic scrollbar)
+- Routes checked: Data, AIClaw, Radar, Track Record, Account, and K-line Lab
+
+## Measurements
+
+- PASS: standard desktop shells are `430px`; fixed bottom navigation and AIClaw composer are also capped at `430px`.
+- PASS: standard mobile shells and fixed bottom navigation use the available `375px` client width; AIClaw composer remains inset at `358px`.
+- PASS: `scrollWidth` equals `clientWidth` (`375px`) on the mobile routes checked.
+- PASS: Track Record no longer clips its right-side metrics or filter action when a classic scrollbar is present.
+- PASS: K-line Lab remains the wide exception (`956px` at the checked desktop viewport, capped at `1180px`).
+- PASS: visual checks found no incoherent overlap between page content, fixed composer, and bottom navigation.
+
+## Result
+
+final result: passed
+
+---
+
 # Track Record Restoration QA
 
 - Reference: `C:/Users/ADMINI~1/AppData/Local/Temp/codex-clipboard-bd3c099e-5009-4bec-b39d-d6a8f4821369.png`
