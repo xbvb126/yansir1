@@ -19642,3 +19642,23 @@ button.locked,
   width: min(100%, var(--standard-page-width));
   max-width: var(--standard-page-width);
 }
+
+.app-shell.view-login .auth-standalone,
+.app-shell.view-register .auth-standalone {
+  width: 100%;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 28px;
+  padding: 32px 24px;
+}
+
+.view-claw .ai-claw-composer {
+  width: min(var(--standard-page-width), calc(100% - 32px));
+}
+
+@media (min-width: 768px) {
+  .view-claw .ai-claw-composer {
+    width: min(100%, var(--standard-page-width));
+  }
+}
