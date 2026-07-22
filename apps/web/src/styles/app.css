@@ -19596,7 +19596,7 @@ button.locked,
   }
 
   .view-claw .ai-claw-composer {
-    width: min(100vw, var(--standard-page-width));
+    width: min(100%, var(--standard-page-width));
   }
 }
 
@@ -19614,7 +19614,7 @@ button.locked,
 }
 
 .app-shell {
-  width: min(100vw, var(--standard-page-width));
+  width: min(100%, var(--standard-page-width));
   max-width: var(--standard-page-width);
   margin-inline: auto;
 }
@@ -19628,12 +19628,17 @@ button.locked,
 .app-shell.view-plans,
 .app-shell.view-team,
 .app-shell.view-track-record {
-  width: min(100vw, var(--standard-page-width));
+  width: min(100%, var(--standard-page-width));
   max-width: var(--standard-page-width);
   margin-inline: auto;
 }
 
 .app-shell.view-kline-lab {
-  width: min(100vw, 1180px);
+  width: min(100%, 1180px);
   max-width: 1180px;
+}
+
+.bottom-nav {
+  width: min(100%, var(--standard-page-width));
+  max-width: var(--standard-page-width);
 }

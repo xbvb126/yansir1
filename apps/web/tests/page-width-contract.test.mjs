@@ -7,8 +7,10 @@ const appCss = src("src/styles/app.css");
 const trackCss = src("src/styles/track-record.css");
 
 assert.match(appCss, /--standard-page-width:\s*430px/);
-assert.match(appCss, /\.app-shell\s*\{[^}]*width:\s*min\(100vw,\s*var\(--standard-page-width\)\)/s);
-assert.match(appCss, /\.app-shell\.view-kline-lab\s*\{[^}]*width:\s*min\(100vw,\s*1180px\)/s);
+assert.match(appCss, /\.app-shell\s*\{[^}]*width:\s*min\(100%,\s*var\(--standard-page-width\)\)/s);
+assert.match(appCss, /\.app-shell\.view-kline-lab\s*\{[^}]*width:\s*min\(100%,\s*1180px\)/s);
+assert.match(appCss, /\.view-claw \.ai-claw-composer\s*\{[^}]*width:\s*min\(100%,\s*var\(--standard-page-width\)\)/s);
+assert.match(appCss, /\.bottom-nav\s*\{[^}]*width:\s*min\(100%,\s*var\(--standard-page-width\)\)/s);
 assert.doesNotMatch(trackCss, /\.app-shell:has\(\.public-track-record-view\)/);
 assert.match(trackCss, /\.public-track-record-view\s*\{[^}]*width:\s*100%/s);
 
