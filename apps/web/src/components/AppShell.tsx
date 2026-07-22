@@ -3,6 +3,7 @@ import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/a
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { normalizeViewParam } from "../lib/viewRouting";
 import { AIClawExperience } from "../features/claw/AIClawExperience";
+import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
 import { buildAIClawPrompt } from "../features/claw/aiClawPrompts";
 import { KlineLabView } from "../features/klineLab/KlineLabView";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
@@ -762,6 +763,9 @@ export function AppShell() {
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
         <AlertsPage entitlements={entitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+      )}
+      {dataStatus !== "loading" && !showSymbolDetail && view === "track-record" && (
+        <PublicTrackRecordView />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
         <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onClearSignalContext={() => setValueClawSignalContext(null)} onNavigate={navigate} onOpenSymbol={openSymbol} onToast={showToast} />

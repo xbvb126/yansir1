@@ -79,3 +79,26 @@ No browser console errors were observed.
 None required for acceptance.
 
 final result: passed
+
+---
+
+# Track Record Restoration QA
+
+- Reference: `C:/Users/ADMINI~1/AppData/Local/Temp/codex-clipboard-bd3c099e-5009-4bec-b39d-d6a8f4821369.png`
+- Implementation: `http://127.0.0.1:3200/yansir/?view=track-record`
+- Checked viewport: `476 x 918`
+- Checked state: live API, no eligible public samples
+
+## Comparison
+
+- PASS: mobile hierarchy matches the approved screen: history title, trust summary, symbol and direction filters, signal ledger state, methodology disclosure, and five-item bottom navigation.
+- PASS: fourth navigation item is `战绩` with a target icon and active state.
+- PASS: trust summary preserves the approved two-column metric layout while loading and when empty.
+- PASS: controls fit without overlap; buttons meet the existing mobile touch target contract.
+- PASS: direction selection and methodology disclosure are interactive.
+- PASS: no browser console warnings or errors after the API restart.
+- ACCEPTED DATA VARIANCE: the reference contains illustrative historical rows and metrics. The live database currently has zero signals satisfying the public 8-hour delay and 7-day history window, so the implementation shows the truthful empty state rather than fabricated values.
+
+## Result
+
+final result: passed

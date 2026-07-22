@@ -11,6 +11,7 @@ const canonicalViews = new Set<ViewName>([
   "data",
   "claw",
   "radar",
+  "track-record",
   "signal",
   "account",
   "login",

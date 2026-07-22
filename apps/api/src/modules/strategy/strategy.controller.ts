@@ -67,6 +67,11 @@ export class StrategyController {
     return this.strategyService.getPublicDelayedSignals(query);
   }
 
+  @Get("public-performance-summary")
+  getPublicPerformanceSummary() {
+    return this.strategyService.getPublicPerformanceSummary();
+  }
+
   @Get("scan/global/status")
   getGlobalScanStatus() {
     return this.strategyService.getGlobalScanStatus();

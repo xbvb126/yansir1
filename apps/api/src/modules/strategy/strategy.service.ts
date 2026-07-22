@@ -27,6 +27,10 @@ const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 300;
 const MIN_SCHEDULE_INTERVAL_SECONDS = 30;
 const MAX_SCHEDULE_INTERVAL_SECONDS = 86400;
 const DEFAULT_REALTIME_STREAM_URL = "wss://data-stream.binance.vision/stream";
+const PUBLIC_LEDGER_ELIGIBILITY = [
+  "se.direction in ('long', 'short')",
+  "coalesce(se.signal_type, '') <> 'market_observation'"
+] as const;
 const DEFAULT_ALERT_RULE: Required<AlertRuleDto> = {
   symbols: ["BTCUSDT", "ETHUSDT", "XRPUSDT"],
   timeframe: "5m",
@@ -983,7 +987,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    const where = ["se.emitted_at <= now() - interval '8 hours'", "se.emitted_at >= now() - interval '7 days'"];
+    const where = [
+      "se.emitted_at <= now() - interval '8 hours'",
+      "se.emitted_at >= now() - interval '7 days'",
+      ...PUBLIC_LEDGER_ELIGIBILITY
+    ];
     const params: Array<string[] | AlertDirection[] | number | Date> = [];
     if (filters.symbols.length) {
       params.push(filters.symbols);
@@ -1074,6 +1082,41 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       },
       filters: publicSignalFiltersResponse(filters),
       pagination: publicSignalPagination(filters, total)
+    };
+  }
+
+  async getPublicPerformanceSummary() {
+    const empty = {
+      windowDays: 7 as const,
+      generatedAt: new Date().toISOString(),
+      methodologyVersion: "fixed-window-v1",
+      totalSignals: 0,
+      completed24hCount: 0,
+      pending24hCount: 0,
+      directionalHitRate1h: null as number | null,
+      averageDirectionalReturn1h: null as number | null
+    };
+    if (!this.database.enabled) return empty;
+    const [row] = await this.database.query<Record<string, string | null>>(`
+      select
+        count(*)::text as total_signals,
+        count(sp.return_24h)::text as completed_24h_count,
+        (count(*) - count(sp.return_24h))::text as pending_24h_count,
+        avg(case when sp.return_1h is null then null when se.direction = 'short' and sp.return_1h < 0 then 1 when se.direction <> 'short' and sp.return_1h > 0 then 1 else 0 end)::text as directional_hit_rate_1h,
+        avg(case when sp.return_1h is null then null when se.direction = 'short' then -sp.return_1h else sp.return_1h end)::text as average_directional_return_1h
+      from signal_events se
+      left join signal_performance sp on sp.signal_event_id = se.id
+      where se.emitted_at <= now() - interval '8 hours'
+        and se.emitted_at >= now() - interval '7 days'
+        and ${PUBLIC_LEDGER_ELIGIBILITY.join("\n        and ")}
+    `);
+    return {
+      ...empty,
+      totalSignals: Number(row?.total_signals || 0),
+      completed24hCount: Number(row?.completed_24h_count || 0),
+      pending24hCount: Number(row?.pending_24h_count || 0),
+      directionalHitRate1h: nullableNumber(row?.directional_hit_rate_1h),
+      averageDirectionalReturn1h: nullableNumber(row?.average_directional_return_1h)
     };
   }
 
