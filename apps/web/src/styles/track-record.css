@@ -1,14 +1,10 @@
 /* Public Track Record */
 .public-track-record-view {
-  width: min(100% - 24px, 1180px);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   padding: 28px 0 112px;
   color: #12213d;
   font-size: 14px;
-}
-
-.app-shell:has(.public-track-record-view) {
-  width: min(100vw, 1180px);
 }
 
 .public-track-record-view .portal-eyebrow {
@@ -412,7 +408,7 @@
 
 @media (max-width: 720px) {
   .public-track-record-view {
-    width: min(100% - 20px, 1180px);
+    width: 100%;
     padding-top: 18px;
   }
 
