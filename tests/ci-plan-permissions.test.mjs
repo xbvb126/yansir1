@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +16,46 @@ function assertCommandIncludes(command, expectedParts, label) {
 
 function testRootCiScriptRunsAllPlanChecksBeforeDeploy() {
   assertCommandIncludes(
+    packageJson.scripts['test:api:core'],
+    [
+      'test:market-stream',
+      'test:market-symbol-discovery',
+      'test:alerts-delivery',
+      'test:strict-persistence',
+      'test:global-scan-schedule',
+      'test:aligned-global-scanner',
+      'test:strategy-contract',
+      'test:entitlements'
+    ],
+    'test:api:core'
+  );
+  assertCommandIncludes(
+    packageJson.scripts['test:web:core'],
+    [
+      'test:entitlements',
+      'test:kline-confirmation',
+      'test:kline-realtime',
+      'test:kline-strategy-source',
+      'test:radar-live',
+      'test:claw-layout',
+      'test:page-width',
+      'test:track-record',
+      'test:touch-targets',
+      'test:view-routing'
+    ],
+    'test:web:core'
+  );
+  assert.equal(packageJson.scripts['test:strategy'], 'node infra/run-strategy-tests.mjs');
+  assertCommandIncludes(
     packageJson.scripts['test:plans:ci'],
     [
-      'npm run test:entitlements',
-      'npm run test:web:entitlements',
+      'npm run test:ci-service-readiness',
+      'npm run test:api:core',
+      'npm run test:web:core',
+      'npm run test:strategy',
       'npm run build:api',
       'npm run build:web',
-      'npm run test:e2e:plans'
+      'npm run test:e2e:plans:ci'
     ],
     'test:plans:ci'
   );
@@ -43,10 +77,27 @@ function testGithubWorkflowRunsPlanCiScript() {
   const workflowPath = path.join(repoRoot, '.github', 'workflows', 'plan-permissions-ci.yml');
   assert.ok(existsSync(workflowPath), 'plan permission CI workflow should exist');
   const workflow = readFileSync(workflowPath, 'utf8');
-  for (const expected of ['pull_request:', 'push:', 'workflow_dispatch:', 'npm ci', 'npm run test:plans:ci']) {
+  for (const expected of [
+    'pull_request:',
+    'push:',
+    'workflow_dispatch:',
+    'actions/setup-python@v5',
+    'pip install -r services/strategy/requirements.txt',
+    'npm ci',
+    'npm run test:plans:ci'
+  ]) {
     assert.ok(workflow.includes(expected), `workflow should include ${expected}`);
   }
   assert.ok(/branches:\s*\[\s*main\s*\]/.test(workflow) || workflow.includes('- main'), 'workflow should run on main branch pushes');
+}
+
+function testStrategyLauncherUsesUnittestDiscovery() {
+  const result = spawnSync(process.execPath, ['infra/run-strategy-tests.mjs', '--print-command'], {
+    cwd: repoRoot,
+    encoding: 'utf8'
+  });
+  assert.equal(result.status, 0, result.stderr || 'strategy test launcher should print its command');
+  assert.match(result.stdout, /-m unittest discover services\/strategy\/tests -t services\/strategy -v/);
 }
 
 function testCiDocsExplainDeploymentGate() {
@@ -57,5 +108,6 @@ function testCiDocsExplainDeploymentGate() {
 
 testRootCiScriptRunsAllPlanChecksBeforeDeploy();
 testGithubWorkflowRunsPlanCiScript();
+testStrategyLauncherUsesUnittestDiscovery();
 testCiDocsExplainDeploymentGate();
 console.log('CI plan permission wiring tests passed');
