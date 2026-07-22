@@ -276,6 +276,12 @@ function SelectedSignalPanel({
         <span>触发原因</span>
         <p>{signal.trigger}</p>
       </div>
+      {isWaitingStrategySignal(signal) && (
+        <div className="live-command__note">
+          <span>历史关系</span>
+          <p>{formatHistoricalHitSummary(signal)}</p>
+        </div>
+      )}
       <div className="live-command__note">
         <span>{signal.tone === "risk" ? "风险事实" : "策略事实"}</span>
         <p>{signal.tone === "risk" ? signal.risk : `${signal.strategyName} · ${formatStrategyScore(signal)}`}</p>
@@ -314,6 +320,33 @@ function formatTriggerPrice(signal: LiveSignal) {
   const value = signal.triggerPrice;
   if (value === undefined || value === null || value === "") return "--";
   return String(value);
+}
+
+function formatHistoricalHitSummary(signal: LiveSignal) {
+  const count = signal.payload?.historicalHitCount ?? 0;
+  if (!count) {
+    return "这只代表当前自选/筛选下暂未触发新信号；历史命中请切换“全部历史”或按币种筛选查看。";
+  }
+
+  const latestParts = [
+    signal.payload?.latestHistoricalTimeframe,
+    signal.payload?.latestHistoricalDirection === "short"
+      ? "看空"
+      : signal.payload?.latestHistoricalDirection === "long"
+        ? "看多"
+        : "",
+    Number.isFinite(signal.payload?.latestHistoricalScore) ? `${signal.payload?.latestHistoricalScore}分` : "",
+  ].filter(Boolean);
+  const latestAt = formatHistoricalHitTime(signal.payload?.latestHistoricalHitAt);
+  const latestText = latestParts.length ? `，最近一次 ${latestParts.join(" / ")}${latestAt ? ` · ${latestAt}` : ""}` : "";
+  return `该币历史命中过 ${count} 次${latestText}；当前行只表示本轮暂未触发新的 Yansir 策略信号。`;
+}
+
+function formatHistoricalHitTime(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 function formatMarketChange(signal: LiveSignal) {

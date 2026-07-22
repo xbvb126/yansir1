@@ -57,6 +57,11 @@ export class StrategyController {
     return this.strategyService.getUserSignalInbox(authorization || userId, query);
   }
 
+  @Get("signals")
+  getSignals(@Query() query: Record<string, string | string[] | undefined>, @Headers("authorization") authorization?: string, @Headers("x-radar-user-id") userId?: string) {
+    return this.strategyService.getGlobalSignalEvents(authorization || userId, query);
+  }
+
   @Get("public-signals")
   getPublicSignals(@Query() query: Record<string, string | string[] | undefined>) {
     return this.strategyService.getPublicDelayedSignals(query);

@@ -92,6 +92,58 @@ type StrategyDiagnosticBand = {
   direction?: number;
 };
 
+type StrategyOverlayPoint = StrategyDiagnosticBand & {
+  close_time?: number | null;
+  upper_extreme?: number | null;
+  lower_extreme?: number | null;
+  htf_direction?: number;
+};
+
+type StrategyOverlayEvent = {
+  open_time: number;
+  price: number;
+  label: string;
+  kind: string;
+  side?: KlineDirection;
+};
+
+type StrategyOverlayZone = {
+  kind: "support" | "resistance" | string;
+  top?: number | null;
+  bottom?: number | null;
+  strength?: number;
+  touched?: boolean;
+};
+
+type StrategyRiskLine = {
+  kind: "stop" | "take_profit" | string;
+  price: number;
+  side?: KlineDirection;
+  label: string;
+};
+
+type StrategyOverlays = {
+  points?: StrategyOverlayPoint[];
+  events?: StrategyOverlayEvent[];
+  zones?: StrategyOverlayZone[];
+  risk_lines?: StrategyRiskLine[];
+  panel?: Record<string, string>;
+};
+
+type StrategyTimelineSignal = {
+  type?: string;
+  title?: string;
+  engine?: string;
+  side?: KlineDirection | string;
+  action?: string | null;
+  price?: number | string | null;
+  reduce_pct?: number | string | null;
+  stop_price?: number | string | null;
+  take_profit_price?: number | string | null;
+  score_impact?: number | string | null;
+  bar_time?: number | string | null;
+};
+
 type StrategyDiagnostics = {
   market_state_text?: string;
   risk_status?: string;
@@ -112,6 +164,8 @@ type StrategyDiagnostics = {
     strength?: number;
     touched?: boolean;
   };
+  overlays?: StrategyOverlays;
+  signal_timeline?: StrategyTimelineSignal[];
 };
 
 type StrategyRunSignal = {
@@ -127,6 +181,54 @@ type StrategyRunSignal = {
   take_profit_price?: number | null;
   score_impact: number;
 };
+
+type StrategyChartMarker = {
+  id: string;
+  candleIndex: number;
+  price: number;
+  side: KlineDirection;
+  kind: "trade" | "reduce" | "neutral";
+  label: string;
+  detail: string;
+};
+
+type StrategyChartBand = KlineBandPoint & {
+  upperExtreme?: number | null;
+  lowerExtreme?: number | null;
+  direction?: number;
+  htfDirection?: number;
+};
+
+type TradingViewParitySignal = {
+  symbol: string;
+  timeframe: string;
+  bar_time: number;
+  action: string;
+  engine: string;
+  side: string;
+  price?: number | null;
+  reduce_pct?: number | null;
+  stop_price?: number | null;
+  take_profit_price?: number | null;
+};
+
+type TradingViewParityMismatch = {
+  key: string;
+  bar_time: number;
+  field: keyof Pick<TradingViewParitySignal, "price" | "reduce_pct" | "stop_price" | "take_profit_price">;
+  expected: number | null | undefined;
+  actual: number | null | undefined;
+};
+
+type TradingViewParityReport = {
+  ok: boolean;
+  matched: number;
+  missing: TradingViewParitySignal[];
+  extra: TradingViewParitySignal[];
+  mismatches: TradingViewParityMismatch[];
+};
+
+type TradingViewRawRecord = Record<string, unknown>;
 
 type StrategyRunResult = {
   symbol: string;
@@ -165,6 +267,8 @@ type ChartScale = {
 };
 
 const TIMEFRAMES: LabTimeframe[] = ["5m", "15m", "1h", "4h"];
+const STRATEGY_MTF_TIMEFRAME: LabTimeframe = "15m";
+const STRATEGY_HTF_TIMEFRAME: LabTimeframe = "1h";
 const DEFAULT_SYMBOLS = ["BTC", "ETH", "SOL"];
 const KLINE_LIMIT = 180;
 const MIN_STRATEGY_RUN_CANDLES = 35;
@@ -191,6 +295,7 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
   const [strategyRunSignals, setStrategyRunSignals] = useState<StrategyRunSignal[]>([]);
   const [strategyRunState, setStrategyRunState] = useState<LoadState>("idle");
   const [strategyRunError, setStrategyRunError] = useState("");
+  const [strategyRunBarTime, setStrategyRunBarTime] = useState<number | null>(null);
   const [tickerPrice, setTickerPrice] = useState<number | null>(null);
   const [tickerSource, setTickerSource] = useState("");
   const [tickerState, setTickerState] = useState<LoadState>("idle");
@@ -523,6 +628,7 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
       setStrategyDiagnostics(null);
       setStrategyRunSignals([]);
       setStrategyRunError("");
+      setStrategyRunBarTime(null);
       setStrategyRunState("idle");
       return;
     }
@@ -533,26 +639,41 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
     setStrategyRunState("loading");
     setStrategyRunError("");
 
-    apiPost<StrategyRunResponse>("/api/strategy/run", {
-      symbol: `${normalizeLabSymbol(symbol)}USDT`,
-      timeframe,
-      candles: runCandles,
-      limit: runCandles.length,
-      market_data_source: "request"
-    })
-      .then((response) => {
+    async function runStrategy() {
+      try {
+        const [mtfCandles, htfCandles] = await Promise.all([
+          ensureStrategyTimeframeCandles(symbol, STRATEGY_MTF_TIMEFRAME, timeframe, runCandles, klineCacheRef.current),
+          ensureStrategyTimeframeCandles(symbol, STRATEGY_HTF_TIMEFRAME, timeframe, runCandles, klineCacheRef.current)
+        ]);
+        if (!alive || requestId !== strategyRunRequestRef.current) return;
+
+        const response = await apiPost<StrategyRunResponse>("/api/strategy/run", {
+          symbol: `${normalizeLabSymbol(symbol)}USDT`,
+          timeframe,
+          mtf_timeframe: STRATEGY_MTF_TIMEFRAME,
+          htf_timeframe: STRATEGY_HTF_TIMEFRAME,
+          candles: runCandles,
+          mtf_candles: mtfCandles,
+          htf_candles: htfCandles,
+          limit: runCandles.length,
+          market_data_source: "request"
+        });
         if (!alive || requestId !== strategyRunRequestRef.current) return;
         setStrategyDiagnostics(response.result?.diagnostics ?? null);
         setStrategyRunSignals(normalizeStrategyRunSignals(response.result?.signals));
+        setStrategyRunBarTime(parseOptionalNumber(response.result?.bar_time));
         setStrategyRunState("ready");
-      })
-      .catch((error) => {
+      } catch (error) {
         if (!alive || requestId !== strategyRunRequestRef.current) return;
         setStrategyDiagnostics(null);
         setStrategyRunSignals([]);
         setStrategyRunError(error instanceof Error ? error.message : "策略输出读取失败");
+        setStrategyRunBarTime(null);
         setStrategyRunState("error");
-      });
+      }
+    }
+
+    void runStrategy();
 
     return () => {
       alive = false;
@@ -587,7 +708,8 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
   }, [candles, primaryStrategyRunSignal, symbol, timeframe]);
 
   const strategyBands = useMemo(() => {
-    return normalizeStrategyDiagnosticBands(strategyDiagnostics?.bands, candles);
+    return normalizeStrategyOverlayPoints(strategyDiagnostics?.overlays?.points, candles)
+      || normalizeStrategyDiagnosticBands(strategyDiagnostics?.bands, candles);
   }, [strategyDiagnostics, candles]);
 
   const chartBands = strategyBands.length ? strategyBands : candleQualityReference.bands;
@@ -617,7 +739,7 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
           <h1>K线实验室</h1>
         </div>
         <span className={`kline-confirmation-badge state-${strategyRunState}`}>
-          {formatStrategyOutputBadge(strategyRunState, strategyRunSignals, candles.length, canRequestInbox)}
+          {formatStrategyOutputBadge(strategyRunState, strategyRunSignals, strategyDiagnostics, candles.length, canRequestInbox)}
         </span>
       </header>
 
@@ -663,7 +785,15 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
             <span>{candleState === "loading" ? "读取K线中" : `${candles.length} 根K线`}</span>
           </div>
           {candleError && <p className="kline-lab-error">{candleError}</p>}
-          <KlineChart candles={candles} bands={chartBands} />
+          <KlineChart
+            candles={candles}
+            bands={chartBands}
+            strategyOverlays={strategyDiagnostics?.overlays ?? null}
+            strategySignals={strategyRunSignals}
+            strategyDiagnostics={strategyDiagnostics}
+            strategyStatus={strategyRunState}
+            strategyBarTime={strategyRunBarTime}
+          />
         </article>
 
         <StrategyOutputPanel
@@ -679,6 +809,12 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
       <CandleQualityCard candleQuality={candleQualityReference} usingBackendBands={strategyBands.length > 0} />
 
       <StrategySignalPanel signal={selectedSignal} status={signalState} error={signalError} canRequestInbox={canRequestInbox} />
+
+      <TradingViewParityPanel
+        symbol={symbol}
+        timeframe={timeframe}
+        signalTimeline={strategyDiagnostics?.signal_timeline ?? []}
+      />
 
       <section className="kline-mtf-placeholders" aria-label="多周期占位">
         {TIMEFRAMES.map((item) => (
@@ -697,11 +833,39 @@ export function KlineLabView({ currentUser, rows, navigate, showToast }: KlineLa
   );
 }
 
-function KlineChart({ candles, bands }: { candles: KlineCandle[]; bands: KlineBandPoint[] }) {
+function KlineChart({
+  candles,
+  bands,
+  strategyOverlays,
+  strategySignals,
+  strategyDiagnostics,
+  strategyStatus,
+  strategyBarTime
+}: {
+  candles: KlineCandle[];
+  bands: StrategyChartBand[];
+  strategyOverlays: StrategyOverlays | null;
+  strategySignals: StrategyRunSignal[];
+  strategyDiagnostics: StrategyDiagnostics | null;
+  strategyStatus: LoadState;
+  strategyBarTime: number | null;
+}) {
   const visibleCandles = candles.slice(-90);
   const visibleStartIndex = Math.max(0, candles.length - visibleCandles.length);
   const visibleBands = visibleChartBands(bands, visibleStartIndex, visibleCandles.length);
-  const scale = buildScale(visibleCandles, visibleBands);
+  const allStrategyMarkers = buildStrategyMarkers(candles, strategySignals, strategyDiagnostics, strategyStatus, strategyBarTime, strategyOverlays?.events);
+  const visibleStrategyMarkers = visibleChartMarkers(allStrategyMarkers, visibleStartIndex, visibleCandles.length);
+  const riskLines = normalizeStrategyRiskLines(strategyOverlays?.risk_lines);
+  const zones = normalizeStrategyZones(strategyOverlays?.zones);
+  const scale = buildScale(
+    visibleCandles,
+    visibleBands,
+    [
+      ...visibleStrategyMarkers.map((marker) => marker.price),
+      ...riskLines.map((line) => line.price),
+      ...zones.flatMap((zone) => [zone.top, zone.bottom]).filter((value): value is number => value != null)
+    ]
+  );
 
   if (!visibleCandles.length || !scale) {
     return (
@@ -716,14 +880,38 @@ function KlineChart({ candles, bands }: { candles: KlineCandle[]; bands: KlineBa
   const upperPath = buildBandPath(visibleBands, scale, "upper");
   const midPath = buildBandPath(visibleBands, scale, "mid");
   const lowerPath = buildBandPath(visibleBands, scale, "lower");
+  const upperExtremePath = buildOptionalBandPath(visibleBands, scale, "upperExtreme");
+  const lowerExtremePath = buildOptionalBandPath(visibleBands, scale, "lowerExtreme");
+  const cloudPath = buildCloudPath(visibleBands, scale);
 
   return (
-    <svg className="kline-svg" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} role="img" aria-label="K线与趋势带">
+    <svg className="kline-svg" viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`} role="img" aria-label="K线、趋势带与策略标记">
+      {zones.map((zone, index) => {
+        const topY = scale.yAt(Math.max(zone.top, zone.bottom));
+        const bottomY = scale.yAt(Math.min(zone.top, zone.bottom));
+        const y = Math.min(topY, bottomY);
+        const height = Math.max(2, Math.abs(bottomY - topY));
+        const label = zone.kind === "support" ? "支撑区" : "压力区";
+        return (
+          <g key={`${zone.kind}-${zone.top}-${zone.bottom}-${index}`} className={`kline-strategy-zone zone-${zone.kind}`}>
+            <rect x={CHART_PAD.left} y={y} width={CHART_WIDTH - CHART_PAD.left - CHART_PAD.right} height={height} rx="3" />
+            <text x={CHART_WIDTH - CHART_PAD.right - 6} y={Math.max(CHART_PAD.top + 12, y - 4)} textAnchor="end">{label} {zone.strength ? `S${zone.strength}` : ""}</text>
+          </g>
+        );
+      })}
       <line className="kline-axis" x1={CHART_PAD.left} y1={CHART_HEIGHT - CHART_PAD.bottom} x2={CHART_WIDTH - CHART_PAD.right} y2={CHART_HEIGHT - CHART_PAD.bottom} />
       <line className="kline-axis" x1={CHART_PAD.left} y1={CHART_PAD.top} x2={CHART_PAD.left} y2={CHART_HEIGHT - CHART_PAD.bottom} />
+      {cloudPath && <path className="kline-trend-cloud" d={cloudPath} />}
+      {upperExtremePath && <path className="kline-extreme-band kline-extreme-upper" d={upperExtremePath} fill="none" strokeWidth="1.2" />}
+      {lowerExtremePath && <path className="kline-extreme-band kline-extreme-lower" d={lowerExtremePath} fill="none" strokeWidth="1.2" />}
       {upperPath && <path className="kline-band kline-band-upper" d={upperPath} fill="none" stroke="#d69118" strokeWidth="1.5" />}
       {lowerPath && <path className="kline-band kline-band-lower" d={lowerPath} fill="none" stroke="#3a7bd5" strokeWidth="1.5" />}
-      {midPath && <path className="kline-band kline-band-mid" d={midPath} fill="none" stroke="#72767d" strokeWidth="1.5" strokeDasharray="4 4" />}
+      {midPath && (
+        <>
+          <path className="kline-band kline-band-glow" d={midPath} fill="none" strokeWidth="8" />
+          <path className="kline-band kline-band-mid" d={midPath} fill="none" stroke="#72767d" strokeWidth="1.5" strokeDasharray="4 4" />
+        </>
+      )}
       {visibleCandles.map((candle, index) => {
         const x = scale.xAt(index);
         const openY = scale.yAt(candle.open);
@@ -739,6 +927,47 @@ function KlineChart({ candles, bands }: { candles: KlineCandle[]; bands: KlineBa
           <g key={`${candle.open_time}-${index}`} className={`kline-candle ${up ? "up" : "down"}`}>
             <line x1={x} y1={highY} x2={x} y2={lowY} stroke={color} strokeWidth="1.2" />
             <rect x={x - candleWidth / 2} y={bodyY} width={candleWidth} height={bodyHeight} rx="1" fill={up ? "transparent" : color} stroke={color} strokeWidth="1.2" />
+          </g>
+        );
+      })}
+      {riskLines.map((line, index) => {
+        const y = scale.yAt(line.price);
+        return (
+          <g key={`${line.kind}-${line.price}-${index}`} className={`kline-risk-line risk-${line.kind}`}>
+            <line x1={CHART_PAD.left} y1={y} x2={CHART_WIDTH - CHART_PAD.right} y2={y} />
+            <text x={CHART_WIDTH - CHART_PAD.right - 6} y={Math.max(CHART_PAD.top + 12, y - 5)} textAnchor="end">{line.label} {formatPrice(line.price)}</text>
+          </g>
+        );
+      })}
+      {visibleStrategyMarkers.map((marker) => {
+        const x = scale.xAt(marker.candleIndex);
+        const y = scale.yAt(marker.price);
+        const labelAnchor = x > CHART_WIDTH - 100 ? "end" : x < CHART_PAD.left + 64 ? "start" : "middle";
+        const labelX = labelAnchor === "end"
+          ? Math.min(CHART_WIDTH - CHART_PAD.right, x + 28)
+          : labelAnchor === "start"
+            ? Math.max(CHART_PAD.left + 4, x - 28)
+            : x;
+        const labelY = marker.side === "short"
+          ? Math.max(CHART_PAD.top + 14, y - 15)
+          : Math.min(CHART_HEIGHT - CHART_PAD.bottom - 8, y + 22);
+        const trianglePath = marker.side === "short"
+          ? `M ${roundSvg(x)} ${roundSvg(y - 10)} L ${roundSvg(x - 7)} ${roundSvg(y + 2)} L ${roundSvg(x + 7)} ${roundSvg(y + 2)} Z`
+          : `M ${roundSvg(x)} ${roundSvg(y + 10)} L ${roundSvg(x - 7)} ${roundSvg(y - 2)} L ${roundSvg(x + 7)} ${roundSvg(y - 2)} Z`;
+
+        return (
+          <g
+            key={marker.id}
+            className={`kline-strategy-marker marker-${marker.kind} marker-${marker.side}`}
+            aria-label={`${marker.label} ${formatPrice(marker.price)} ${marker.detail}`}
+          >
+            <line className="kline-strategy-marker-line" x1={x} y1={CHART_PAD.top} x2={x} y2={CHART_HEIGHT - CHART_PAD.bottom} />
+            {marker.side === "flat" ? (
+              <circle className="kline-strategy-marker-shape" cx={x} cy={y} r="6" />
+            ) : (
+              <path className="kline-strategy-marker-shape" d={trianglePath} />
+            )}
+            <text x={labelX} y={labelY} textAnchor={labelAnchor}>{marker.label}</text>
           </g>
         );
       })}
@@ -770,7 +999,7 @@ function StrategyOutputPanel({
           <strong>策略输出</strong>
           <span>{formatStrategyRunStatus(status, canRequestStrategy, candleCount)}</span>
         </div>
-        <strong>{signals.length ? `${signals.length} 条` : "--"}</strong>
+        <strong>{signals.length ? `${signals.length} 条信号` : diagnostics ? "0 条信号" : "--"}</strong>
       </div>
       {error ? (
         <p className="kline-lab-error">后端策略输出读取失败：{error}</p>
@@ -813,7 +1042,11 @@ function StrategyOutputPanel({
           ))}
         </ul>
       ) : (
-        <p>暂无后端策略信号；本面板不会用前端K线质量参考生成替代信号。</p>
+        <p>
+          {diagnostics
+            ? "本周期后端策略未触发交易信号；本面板不会用前端K线质量参考生成替代信号。"
+            : "暂无后端策略信号；本面板不会用前端K线质量参考生成替代信号。"}
+        </p>
       )}
     </article>
   );
@@ -890,6 +1123,130 @@ function StrategySignalPanel({ signal, status, error, canRequestInbox }: { signa
   );
 }
 
+function TradingViewParityPanel({
+  symbol,
+  timeframe,
+  signalTimeline
+}: {
+  symbol: string;
+  timeframe: LabTimeframe;
+  signalTimeline: StrategyTimelineSignal[];
+}) {
+  const [draftInput, setDraftInput] = useState("");
+  const [submittedInput, setSubmittedInput] = useState("");
+  const backendSignals = useMemo(
+    () => normalizeStrategyTimelineForParity(signalTimeline, symbol, timeframe),
+    [signalTimeline, symbol, timeframe]
+  );
+  const parityState = useMemo(() => {
+    if (!submittedInput.trim()) return { status: "empty" as const };
+    try {
+      const tradingViewSignals = parseTradingViewParityInput(submittedInput, symbol, timeframe);
+      return {
+        status: "ready" as const,
+        tradingViewSignals,
+        report: compareTradingViewSignals(tradingViewSignals, backendSignals)
+      };
+    } catch (error) {
+      return {
+        status: "error" as const,
+        message: error instanceof Error ? error.message : "TradingView 数据解析失败"
+      };
+    }
+  }, [backendSignals, submittedInput, symbol, timeframe]);
+
+  const parsedCount = parityState.status === "ready" ? parityState.tradingViewSignals.length : 0;
+  const report = parityState.status === "ready" ? parityState.report : null;
+
+  return (
+    <section className="kline-parity-panel" aria-label="TradingView 对账">
+      <div className="kline-panel-head">
+        <div>
+          <strong>TradingView 对账</strong>
+          <span>后端 signal_timeline · {symbol} {timeframe}</span>
+        </div>
+        <strong>{backendSignals.length} 条后端记录</strong>
+      </div>
+      <textarea
+        className="kline-parity-input"
+        value={draftInput}
+        onChange={(event) => setDraftInput(event.target.value)}
+        placeholder="粘贴 TradingView webhook JSON / JSONL / CSV"
+        aria-label="粘贴 TradingView webhook JSON / JSONL / CSV"
+        spellCheck={false}
+      />
+      <div className="kline-parity-actions">
+        <button type="button" onClick={() => setSubmittedInput(draftInput)}>
+          开始对账
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => {
+            setDraftInput("");
+            setSubmittedInput("");
+          }}
+        >
+          清空
+        </button>
+      </div>
+      {parityState.status === "error" && <p className="kline-lab-error">{parityState.message}</p>}
+      {parityState.status === "empty" && (
+        <p>当前后端时间线 {backendSignals.length} 条；粘贴 TradingView webhook JSON / JSONL / CSV 后开始核对。</p>
+      )}
+      {report && (
+        <>
+          <ul className="kline-parity-summary" aria-label="TradingView 对账结果">
+            <li>
+              <span>匹配</span>
+              <strong>{report.matched}</strong>
+            </li>
+            <li>
+              <span>缺失</span>
+              <strong>{report.missing.length}</strong>
+            </li>
+            <li>
+              <span>额外</span>
+              <strong>{report.extra.length}</strong>
+            </li>
+            <li>
+              <span>字段不一致</span>
+              <strong>{report.mismatches.length}</strong>
+            </li>
+          </ul>
+          <p className={report.ok ? "kline-parity-pass" : "kline-parity-warn"}>
+            {report.ok
+              ? `对账通过：${parsedCount} 条 TradingView 记录与后端时间线一致。`
+              : `对账未通过：TradingView ${parsedCount} 条，后端 ${backendSignals.length} 条。`}
+          </p>
+          {!report.ok && (
+            <ul className="kline-parity-diff-list">
+              {report.missing.slice(0, 6).map((item) => (
+                <li key={`missing-${paritySignalKey(item)}`}>
+                  <strong>缺失</strong>
+                  <span>{formatParitySignal(item)}</span>
+                </li>
+              ))}
+              {report.extra.slice(0, 6).map((item) => (
+                <li key={`extra-${paritySignalKey(item)}`}>
+                  <strong>额外</strong>
+                  <span>{formatParitySignal(item)}</span>
+                </li>
+              ))}
+              {report.mismatches.slice(0, 6).map((item) => (
+                <li key={`mismatch-${item.key}-${item.field}`}>
+                  <strong>字段不一致</strong>
+                  <span>{formatParityMismatch(item)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function readInitialSymbol() {
   if (typeof window === "undefined") return "BTC";
   return normalizeLabSymbol(new URLSearchParams(window.location.search).get("symbol"));
@@ -902,6 +1259,37 @@ function readInitialTimeframe(): LabTimeframe {
 
 function klineCacheKey(symbol: string, timeframe: LabTimeframe) {
   return `${normalizeLabSymbol(symbol)}:${timeframe}`;
+}
+
+async function ensureStrategyTimeframeCandles(
+  symbol: string,
+  strategyTimeframe: LabTimeframe,
+  activeTimeframe: LabTimeframe,
+  activeCandles: KlineCandle[],
+  cache: Map<string, KlineCacheEntry>
+) {
+  if (strategyTimeframe === activeTimeframe) {
+    return activeCandles.slice(-KLINE_LIMIT);
+  }
+
+  const key = klineCacheKey(symbol, strategyTimeframe);
+  const cached = cache.get(key)?.candles;
+  if (cached?.length) {
+    return cached.slice(-KLINE_LIMIT);
+  }
+
+  const response = await apiGet<MarketKlinesResponse>(`/api/market/klines?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(strategyTimeframe)}&limit=${KLINE_LIMIT}`);
+  const candles = normalizeCandles(response.candles || []).slice(-KLINE_LIMIT);
+  if (!candles.length) {
+    throw new Error(`${strategyTimeframe} K线读取失败`);
+  }
+
+  cache.set(key, {
+    candles,
+    source: response.source || "",
+    fetchedAt: Date.now()
+  });
+  return candles;
 }
 
 function formatRefreshAge(timestamp: number) {
@@ -957,12 +1345,55 @@ function normalizeStrategyRunSignals(signals: StrategyRunResult["signals"] | und
   return normalized;
 }
 
-function normalizeStrategyDiagnosticBands(bands: StrategyDiagnosticBand[] | undefined, candles: KlineCandle[]): KlineBandPoint[] {
+function normalizeStrategyOverlayPoints(points: StrategyOverlayPoint[] | undefined, candles: KlineCandle[]): StrategyChartBand[] | null {
+  if (!points?.length || !candles.length) return null;
+
+  const candleByOpenTime = new Map(candles.map((candle, index) => [candle.open_time, { candle, index }]));
+  const fallbackStart = Math.max(0, candles.length - points.length);
+  const normalized: StrategyChartBand[] = [];
+
+  points.forEach((point, index) => {
+    const openTime = parseOptionalNumber(point.open_time);
+    const fallbackIndex = Math.min(candles.length - 1, fallbackStart + index);
+    const fallbackCandle = candles[fallbackIndex] ?? candles[index];
+    const match = openTime == null ? null : candleByOpenTime.get(openTime);
+    const candle = match?.candle ?? fallbackCandle;
+    const candleIndex = match?.index ?? fallbackIndex;
+    if (!candle) return;
+
+    const mid = parseOptionalNumber(point.avg) ?? candle.close;
+    const upper = parseOptionalNumber(point.upper) ?? mid;
+    const lower = parseOptionalNumber(point.lower) ?? mid;
+    const upperExtreme = parseOptionalNumber(point.upper_extreme);
+    const lowerExtreme = parseOptionalNumber(point.lower_extreme);
+
+    normalized.push({
+      time: openTime ?? candle.open_time,
+      open_time: openTime ?? candle.open_time,
+      close_time: candle.close_time,
+      close: candle.close,
+      mid,
+      basis: mid,
+      upper,
+      lower,
+      atr: Math.max(Math.abs(upper - lower) / 2, candle.high - candle.low, 0),
+      candleIndex,
+      upperExtreme,
+      lowerExtreme,
+      direction: Math.trunc(parseOptionalNumber(point.direction) ?? 0),
+      htfDirection: Math.trunc(parseOptionalNumber(point.htf_direction) ?? 0)
+    });
+  });
+
+  return normalized.length ? normalized : null;
+}
+
+function normalizeStrategyDiagnosticBands(bands: StrategyDiagnosticBand[] | undefined, candles: KlineCandle[]): StrategyChartBand[] {
   if (!bands?.length || !candles.length) return [];
 
   const candleByOpenTime = new Map(candles.map((candle, index) => [candle.open_time, { candle, index }]));
   const fallbackStart = Math.max(0, candles.length - bands.length);
-  const points: KlineBandPoint[] = [];
+  const points: StrategyChartBand[] = [];
 
   bands.forEach((band, index) => {
     const openTime = parseOptionalNumber(band.open_time);
@@ -1002,6 +1433,173 @@ function normalizeStrategyDiagnosticBands(bands: StrategyDiagnosticBand[] | unde
 function normalizeStrategySide(side: KlineDirection | undefined): KlineDirection {
   if (side === "long" || side === "short") return side;
   return "flat";
+}
+
+function buildStrategyMarkers(
+  candles: KlineCandle[],
+  signals: StrategyRunSignal[],
+  diagnostics: StrategyDiagnostics | null,
+  status: LoadState,
+  strategyBarTime: number | null,
+  overlayEvents: StrategyOverlayEvent[] | undefined
+): StrategyChartMarker[] {
+  if (!candles.length || status !== "ready") return [];
+
+  const eventMarkers = normalizeStrategyOverlayEvents(candles, overlayEvents);
+  const candleIndex = resolveStrategyMarkerCandleIndex(candles, strategyBarTime);
+  const markerCandle = candles[candleIndex] ?? candles[candles.length - 1];
+  const validSignals = signals.filter((signal) => Number.isFinite(signal.price));
+
+  const markers = [...eventMarkers];
+
+  if (validSignals.length) {
+    markers.push(...validSignals.map((signal, index) => {
+      const reduce = isReduceAction(signal.action);
+      const side = normalizeStrategySide(signal.side);
+      const kind: StrategyChartMarker["kind"] = reduce ? "reduce" : actionable(side) ? "trade" : "neutral";
+      return {
+        id: `strategy-${signal.type || "signal"}-${signal.action || side}-${index}`,
+        candleIndex,
+        price: signal.price,
+        side,
+        kind,
+        label: formatStrategyMarkerLabel(signal),
+        detail: `${formatStrategyEngine(signal.engine)} · ${formatStrategyAction(signal.action)}`
+      };
+    }));
+    return dedupeStrategyMarkers(markers);
+  }
+
+  if (!diagnostics || !markerCandle) return dedupeStrategyMarkers(markers);
+
+  markers.push({
+    id: "strategy-diagnostic-no-trade",
+    candleIndex,
+    price: markerCandle.close,
+    side: "flat",
+    kind: "neutral",
+    label: "无交易信号",
+    detail: diagnostics.market_state_text ? `策略诊断 · ${diagnostics.market_state_text}` : "策略诊断已完成"
+  });
+  return dedupeStrategyMarkers(markers);
+}
+
+function normalizeStrategyOverlayEvents(candles: KlineCandle[], events: StrategyOverlayEvent[] | undefined): StrategyChartMarker[] {
+  if (!events?.length) return [];
+  const markers: StrategyChartMarker[] = [];
+
+  events.forEach((event, index) => {
+    const openTime = parseOptionalNumber(event.open_time);
+    const price = parseOptionalNumber(event.price);
+    const label = String(event.label || "").trim();
+    if (openTime == null || price == null || !label) return;
+
+    const candleIndex = resolveStrategyMarkerCandleIndex(candles, openTime);
+    const side = normalizeStrategySide(event.side);
+    const kind: StrategyChartMarker["kind"] = event.kind === "reduce"
+      ? "reduce"
+      : event.kind?.startsWith("sr_") ? "neutral" : actionable(side) ? "trade" : "neutral";
+    markers.push({
+      id: `overlay-${event.kind || "event"}-${openTime}-${index}`,
+      candleIndex,
+      price,
+      side,
+      kind,
+      label,
+      detail: event.kind || "strategy overlay"
+    });
+  });
+
+  return markers;
+}
+
+function dedupeStrategyMarkers(markers: StrategyChartMarker[]) {
+  const seen = new Set<string>();
+  return markers.filter((marker) => {
+    const key = `${marker.candleIndex}:${marker.price}:${marker.label}:${marker.kind}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function resolveStrategyMarkerCandleIndex(candles: KlineCandle[], strategyBarTime: number | null) {
+  if (!candles.length) return 0;
+  if (strategyBarTime == null || !Number.isFinite(strategyBarTime)) return candles.length - 1;
+
+  const exactIndex = candles.findIndex((candle) => {
+    const closeTime = candle.close_time ?? candle.open_time;
+    return strategyBarTime >= candle.open_time && strategyBarTime <= closeTime;
+  });
+  if (exactIndex >= 0) return exactIndex;
+
+  let bestIndex = candles.length - 1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  candles.forEach((candle, index) => {
+    const distance = Math.min(
+      Math.abs(candle.open_time - strategyBarTime),
+      Math.abs((candle.close_time ?? candle.open_time) - strategyBarTime)
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function visibleChartMarkers(markers: StrategyChartMarker[], visibleStartIndex: number, visibleCount: number) {
+  const visibleEndIndex = visibleStartIndex + visibleCount;
+  return markers
+    .filter((marker) => marker.candleIndex >= visibleStartIndex && marker.candleIndex < visibleEndIndex)
+    .map((marker) => ({ ...marker, candleIndex: marker.candleIndex - visibleStartIndex }));
+}
+
+function normalizeStrategyZones(zones: StrategyOverlayZone[] | undefined) {
+  const normalized: Array<StrategyOverlayZone & { top: number; bottom: number }> = [];
+  for (const zone of zones ?? []) {
+    const top = parseOptionalNumber(zone.top);
+    const bottom = parseOptionalNumber(zone.bottom);
+    if (top == null || bottom == null) continue;
+    normalized.push({
+      ...zone,
+      kind: zone.kind || "zone",
+      top,
+      bottom,
+      strength: Math.trunc(parseOptionalNumber(zone.strength) ?? 0),
+      touched: Boolean(zone.touched)
+    });
+  }
+  return normalized;
+}
+
+function normalizeStrategyRiskLines(lines: StrategyRiskLine[] | undefined) {
+  const normalized: StrategyRiskLine[] = [];
+  for (const line of lines ?? []) {
+    const price = parseOptionalNumber(line.price);
+    if (price == null) continue;
+    normalized.push({
+      ...line,
+      kind: line.kind || "risk",
+      price,
+      side: normalizeStrategySide(line.side),
+      label: line.label || (line.kind === "take_profit" ? "止盈" : "止损")
+    });
+  }
+  return normalized;
+}
+
+function isReduceAction(action: string | null | undefined) {
+  return /\breduce\b/i.test(String(action ?? ""));
+}
+
+function formatStrategyMarkerLabel(signal: StrategyRunSignal) {
+  const action = String(signal.action ?? "").toLowerCase();
+  if (action.includes("reduce_long")) return "减多";
+  if (action.includes("reduce_short")) return "减空";
+  if (signal.side === "long") return "做多";
+  if (signal.side === "short") return "做空";
+  return "策略";
 }
 
 function selectLatestSignal(symbol: string, timeframe: LabTimeframe, inbox: StrategyInboxSignal[]): SelectedSignal | null {
@@ -1066,12 +1664,345 @@ function parseOptionalNumber(value: unknown) {
   return parseNumber(value);
 }
 
-function buildScale(candles: KlineCandle[], bands: KlineBandPoint[]): ChartScale | null {
+function parseTradingViewParityInput(input: string, symbol: string, timeframe: LabTimeframe): TradingViewParitySignal[] {
+  const records = parseTradingViewRawRecords(input);
+  if (!records.length) throw new Error("未识别 TradingView 对账数据");
+  return records.map((record, index) => normalizeTradingViewParityRecord(record, symbol, timeframe, index));
+}
+
+function compareTradingViewSignals(
+  tradingViewSignals: TradingViewParitySignal[],
+  backendSignals: TradingViewParitySignal[]
+): TradingViewParityReport {
+  const backendByKey = new Map(backendSignals.map((signal) => [paritySignalKey(signal), signal]));
+  const tradingViewByKey = new Map(tradingViewSignals.map((signal) => [paritySignalKey(signal), signal]));
+  const missing: TradingViewParitySignal[] = [];
+  const extra: TradingViewParitySignal[] = [];
+  const mismatches: TradingViewParityMismatch[] = [];
+  let matched = 0;
+
+  for (const tradingViewSignal of tradingViewSignals) {
+    const key = paritySignalKey(tradingViewSignal);
+    const backendSignal = backendByKey.get(key);
+    if (!backendSignal) {
+      missing.push(tradingViewSignal);
+      continue;
+    }
+    matched += 1;
+
+    const fields: TradingViewParityMismatch["field"][] = ["reduce_pct", "stop_price", "take_profit_price"];
+    if (tradingViewSignal.price != null) fields.unshift("price");
+    for (const field of fields) {
+      const expected = tradingViewSignal[field];
+      const actual = backendSignal[field];
+      if (parityValuesMatch(expected, actual)) continue;
+      mismatches.push({ key, bar_time: tradingViewSignal.bar_time, field, expected, actual });
+    }
+  }
+
+  for (const backendSignal of backendSignals) {
+    if (!tradingViewByKey.has(paritySignalKey(backendSignal))) {
+      extra.push(backendSignal);
+    }
+  }
+
+  return {
+    ok: !missing.length && !extra.length && !mismatches.length,
+    matched,
+    missing,
+    extra,
+    mismatches
+  };
+}
+
+function normalizeStrategyTimelineForParity(
+  timeline: StrategyTimelineSignal[],
+  symbol: string,
+  timeframe: LabTimeframe
+): TradingViewParitySignal[] {
+  const normalized: TradingViewParitySignal[] = [];
+
+  for (const signal of timeline) {
+    const barTime = parseParityTimestamp(signal.bar_time);
+    const action = normalizeParityKeyText(signal.action);
+    const engine = normalizeParityKeyText(signal.engine);
+    const side = normalizeParitySide(signal.side);
+    if (barTime == null || !action || !engine || !side) continue;
+    normalized.push({
+      symbol: normalizeParitySymbol(null, symbol),
+      timeframe: normalizeParityTimeframe(null, timeframe),
+      bar_time: barTime,
+      action,
+      engine,
+      side,
+      price: parseOptionalNumber(signal.price),
+      reduce_pct: parseOptionalNumber(signal.reduce_pct),
+      stop_price: parseOptionalNumber(signal.stop_price),
+      take_profit_price: parseOptionalNumber(signal.take_profit_price)
+    });
+  }
+
+  return normalized;
+}
+
+function parseTradingViewRawRecords(input: string): TradingViewRawRecord[] {
+  const source = input.trim();
+  if (!source) return [];
+
+  const json = tryParseJson(source);
+  if (json.ok) return flattenTradingViewRecords(json.value);
+
+  const lines = source.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const jsonLineRecords: TradingViewRawRecord[] = [];
+  let parsedAllLines = lines.length > 0;
+  for (const line of lines) {
+    const lineJson = tryParseJson(line);
+    if (!lineJson.ok) {
+      parsedAllLines = false;
+      break;
+    }
+    jsonLineRecords.push(...flattenTradingViewRecords(lineJson.value));
+  }
+  if (parsedAllLines && jsonLineRecords.length) return jsonLineRecords;
+
+  return parseTradingViewCsv(source);
+}
+
+function parseTradingViewCsv(input: string): TradingViewRawRecord[] {
+  const rows = input.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (rows.length < 2) throw new Error("未识别 TradingView 对账数据，请粘贴 JSON、JSONL 或 CSV");
+
+  const headers = parseCsvLine(rows[0]).map((header) => header.trim());
+  if (!headers.length) throw new Error("CSV 缺少表头");
+
+  return rows.slice(1).map((row) => {
+    const values = parseCsvLine(row);
+    return headers.reduce<TradingViewRawRecord>((record, header, index) => {
+      record[header || `field_${index}`] = values[index] ?? "";
+      return record;
+    }, {});
+  });
+}
+
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === "\"" && quoted && next === "\"") {
+      cell += "\"";
+      index += 1;
+      continue;
+    }
+    if (char === "\"") {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      cells.push(cell);
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+
+  cells.push(cell);
+  return cells;
+}
+
+function tryParseJson(value: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(value) as unknown };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function flattenTradingViewRecords(value: unknown): TradingViewRawRecord[] {
+  if (Array.isArray(value)) return value.flatMap((item) => flattenTradingViewRecords(item));
+  if (!isRecord(value)) return [];
+  for (const key of ["alerts", "records", "data", "rows"]) {
+    const nested = readRecordField(value, [key]);
+    if (Array.isArray(nested)) return flattenTradingViewRecords(nested);
+  }
+  return [value];
+}
+
+function normalizeTradingViewParityRecord(
+  record: TradingViewRawRecord,
+  symbol: string,
+  timeframe: LabTimeframe,
+  index: number
+): TradingViewParitySignal {
+  const payload = unwrapTradingViewParityPayload(record);
+  const barTime = parseParityTimestamp(readRecordField(payload, ["bar_time", "time", "timestamp", "open_time"]));
+  const action = normalizeParityKeyText(readRecordField(payload, ["action", "order_action"]));
+  const engine = normalizeParityKeyText(readRecordField(payload, ["engine", "signal_engine"]));
+  const side = normalizeParitySide(readRecordField(payload, ["side", "direction", "position_side"]));
+  if (barTime == null) throw new Error(`第 ${index + 1} 条缺少 bar_time`);
+  if (!action) throw new Error(`第 ${index + 1} 条缺少 action`);
+  if (!engine) throw new Error(`第 ${index + 1} 条缺少 engine`);
+  if (!side) throw new Error(`第 ${index + 1} 条缺少 side`);
+
+  return {
+    symbol: normalizeParitySymbol(readRecordField(payload, ["symbol", "ticker", "syminfo.ticker"]), symbol),
+    timeframe: normalizeParityTimeframe(readRecordField(payload, ["timeframe", "tf", "interval", "resolution", "period"]), timeframe),
+    bar_time: barTime,
+    action,
+    engine,
+    side,
+    price: parseOptionalNumber(readRecordField(payload, ["price", "order_price", "close"])),
+    reduce_pct: parseOptionalNumber(readRecordField(payload, ["reduce_pct", "reducePct", "qty_percent"])),
+    stop_price: parseOptionalNumber(readRecordField(payload, ["stop_price", "stop", "stop_loss"])),
+    take_profit_price: parseOptionalNumber(readRecordField(payload, ["take_profit_price", "take_profit", "limit"]))
+  };
+}
+
+function unwrapTradingViewParityPayload(record: TradingViewRawRecord): TradingViewRawRecord {
+  for (const key of ["message", "alert_message", "payload", "body"]) {
+    const value = readRecordField(record, [key]);
+    if (typeof value === "string" && value.trim().startsWith("{")) {
+      const parsed = tryParseJson(value.trim());
+      if (parsed.ok && isRecord(parsed.value)) return parsed.value;
+    }
+    if (isRecord(value)) return value;
+  }
+  return record;
+}
+
+function readRecordField(record: TradingViewRawRecord, keys: string[]) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) return record[key];
+  }
+
+  const normalizedKeys = new Set(keys.map(normalizeRecordKey));
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedKeys.has(normalizeRecordKey(key))) return value;
+  }
+  return undefined;
+}
+
+function normalizeRecordKey(value: string) {
+  return value.toLowerCase().replace(/[\s._-]+/gu, "");
+}
+
+function isRecord(value: unknown): value is TradingViewRawRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseParityTimestamp(value: unknown) {
+  const numeric = parseOptionalNumber(value);
+  if (numeric != null) {
+    const raw = Math.trunc(numeric);
+    return raw > 1_000_000_000 && raw < 1_000_000_000_000 ? raw * 1000 : raw;
+  }
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeParitySymbol(value: unknown, fallback: string) {
+  const fallbackSymbol = normalizeLabSymbol(fallback);
+  let clean = `${value ?? ""}`.trim().toUpperCase();
+  if (!clean) return fallbackSymbol;
+  clean = clean.split(":").pop() ?? clean;
+  clean = clean.replace(/\.P$/u, "");
+  if (clean === fallbackSymbol) return fallbackSymbol;
+  for (const suffix of ["USDT", "USD", "USDC", "PERP"]) {
+    if (clean === `${fallbackSymbol}${suffix}`) return fallbackSymbol;
+  }
+  return clean;
+}
+
+function normalizeParityTimeframe(value: unknown, fallback: LabTimeframe) {
+  const fallbackTimeframe = normalizeLabTimeframe(fallback);
+  const clean = `${value ?? ""}`.trim().toLowerCase();
+  if (!clean) return fallbackTimeframe;
+  if (/^\d+$/u.test(clean)) {
+    const minutes = Number(clean);
+    if (minutes < 60) return `${minutes}m`;
+    if (minutes % 60 === 0) return `${minutes / 60}h`;
+  }
+  if (clean.endsWith("min")) return `${clean.replace(/min$/u, "")}m`;
+  if (clean === "d") return "1d";
+  return clean;
+}
+
+function normalizeParityKeyText(value: unknown) {
+  return `${value ?? ""}`.trim().toLowerCase();
+}
+
+function normalizeParitySide(value: unknown) {
+  const clean = normalizeParityKeyText(value);
+  if (clean === "buy" || clean === "多" || clean === "做多") return "long";
+  if (clean === "sell" || clean === "空" || clean === "做空") return "short";
+  if (clean === "flat" || clean === "neutral" || clean === "观望") return "flat";
+  return clean;
+}
+
+function paritySignalKey(signal: TradingViewParitySignal) {
+  return [
+    signal.symbol,
+    signal.timeframe,
+    signal.bar_time,
+    signal.action,
+    signal.engine,
+    signal.side
+  ].join("|");
+}
+
+function parityValuesMatch(expected: number | null | undefined, actual: number | null | undefined) {
+  if (expected == null && actual == null) return true;
+  if (expected == null || actual == null) return false;
+  return Math.abs(expected - actual) <= 1e-6 * Math.max(1, Math.abs(expected), Math.abs(actual));
+}
+
+function formatParitySignal(signal: TradingViewParitySignal) {
+  return `${signal.symbol} ${signal.timeframe} · ${formatParityTime(signal.bar_time)} · ${signal.action}/${signal.engine}/${formatParitySide(signal.side)}`;
+}
+
+function formatParityMismatch(mismatch: TradingViewParityMismatch) {
+  return `${formatParityTime(mismatch.bar_time)} · ${formatParityField(mismatch.field)} TradingView ${formatParityValue(mismatch.expected)} / 后端 ${formatParityValue(mismatch.actual)}`;
+}
+
+function formatParityField(field: TradingViewParityMismatch["field"]) {
+  if (field === "reduce_pct") return "减仓比例";
+  if (field === "stop_price") return "止损";
+  if (field === "take_profit_price") return "止盈";
+  return "价格";
+}
+
+function formatParitySide(side: string) {
+  if (side === "long") return "做多";
+  if (side === "short") return "做空";
+  return side || "--";
+}
+
+function formatParityValue(value: number | null | undefined) {
+  return value == null ? "--" : value.toLocaleString("zh-CN", { maximumFractionDigits: 8 });
+}
+
+function formatParityTime(value: number) {
+  if (!Number.isFinite(value)) return "--";
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function buildScale(candles: KlineCandle[], bands: StrategyChartBand[], markerPrices: number[] = []): ChartScale | null {
   if (!candles.length) return null;
   const values = [
     ...candles.flatMap((candle) => [candle.high, candle.low, candle.open, candle.close]),
-    ...bands.flatMap((point) => [point.upper, point.mid, point.lower])
-  ].filter(Number.isFinite);
+    ...bands.flatMap((point) => [point.upper, point.mid, point.lower, point.upperExtreme, point.lowerExtreme]),
+    ...markerPrices
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   if (!values.length) return null;
 
   const rawMin = Math.min(...values);
@@ -1091,7 +2022,7 @@ function buildScale(candles: KlineCandle[], bands: KlineBandPoint[]): ChartScale
   };
 }
 
-function visibleChartBands(bands: KlineBandPoint[], visibleStartIndex: number, visibleCount: number) {
+function visibleChartBands(bands: StrategyChartBand[], visibleStartIndex: number, visibleCount: number) {
   const visibleEndIndex = visibleStartIndex + visibleCount;
   const hasExplicitIndex = bands.some((point) => typeof point.candleIndex === "number");
   if (!hasExplicitIndex) return bands.slice(-visibleCount);
@@ -1107,23 +2038,52 @@ function visibleChartBands(bands: KlineBandPoint[], visibleStartIndex: number, v
     }));
 }
 
-function buildBandPath(bands: KlineBandPoint[], scale: ChartScale, key: "upper" | "mid" | "lower") {
+function buildBandPath(bands: StrategyChartBand[], scale: ChartScale, key: "upper" | "mid" | "lower") {
   const points = bands
-    .map((point, index) => ({ x: scale.xAt(point.candleIndex ?? index), y: scale.yAt(point[key]) }))
-    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    .map((point, index) => {
+      const value = point[key];
+      return value == null ? null : { x: scale.xAt(point.candleIndex ?? index), y: scale.yAt(value) };
+    })
+    .filter((point): point is { x: number; y: number } => point != null && Number.isFinite(point.x) && Number.isFinite(point.y));
   return points.map((point, index) => `${index ? "L" : "M"} ${roundSvg(point.x)} ${roundSvg(point.y)}`).join(" ");
+}
+
+function buildOptionalBandPath(bands: StrategyChartBand[], scale: ChartScale, key: "upperExtreme" | "lowerExtreme") {
+  const points = bands
+    .map((point, index) => {
+      const value = point[key];
+      return value == null ? null : { x: scale.xAt(point.candleIndex ?? index), y: scale.yAt(value) };
+    })
+    .filter((point): point is { x: number; y: number } => point != null && Number.isFinite(point.x) && Number.isFinite(point.y));
+  return points.map((point, index) => `${index ? "L" : "M"} ${roundSvg(point.x)} ${roundSvg(point.y)}`).join(" ");
+}
+
+function buildCloudPath(bands: StrategyChartBand[], scale: ChartScale) {
+  const upper = bands
+    .map((point, index) => point.upper == null ? null : { x: scale.xAt(point.candleIndex ?? index), y: scale.yAt(point.upper) })
+    .filter((point): point is { x: number; y: number } => point != null && Number.isFinite(point.x) && Number.isFinite(point.y));
+  const lower = bands
+    .map((point, index) => point.lower == null ? null : { x: scale.xAt(point.candleIndex ?? index), y: scale.yAt(point.lower) })
+    .filter((point): point is { x: number; y: number } => point != null && Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (!upper.length || upper.length !== lower.length) return "";
+  return [
+    ...upper.map((point, index) => `${index ? "L" : "M"} ${roundSvg(point.x)} ${roundSvg(point.y)}`),
+    ...lower.reverse().map((point) => `L ${roundSvg(point.x)} ${roundSvg(point.y)}`),
+    "Z"
+  ].join(" ");
 }
 
 function roundSvg(value: number) {
   return Math.round(value * 10) / 10;
 }
 
-function formatStrategyOutputBadge(state: LoadState, signals: StrategyRunSignal[], candleCount: number, canRequestStrategy: boolean) {
+function formatStrategyOutputBadge(state: LoadState, signals: StrategyRunSignal[], diagnostics: StrategyDiagnostics | null, candleCount: number, canRequestStrategy: boolean) {
   if (!canRequestStrategy) return "仅管理员可见";
   if (candleCount < MIN_STRATEGY_RUN_CANDLES) return "等待K线";
   if (state === "loading") return "策略运行中";
   if (state === "error") return "策略输出失败";
   if (signals.length) return `策略输出 ${signals.length} 条`;
+  if (diagnostics) return "后端已完成诊断";
   return "暂无策略输出";
 }
 
@@ -1141,7 +2101,8 @@ function formatStrategyDiagnosticsSummary(diagnostics: StrategyDiagnostics | nul
   const marketState = diagnostics?.market_state_text || "无市场状态";
   const riskStatus = diagnostics?.risk_status ? `，风险 ${diagnostics.risk_status}` : "";
   const activeEngine = diagnostics?.active_engine || signals[0]?.engine;
-  return `后端策略诊断：${marketState}${riskStatus}${activeEngine ? `，引擎 ${formatStrategyEngine(activeEngine)}` : ""}。`;
+  const signalStatus = signals.length ? `输出 ${signals.length} 条交易信号` : "本周期无交易信号";
+  return `后端策略诊断已返回：${marketState}${riskStatus}${activeEngine ? `，引擎 ${formatStrategyEngine(activeEngine)}` : ""}；${signalStatus}。`;
 }
 
 function formatStrategyRunSignalTitle(signal: StrategyRunSignal) {

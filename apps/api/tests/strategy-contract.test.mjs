@@ -36,7 +36,12 @@ execFileSync(esbuildCommand, [
   `--outfile=${outFile}`
 ], { cwd: apiRoot, stdio: "inherit" });
 
-const { StrategyService } = await import(pathToFileURL(outFile));
+const {
+  StrategyService,
+  buildRealtimeStreamUrl,
+  normalizeRealtimeSymbols,
+  resolveRuntimeWebSocketCtor
+} = await import(pathToFileURL(outFile));
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
 const USER_TWO_ID = "00000000-0000-0000-0000-000000000002";
@@ -504,7 +509,7 @@ async function testGlobalScanRunsTheFullMarketWithBoundedPartialFailure() {
     assert.equal(result.matchedSignals, 2);
     assert.equal(result.failedSymbols, 1);
     assert.equal(result.errors.length, 2);
-    assert.ok(maxActive <= 2, `expected at most two concurrent strategy jobs, saw ${maxActive}`);
+    assert.equal(maxActive, 4, "two symbol workers must be able to evaluate both due timeframes without reducing symbol throughput");
     assert.deepEqual(strategyCalls.map(({ symbol, timeframe }) => `${symbol}:${timeframe}`).sort(), [
       "BADUSDT:15m", "BADUSDT:5m", "BTCUSDT:15m", "BTCUSDT:5m", "ETHUSDT:15m", "ETHUSDT:5m"
     ]);
@@ -1127,11 +1132,88 @@ async function testGlobalScanStatusContract() {
   }
 }
 
+function testRealtimeWebSocketFallsBackToWsPackage() {
+  const original = globalThis.WebSocket;
+  try {
+    delete globalThis.WebSocket;
+    assert.equal(typeof resolveRuntimeWebSocketCtor(), "function", "realtime listener must use the ws package when Node has no global WebSocket");
+
+    function FakeWebSocket() {}
+    globalThis.WebSocket = FakeWebSocket;
+    assert.equal(resolveRuntimeWebSocketCtor(), FakeWebSocket, "native/global WebSocket should still take precedence when available");
+  } finally {
+    if (original === undefined) delete globalThis.WebSocket;
+    else globalThis.WebSocket = original;
+  }
+}
+
+async function testGlobalScanRetriesOneTransientTransportFailure() {
+  let attempts = 0;
+  const { service } = createService(async ({ symbol, timeframe, candles }) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("fetch failed");
+    return globalStrategyResult(symbol, timeframe, false, candles.at(-1).open_time);
+  }, { marketSymbols: ["BTCUSDT"] });
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.failedSymbols, 0);
+  assert.deepEqual(result.errors, []);
+}
+
+async function testGlobalScanRefetchesMarketDataAfterTransientFailure() {
+  let marketAttempts = 0;
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, false, candles.at(-1).open_time),
+    {
+      marketSymbols: ["BTCUSDT"],
+      strictKlines: (_call, result) => {
+        marketAttempts += 1;
+        if (marketAttempts === 1) throw new Error("authoritative_market_data_unavailable:BTCUSDT:5m:futures:timeout");
+        return result;
+      }
+    }
+  );
+
+  const result = await service["runGlobalScanSlot"]({
+    key: "2026-07-21T14:05:00.000Z",
+    closedAt: new Date("2026-07-21T14:05:00.000Z"),
+    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    timeframes: ["5m"]
+  });
+
+  assert.ok(marketAttempts >= 2);
+  assert.equal(result.failedSymbols, 0);
+}
+
+function testRealtimeSymbolsAndStreamUrlAreBinanceCompatible() {
+  assert.deepEqual(
+    normalizeRealtimeSymbols(["BTC", "ETHUSDT", "???????OO???USDT", "��??��??USDT", "1000SHIB"]),
+    ["BTCUSDT", "ETHUSDT", "1000SHIBUSDT"],
+    "realtime subscriptions must drop invalid symbols before opening the combined stream"
+  );
+  assert.equal(
+    buildRealtimeStreamUrl(["btcusdt@kline_5m", "ethusdt@kline_15m"]),
+    "wss://data-stream.binance.vision/stream?streams=btcusdt@kline_5m/ethusdt@kline_15m",
+    "realtime subscriptions should default to the Binance data stream host that works in local runtime"
+  );
+}
+
 const tests = [
+  testRealtimeWebSocketFallsBackToWsPackage,
+  testRealtimeSymbolsAndStreamUrlAreBinanceCompatible,
   testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys,
   testAlertCandidatesExposeActionAndReduceReasonBranches,
   testGlobalScanRunsTheFullMarketWithBoundedPartialFailure,
   testGlobalScanIsIndependentOfUserScanEntitlements,
+  testGlobalScanRetriesOneTransientTransportFailure,
+  testGlobalScanRefetchesMarketDataAfterTransientFailure,
   testGlobalScanRejectsEmptyDiscoveryWithoutFallback,
   testGlobalScanRejectsDiscoveryFailureWithoutFallback,
   testGlobalScanCapsErrorsAndCountsFailedSymbolsOnce,

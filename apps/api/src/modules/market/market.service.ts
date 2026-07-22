@@ -304,7 +304,7 @@ export class MarketService {
       url.searchParams.set("limit", String(params.limit));
       if (params.startTime !== undefined) url.searchParams.set("startTime", String(params.startTime));
       if (params.endTime !== undefined) url.searchParams.set("endTime", String(params.endTime));
-      const data = await fetchJson<BinanceKline[]>(url);
+      const data = await fetchBinanceKlines(url);
 
       return {
         symbol: normalizedSymbol,
@@ -324,7 +324,7 @@ export class MarketService {
         url.searchParams.set("limit", String(params.limit));
         if (params.startTime !== undefined) url.searchParams.set("startTime", String(params.startTime));
         if (params.endTime !== undefined) url.searchParams.set("endTime", String(params.endTime));
-        const data = await fetchJson<BinanceKline[]>(url);
+        const data = await fetchBinanceKlines(url);
 
         return {
           symbol: normalizedSymbol,
@@ -485,6 +485,10 @@ function fixtureTickerSnapshot(symbol: string): TickerSnapshot {
 }
 
 async function fetchJson<T>(url: URL): Promise<T> {
+  if (preferredMarketFetchTransport() === "powershell") {
+    return fetchJsonWithPowerShell<T>(url);
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4500);
 
@@ -504,6 +508,41 @@ async function fetchJson<T>(url: URL): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function preferredKlineFetchTransport(
+  platform = process.platform,
+  configured = process.env.MARKET_KLINE_FETCH_TRANSPORT
+): "native" | "strategy-proxy" {
+  if (configured === "native" || configured === "strategy-proxy") return configured;
+  return platform === "win32" ? "strategy-proxy" : "native";
+}
+
+async function fetchBinanceKlines(url: URL): Promise<BinanceKline[]> {
+  if (preferredKlineFetchTransport() !== "strategy-proxy") {
+    return fetchJson<BinanceKline[]>(url);
+  }
+
+  try {
+    const proxyUrl = new URL("/market/klines", process.env.STRATEGY_SERVICE_URL || "http://127.0.0.1:8000");
+    for (const parameter of ["symbol", "interval", "limit", "startTime", "endTime"]) {
+      const value = url.searchParams.get(parameter);
+      if (value !== null) proxyUrl.searchParams.set(parameter, value);
+    }
+    const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(12_000) });
+    if (!response.ok) throw new Error(`Strategy market proxy returned ${response.status}`);
+    return response.json() as Promise<BinanceKline[]>;
+  } catch {
+    return fetchJson<BinanceKline[]>(url);
+  }
+}
+
+export function preferredMarketFetchTransport(
+  platform = process.platform,
+  configured = process.env.MARKET_FETCH_TRANSPORT
+): "native" | "powershell" {
+  if (configured === "native" || configured === "powershell") return configured;
+  return platform === "win32" ? "powershell" : "native";
 }
 
 function fetchJsonWithPowerShell<T>(url: URL): Promise<T> {

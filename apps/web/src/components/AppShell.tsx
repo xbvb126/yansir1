@@ -198,6 +198,32 @@ type RadarTimelineRecord = ScanRecord & {
     action?: string | null;
     reducePct?: number | null;
     reduce_pct?: number | null;
+    historicalHitCount?: number;
+    latestHistoricalHitAt?: string;
+    latestHistoricalTimeframe?: string;
+    latestHistoricalDirection?: Direction;
+    latestHistoricalScore?: number;
+    latestHistoricalCategory?: string;
+  };
+};
+type StrategyHitHistorySummary = {
+  count: number;
+  latestTimestamp: number;
+  latestTimeframe?: string;
+  latestDirection?: Direction;
+  latestScore?: number;
+  latestCategory?: string;
+};
+type StrategyRealtimeStatusResponse = {
+  realtime?: {
+    enabled?: boolean;
+    connected?: boolean;
+    socketActive?: boolean;
+    symbols?: string[];
+    timeframes?: string[];
+    lastEventAt?: string | null;
+    lastSignalAt?: string | null;
+    lastError?: string | null;
   };
 };
 type StrategyScanAlertResponse = {
@@ -1021,7 +1047,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   const [scanNow, setScanNow] = useState(() => Date.now());
   const [strategyRecords, setStrategyRecords] = useState<RadarTimelineRecord[]>(readStrategyTrackRecords);
   const [strategyStatus, setStrategyStatus] = useState<"idle" | "scanning" | "ready" | "no-signal" | "error">("idle");
-  const [strategyHistoryMode, setStrategyHistoryMode] = useState<"current" | "all">("current");
+  const [strategyHistoryRecords, setStrategyHistoryRecords] = useState<RadarTimelineRecord[]>([]);
   const [strategyFilterSymbol, setStrategyFilterSymbol] = useState("");
   const [strategyFilterTimeframe, setStrategyFilterTimeframe] = useState("all");
   const [strategyFilterDirection, setStrategyFilterDirection] = useState("all");
@@ -1030,7 +1056,8 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   const [strategyLoadingMore, setStrategyLoadingMore] = useState(false);
   const [strategyLastScan, setStrategyLastScan] = useState("");
   const [strategyScanSummary, setStrategyScanSummary] = useState("");
-  const strategyScanInFlight = useRef(false);
+  const [strategyRealtimeSummary, setStrategyRealtimeSummary] = useState("");
+  const [strategyRealtime, setStrategyRealtime] = useState<StrategyRealtimeStatusResponse["realtime"] | null>(null);
   const strategyScheduleStarted = useRef(false);
   const scanBaseTime = useMemo(() => currentScanSlot(scanNow), [scanNow]);
   const scanSchedule = getNextScanSchedule(stats.updatedAt, scanNow);
@@ -1062,12 +1089,14 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   }), [rows, scanBaseTime, signals]);
 
   const watchlistSet = useMemo(() => new Set(watchlistSymbols.map(normalizeDisplaySymbol)), [watchlistSymbols]);
+  const strategyHitHistoryRecords = strategyHistoryRecords.length ? strategyHistoryRecords : strategyRecords;
   const strategySectionRecords = useMemo<RadarTimelineRecord[]>(() =>
     buildAllMarketRadarRecords(rows, strategyRecords, {
       mode: "strategy",
-      scanBaseTime
+      scanBaseTime,
+      historyRecords: strategyHitHistoryRecords
     }),
-  [rows, scanBaseTime, strategyRecords]);
+  [rows, scanBaseTime, strategyHitHistoryRecords, strategyRecords]);
   const marketSectionRecords = useMemo<RadarTimelineRecord[]>(() =>
     buildAllMarketRadarRecords(rows, radarRecords, {
       mode: "market",
@@ -1136,9 +1165,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
     ? formatStrategyScanTime(stats.updatedAt)
     : formatClockTime(scanBaseTime);
   const activeScopeLabel = trackingSection === "strategy"
-    ? strategyHistoryMode === "current"
-      ? "全市场策略信号"
-      : "全部历史策略信号"
+    ? "全局策略信号池"
     : trackingSection === "mine"
       ? "我的关注信号"
       : "全市场雷达信号";
@@ -1195,73 +1222,40 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
   }, [currentUser.id, watchlistSymbols.join(",")]);
 
   useEffect(() => {
+    if (!currentUser.id) {
+      setStrategyHistoryRecords([]);
+      return;
+    }
+
+    let alive = true;
+    setStrategyHistoryRecords([]);
+    apiGet<StrategySignalListResponse>(strategySignalEndpoint(1, 80))
+      .then((response) => {
+        if (!alive) return;
+        setStrategyHistoryRecords((response.signals || []).map(strategyInboxToRecord));
+      })
+      .catch(() => undefined);
+
+    return () => {
+      alive = false;
+    };
+  }, [currentUser.id, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
+
+  useEffect(() => {
     if (trackingSection !== "strategy") return;
     void refreshLatestStrategyScan(true);
     const timer = window.setInterval(() => {
       void refreshLatestStrategyScan(false);
     }, 10 * 1000);
     return () => window.clearInterval(timer);
-  }, [trackingSection, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
+  }, [trackingSection, currentUser.id, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
 
   useEffect(() => {
     if (trackingSection !== "strategy") return;
     setStrategyRecords([]);
     setStrategyPagination(null);
     writeStrategyTrackRecords([]);
-  }, [currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore, trackingSection]);
-
-  async function scanStrategyTrack(silent: boolean) {
-    if (strategyScanInFlight.current) {
-      return;
-    }
-
-    const symbols = watchlistSymbols.map(normalizeDisplaySymbol).filter(Boolean);
-    if (!symbols.length) {
-      setStrategyStatus("idle");
-      return;
-    }
-
-    strategyScanInFlight.current = true;
-    setStrategyStatus(strategyRecords.length ? "ready" : "scanning");
-    try {
-      const response = await withClientTimeout(
-        apiPost<StrategyScanAlertResponse>("/api/strategy/scan/alert", {
-          symbols,
-          timeframes: STRATEGY_TRACK_TIMEFRAMES,
-          minScore: 65,
-          directions: ["long", "short"],
-          cooldownMinutes: 15,
-          limit: 180
-        }),
-        "strategy scan",
-        45000
-      );
-      const nextRecords = strategyScanToRecords(response);
-      setStrategyLastScan(formatStrategyScanTime(response.scan.finishedAt));
-      setStrategyScanSummary(strategyScanSummaryText(response));
-      if (nextRecords.length) {
-        setStrategyRecords((items) => {
-          const merged = mergeStrategyRecords([...nextRecords, ...items]).slice(0, 40);
-          writeStrategyTrackRecords(merged);
-          return merged;
-        });
-        setStrategyStatus("ready");
-        if (!silent && response.alert?.sent) {
-          onToast(`策略信号已推送飞书 ${response.alert.sent} 条`);
-        }
-      } else {
-        setStrategyStatus("no-signal");
-      }
-    } catch {
-      setStrategyStatus("error");
-      setStrategyScanSummary("策略服务或 API 暂时不可用，已等待下一轮自动扫描。");
-      if (!silent) {
-        onToast("策略信号扫描失败");
-      }
-    } finally {
-      strategyScanInFlight.current = false;
-    }
-  }
+  }, [currentUser.id, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore, trackingSection]);
 
   async function ensureStrategyRealtime() {
     if (strategyScheduleStarted.current) return;
@@ -1276,33 +1270,34 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
           });
         }
       }
-      await apiPost("/api/strategy/scan/schedule/stop", {});
-      await apiPost("/api/strategy/realtime/start", {
-        timeframes: STRATEGY_TRACK_TIMEFRAMES,
-        minScore: 65,
-        directions: ["long", "short"],
-        cooldownMinutes: 15
-      });
-      setStrategyScanSummary(currentUser.id
-        ? "实时K线监听已启动：有新的 Pine V6 标准多空信号时才显示并触发推送。"
-        : "未登录仅展示延迟8小时的策略信号；登录后可查看自选币种实时信号并接收推送。"
-      );
+      const status = await apiGet<StrategyRealtimeStatusResponse>("/api/strategy/realtime/status");
+      let realtime = status.realtime || null;
+      if ((!realtime?.enabled || !realtime?.socketActive) && entitlements.apiAccess) {
+        const started = await apiPost<StrategyRealtimeStatusResponse>("/api/strategy/realtime/start", {
+          timeframes: STRATEGY_TRACK_TIMEFRAMES,
+          minScore: 65,
+          directions: ["long", "short"],
+          cooldownMinutes: 15
+        });
+        realtime = started.realtime || realtime;
+      }
+      setStrategyRealtime(realtime);
+      setStrategyRealtimeSummary(strategyRealtimeSummaryText(realtime, Boolean(currentUser.id)));
     } catch {
       strategyScheduleStarted.current = false;
+      setStrategyRealtime(null);
+      setStrategyRealtimeSummary("全市场自动推送监听状态暂时不可用，系统会继续尝试恢复。");
     }
   }
 
   function strategySignalEndpoint(page = 1, limit = 80) {
     const params = new URLSearchParams({ limit: String(limit), page: String(page) });
-    if (currentUser.id) params.set("mode", strategyHistoryMode);
     const cleanSymbol = normalizeDisplaySymbol(strategyFilterSymbol.trim());
     if (cleanSymbol) params.set("symbol", cleanSymbol);
     if (strategyFilterTimeframe !== "all") params.set("timeframe", strategyFilterTimeframe);
     if (strategyFilterDirection !== "all") params.set("direction", strategyFilterDirection);
     if (strategyFilterMinScore !== "all") params.set("minScore", strategyFilterMinScore);
-    return currentUser.id
-      ? `/api/strategy/inbox?${params.toString()}`
-      : `/api/strategy/public-signals?${params.toString()}`;
+    return `/api/strategy/signals?${params.toString()}`;
   }
 
   function resetStrategyFilters() {
@@ -1328,9 +1323,7 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         setStrategyStatus(strategyRecords.length && !runIfMissing ? "ready" : "idle");
         if (runIfMissing) {
           setStrategyScanSummary(currentUser.id
-            ? (strategyHistoryMode === "current"
-              ? "实时K线监听中：当前自选币种/周期暂无 Pine V6 信号；切到“全部历史”可看取消自选前的历史。"
-              : "全部历史里暂无已投递到你的策略信号；后续命中自选后会长期保留。")
+            ? "全局策略池当前筛选暂无 Pine V6 信号；账号 inbox 只记录你收到或推送过的信号。"
             : "未登录仅能查看8小时前的公开历史信号；最近8小时实时信号需登录后查看。"
           );
           setStrategyRecords([]);
@@ -1341,10 +1334,8 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
 
       const nextRecords = inboxSignals.map(strategyInboxToRecord);
       setStrategyLastScan(formatStrategyScanTime(inboxSignals[0].receivedAt || inboxSignals[0].time));
-      setStrategyScanSummary(currentUser.id
-        ? `${strategyHistoryMode === "current" ? "当前自选" : "全部历史"}策略信号 ${response.pagination?.total ?? inboxSignals.length} 条，当前页 ${inboxSignals.length} 条。`
-        : `公开延迟信号 ${response.pagination?.total ?? inboxSignals.length} 条，仅展示8小时以前的历史信号。`
-      );
+      const accessLabel = response.delayHours ? `延迟${response.delayHours}小时` : "实时";
+      setStrategyScanSummary(`${accessLabel}全局策略信号 ${response.pagination?.total ?? inboxSignals.length} 条，当前页 ${inboxSignals.length} 条。`);
       const merged = runIfMissing
         ? mergeStrategyRecords(nextRecords).slice(0, STRATEGY_TRACK_HISTORY_LIMIT)
         : mergeStrategyRecords([...nextRecords, ...strategyRecords]).slice(0, Math.max(STRATEGY_TRACK_HISTORY_LIMIT, strategyRecords.length));
@@ -1425,9 +1416,9 @@ function RadarPage({ currentUser, entitlements, onNavigate, onOpenSearch, onOpen
         <span>{currentUser.id ? `已同步实时信号，下次扫描 ${scanSchedule.time}` : `当前可查看 ${radarWindow} 前信号，登录了解更多。`}</span>
         <button type="button" onClick={() => (currentUser.id ? setRuleSettingsOpen(true) : setUpgradePrompt({ title: "登录后配置雷达规则", desc: "未登录只能查看延迟信号。登录后可配置规则，升级后可开启更多周期、推送和完整战绩。" }))}>{currentUser.id ? "规则" : "去登录"}</button>
       </section>}
-      {trackingSection === "strategy" && currentUser.id && <section className="ai-track-login-strip">
-        <span>{strategyHistoryMode === "current" ? "当前自选：只看仍启用自选币种/周期" : "全部历史：保留取消自选前收到过的信号"}</span>
-        <button type="button" onClick={() => setStrategyHistoryMode((mode) => mode === "current" ? "all" : "current")}>{strategyHistoryMode === "current" ? "全部历史" : "当前自选"}</button>
+      {trackingSection === "strategy" && currentUser.id && <section className="ai-track-login-strip strategy-pool-strip">
+        <span>{strategyRealtimeSummary || "策略命中来自全局 signal_events，与 K线实验室同源；命中后按用户自选和推送配置自动推送。"}</span>
+        <strong className="strategy-auto-pill">{strategyRealtime?.connected || strategyRealtime?.socketActive ? "自动推送中" : "自动监听中"}</strong>
       </section>}
       {trackingSection === "strategy" && !currentUser.id && (
         <UpgradeGuideCard title="实时信号需登录后开启" desc="未登录只能查看 8 小时延迟的全市场历史；登录并升级后可按自选币种实时接收推送。" actionLabel="登录查看实时" onClick={() => onNavigate("login")} />
@@ -2961,9 +2952,12 @@ function buildSignalScanRecord(symbol: string, signal: Signal): ScanRecord {
   };
 }
 
-function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRecord[], options: { mode: "strategy" | "market"; scanBaseTime: number }) {
+function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRecord[], options: { mode: "strategy" | "market"; scanBaseTime: number; historyRecords?: RadarTimelineRecord[] }) {
   const rowSymbols = new Set(rows.map((row) => normalizeDisplaySymbol(row.symbol)));
   const recordBySymbol = new Map<string, RadarTimelineRecord>();
+  const strategyHitHistoryBySymbol = options.mode === "strategy"
+    ? buildStrategyHitHistoryBySymbol(options.historyRecords ?? records)
+    : new Map<string, StrategyHitHistorySummary>();
 
   [...records]
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0) || (b.score || 0) - (a.score || 0))
@@ -2975,14 +2969,14 @@ function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRec
 
   const marketBackfilled = rows.map((row, index) => {
     const symbol = normalizeDisplaySymbol(row.symbol);
-    return recordBySymbol.get(symbol) || buildMarketBackfillRecord(row, index, options);
+    return recordBySymbol.get(symbol) || buildMarketBackfillRecord(row, index, options, strategyHitHistoryBySymbol.get(symbol));
   });
   const unmatchedRecords = records.filter((record) => !rowSymbols.has(normalizeDisplaySymbol(record.symbol)));
 
   return [...marketBackfilled, ...unmatchedRecords];
 }
 
-function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mode: "strategy" | "market"; scanBaseTime: number }): RadarTimelineRecord {
+function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mode: "strategy" | "market"; scanBaseTime: number }, strategyHitHistory?: StrategyHitHistorySummary): RadarTimelineRecord {
   const symbol = normalizeDisplaySymbol(row.symbol);
   const change = parseNumber(row.change);
   const score = normalizeRadarScore(row.score);
@@ -2997,7 +2991,7 @@ function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mod
         : "市场观察";
   const timestamp = options.scanBaseTime - (1000 + index) * 60 * 1000;
   const trigger = options.mode === "strategy"
-    ? `${symbol} 已纳入全市场策略扫描，当前暂未触发 Yansir 策略信号。`
+    ? buildStrategyWaitingTrigger(symbol, strategyHitHistory)
     : `${symbol} 当前价格 ${row.price || "-"}，24H ${row.change || "--"}，继续观察成交量、资金费率和下一轮雷达信号。`;
   const tone: Tone = isRisk ? "danger" : score >= 70 ? "warning" : "success";
   const direction: Direction = isRisk ? "short" : "flat";
@@ -3007,10 +3001,17 @@ function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mod
     symbol,
     group,
     category,
-    title: `${symbol} ${category}`,
+    title: options.mode === "strategy" && strategyHitHistory?.count
+      ? `${symbol} 当前未命中 · 历史命中 ${strategyHitHistory.count} 次`
+      : `${symbol} ${category}`,
     body: trigger,
     signature: createScanSignature(`${symbol} ${category}`, tone, [symbol, category]),
-    tags: [symbol, category, options.mode === "strategy" ? "策略扫描池" : "全市场"],
+    tags: [
+      symbol,
+      category,
+      options.mode === "strategy" ? "策略扫描池" : "全市场",
+      ...(options.mode === "strategy" && strategyHitHistory?.count ? ["历史命中"] : [])
+    ],
     time: formatClockTime(timestamp),
     timestamp,
     tone,
@@ -3018,8 +3019,65 @@ function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mod
     direction,
     strategyName: options.mode === "strategy" ? "Yansir 策略引擎" : "市场观察池",
     trigger,
-    risk: isRisk ? category : undefined
+    risk: isRisk ? category : undefined,
+    payload: options.mode === "strategy" && strategyHitHistory?.count
+      ? {
+        historicalHitCount: strategyHitHistory.count,
+        latestHistoricalHitAt: new Date(strategyHitHistory.latestTimestamp).toISOString(),
+        latestHistoricalTimeframe: strategyHitHistory.latestTimeframe,
+        latestHistoricalDirection: strategyHitHistory.latestDirection,
+        latestHistoricalScore: strategyHitHistory.latestScore,
+        latestHistoricalCategory: strategyHitHistory.latestCategory
+      }
+      : undefined
   };
+}
+
+function buildStrategyHitHistoryBySymbol(records: RadarTimelineRecord[]) {
+  const summaryBySymbol = new Map<string, StrategyHitHistorySummary>();
+  for (const record of records) {
+    if (record.category === "等待策略信号") continue;
+    const symbol = normalizeDisplaySymbol(record.symbol);
+    if (!symbol) continue;
+    const timestamp = record.timestamp ?? timestampFromScanTime(record.time) ?? 0;
+    const current = summaryBySymbol.get(symbol);
+    if (!current) {
+      summaryBySymbol.set(symbol, {
+        count: 1,
+        latestTimestamp: timestamp,
+        latestTimeframe: record.tags[1],
+        latestDirection: record.direction,
+        latestScore: record.score,
+        latestCategory: record.category
+      });
+      continue;
+    }
+
+    current.count += 1;
+    if (timestamp >= current.latestTimestamp) {
+      current.latestTimestamp = timestamp;
+      current.latestTimeframe = record.tags[1];
+      current.latestDirection = record.direction;
+      current.latestScore = record.score;
+      current.latestCategory = record.category;
+    }
+  }
+  return summaryBySymbol;
+}
+
+function buildStrategyWaitingTrigger(symbol: string, history?: StrategyHitHistorySummary) {
+  if (!history?.count) {
+    return `${symbol} 已纳入全市场策略扫描，当前暂未触发新的 Yansir 策略信号。`;
+  }
+
+  const direction = history.latestDirection === "short" ? "看空" : history.latestDirection === "long" ? "看多" : "观望";
+  const latestParts = [
+    history.latestTimeframe,
+    direction,
+    Number.isFinite(history.latestScore) ? `${history.latestScore}分` : "",
+  ].filter(Boolean);
+  const latestText = latestParts.length ? `最近一次 ${latestParts.join(" / ")}，` : "";
+  return `${symbol} 当前暂未触发新的 Yansir 策略信号；历史命中 ${history.count} 次，${latestText}可切换“全部历史”查看明细。`;
 }
 
 function normalizeRadarScore(value: number | undefined) {
@@ -3130,6 +3188,17 @@ function mergeStrategyRecords(records: RadarTimelineRecord[]) {
     merged.push(record);
   }
   return merged;
+}
+
+function strategyRealtimeSummaryText(realtime: StrategyRealtimeStatusResponse["realtime"] | null | undefined, signedIn: boolean) {
+  if (!signedIn) return "未登录仅展示延迟8小时的策略信号；登录后可查看自选币种实时信号并接收自动推送。";
+  if (!realtime?.enabled) return "全市场自动推送监听正在恢复中；命中会写入全局 signal_events，并按自选币种自动推送。";
+
+  const symbolCount = realtime.symbols?.length || 0;
+  const timeframeText = realtime.timeframes?.length ? realtime.timeframes.join(" / ") : STRATEGY_TRACK_TIMEFRAMES.join(" / ");
+  const statusText = realtime.connected || realtime.socketActive ? "自动推送中" : "自动监听中";
+  const coverage = symbolCount ? `覆盖 ${symbolCount} 个币种 · ${timeframeText}` : `覆盖全市场 · ${timeframeText}`;
+  return `全市场策略引擎${statusText}：${coverage}；命中后自动写入 signal_events，并按用户自选和推送配置自动推送。`;
 }
 
 function strategyStatusText(status: "idle" | "scanning" | "ready" | "no-signal" | "error", watchlistCount: number, lastScan: string) {

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { WebSocket as WsWebSocket } from "ws";
 import { AlertsService } from "../alerts/alerts.service";
 import { DatabaseService, DatabaseTransaction } from "../database/database.service";
 import { MarketService } from "../market/market.service";
@@ -25,6 +26,7 @@ const MAX_SCAN_TIMEFRAMES = 5;
 const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 300;
 const MIN_SCHEDULE_INTERVAL_SECONDS = 30;
 const MAX_SCHEDULE_INTERVAL_SECONDS = 86400;
+const DEFAULT_REALTIME_STREAM_URL = "wss://data-stream.binance.vision/stream";
 const DEFAULT_ALERT_RULE: Required<AlertRuleDto> = {
   symbols: ["BTCUSDT", "ETHUSDT", "XRPUSDT"],
   timeframe: "5m",
@@ -109,6 +111,20 @@ type RuntimeWebSocket = {
   onmessage: ((event: { data: unknown }) => void) | null;
   close: () => void;
 };
+type RuntimeWebSocketConstructor = new (url: string) => RuntimeWebSocket;
+
+export function resolveRuntimeWebSocketCtor(): RuntimeWebSocketConstructor | undefined {
+  const GlobalWebSocket = (globalThis as unknown as { WebSocket?: RuntimeWebSocketConstructor }).WebSocket;
+  return GlobalWebSocket ?? (WsWebSocket as unknown as RuntimeWebSocketConstructor);
+}
+
+export function normalizeRealtimeSymbols(symbols?: string[]) {
+  return normalizeScanSymbols(symbols);
+}
+
+export function buildRealtimeStreamUrl(streams: string[], baseUrl = process.env.BINANCE_REALTIME_STREAM_URL || DEFAULT_REALTIME_STREAM_URL) {
+  return `${baseUrl}?streams=${streams.join("/")}`;
+}
 
 type AlertRuleRow = {
   symbols: string[];
@@ -372,17 +388,27 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const marketDataCaches = new Map<string, Map<string, Promise<MarketKlinesResult>>>();
     const remainingJobsBySymbol = new Map(symbols.map((symbol) => [symbol, slot.timeframes.length]));
     const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => ({ symbol, timeframe })));
-    const outcomes = await mapWithConcurrency(jobs, globalScanConcurrency(), async ({ symbol, timeframe }) => {
+    const outcomes = await mapWithConcurrency(jobs, globalScanJobConcurrency(slot.timeframes.length), async ({ symbol, timeframe }) => {
       let marketDataCache = marketDataCaches.get(symbol);
       if (!marketDataCache) {
         marketDataCache = new Map<string, Promise<MarketKlinesResult>>();
         marketDataCaches.set(symbol, marketDataCache);
       }
       try {
-        const run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
-          strictClosedAt: slot.closedAt,
-          cache: marketDataCache
-        });
+        let run;
+        try {
+          run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
+            strictClosedAt: slot.closedAt,
+            cache: marketDataCache
+          });
+        } catch (error) {
+          if (!isTransientGlobalScanTransportError(error)) throw error;
+          marketDataCache.clear();
+          run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
+            strictClosedAt: slot.closedAt,
+            cache: marketDataCache
+          });
+        }
         if (run.result.signals.length) {
           if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
           if (run.persistence.count !== run.result.signals.length) {
@@ -813,6 +839,121 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       signals: rows.map((row) => mapInboxRow(row, entitlements)),
       source: "user_signal_inbox",
       mode,
+      access: signalAccessSummary(entitlements),
+      filters: publicSignalFiltersResponse(filters),
+      pagination: publicSignalPagination(filters, total)
+    };
+  }
+
+  async getGlobalSignalEvents(userId?: string, query: PublicSignalsQuery = {}) {
+    const entitlements = (await this.usersService.getCurrentEntitlements(userId)).entitlements;
+    const filters = normalizePublicSignalsQuery(query);
+    if (!this.database.enabled) {
+      return {
+        signals: [],
+        source: "global_signal_events",
+        mode: "global",
+        access: signalAccessSummary(entitlements),
+        filters: publicSignalFiltersResponse(filters),
+        pagination: publicSignalPagination(filters, 0)
+      };
+    }
+
+    const where: string[] = [];
+    const params: Array<string[] | AlertDirection[] | number | Date> = [];
+    if (entitlements.allowedTimeframes.length) {
+      params.push(entitlements.allowedTimeframes);
+      where.push(`se.timeframe = any($${params.length}::varchar[])`);
+    }
+    if (entitlements.realtimeDelayHours > 0) {
+      params.push(entitlements.realtimeDelayHours);
+      where.push(`se.emitted_at <= now() - ($${params.length}::integer * interval '1 hour')`);
+    }
+    if (entitlements.historyDays > 0) {
+      params.push(entitlements.historyDays);
+      where.push(`se.emitted_at >= now() - ($${params.length}::integer * interval '1 day')`);
+    }
+    if (filters.symbols.length) {
+      params.push(filters.symbols);
+      where.push(`se.symbol = any($${params.length}::varchar[])`);
+    }
+    if (filters.timeframes.length) {
+      params.push(filters.timeframes);
+      where.push(`se.timeframe = any($${params.length}::varchar[])`);
+    }
+    if (filters.directions.length) {
+      params.push(filters.directions);
+      where.push(`se.direction = any($${params.length}::varchar[])`);
+    }
+    if (filters.signalTypes.length) {
+      params.push(filters.signalTypes);
+      where.push(`se.signal_type = any($${params.length}::varchar[])`);
+    }
+    if (filters.minScore !== null) {
+      params.push(filters.minScore);
+      where.push(`se.score >= $${params.length}::integer`);
+    }
+    if (filters.from) {
+      params.push(filters.from);
+      where.push(`se.emitted_at >= $${params.length}::timestamptz`);
+    }
+    if (filters.to) {
+      params.push(filters.to);
+      where.push(`se.emitted_at <= $${params.length}::timestamptz`);
+    }
+
+    const whereSql = where.length ? `where ${where.join(" and ")}` : "";
+    const countRows = await this.database.query<SignalEventCountRow>(
+      `select count(*)::text as total_count from signal_events se ${whereSql}`,
+      params
+    );
+    const total = Number(countRows[0]?.total_count ?? 0);
+    const rows = await this.database.query<SignalEventRow>(
+      `
+        select
+          se.id::text,
+          se.symbol,
+          se.timeframe,
+          se.direction,
+          se.signal_type,
+          se.title,
+          se.reason,
+          se.engine,
+          se.price::text,
+          se.score,
+          se.emitted_at,
+          se.payload,
+          sp.entry_price::text as performance_entry_price,
+          sp.price_15m::text as performance_price_15m,
+          sp.price_1h::text as performance_price_1h,
+          sp.price_4h::text as performance_price_4h,
+          sp.price_24h::text as performance_price_24h,
+          sp.return_5m::text as performance_return_5m,
+          sp.return_15m::text as performance_return_15m,
+          sp.return_1h::text as performance_return_1h,
+          sp.return_4h::text as performance_return_4h,
+          sp.return_24h::text as performance_return_24h,
+          coalesce(sp.max_favorable_pct, sp.max_favorable_excursion)::text as performance_max_favorable_pct,
+          coalesce(sp.max_adverse_pct, sp.max_adverse_excursion)::text as performance_max_adverse_pct,
+          sp.outcome_status as performance_outcome_status,
+          sp.evaluated_until as performance_evaluated_until,
+          sp.updated_at as performance_updated_at
+        from signal_events se
+        left join signal_performance sp on sp.signal_event_id = se.id
+        ${whereSql}
+        order by se.emitted_at desc, se.id desc
+        limit $${params.length + 1}::integer
+        offset $${params.length + 2}::integer
+      `,
+      [...params, filters.limit, filters.offset]
+    );
+
+    return {
+      signals: rows.map((row) => mapSignalEventRow(row, entitlements.signalOutcomes)),
+      source: "global_signal_events",
+      mode: "global",
+      delayHours: entitlements.realtimeDelayHours,
+      historyDays: entitlements.historyDays,
       access: signalAccessSummary(entitlements),
       filters: publicSignalFiltersResponse(filters),
       pagination: publicSignalPagination(filters, total)
@@ -1281,7 +1422,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private openRealtimeSocket() {
     if (!this.realtime.enabled || !this.realtime.symbols.length || !this.realtime.timeframes.length) return;
-    const WebSocketCtor = (globalThis as unknown as { WebSocket?: new (url: string) => RuntimeWebSocket }).WebSocket;
+    const WebSocketCtor = resolveRuntimeWebSocketCtor();
     if (!WebSocketCtor) {
       this.realtime = { ...this.realtime, lastError: "当前 Node 运行时不支持 WebSocket。" };
       return;
@@ -1295,7 +1436,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     // 实际策略计算仍在 runStrategy() 中拉取 Binance Futures K线数据。
     const streamChunks = chunkArray(streams, 180);
     this.realtimeSockets = streamChunks.map((chunk) => {
-      const url = `wss://stream.binance.com:9443/stream?streams=${chunk.join("/")}`;
+      const url = buildRealtimeStreamUrl(chunk);
       const socket = new WebSocketCtor(url);
       socket.onopen = () => {
         this.realtime = { ...this.realtime, connected: true, lastError: null };
@@ -2437,7 +2578,8 @@ function normalizeScanSymbols(symbols?: string[]) {
   const normalized = source
     .map((symbol) => symbol.trim().toUpperCase())
     .filter(Boolean)
-    .map((symbol) => (symbol.endsWith("USDT") ? symbol : `${symbol}USDT`));
+    .map((symbol) => (symbol.endsWith("USDT") ? symbol : `${symbol}USDT`))
+    .filter((symbol) => /^[A-Z0-9]+USDT$/.test(symbol));
 
   return Array.from(new Set(normalized)).slice(0, MAX_SCAN_SYMBOLS);
 }
@@ -2538,6 +2680,15 @@ function globalScanConcurrency() {
   const configured = Number(process.env.STRATEGY_GLOBAL_SCAN_CONCURRENCY || 8);
   if (!Number.isFinite(configured)) return 8;
   return Math.max(1, Math.min(Math.trunc(configured), 24));
+}
+
+function globalScanJobConcurrency(timeframeCount: number) {
+  return Math.min(globalScanConcurrency() * Math.max(1, timeframeCount), 48);
+}
+
+function isTransientGlobalScanTransportError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|authoritative_market_data_unavailable|Strategy service returned 5\d\d/i.test(message);
 }
 
 function formalDeliveryTimeoutMs() {

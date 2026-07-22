@@ -24,9 +24,19 @@ execFileSync(esbuildCommand, [
   `--outfile=${outFile}`
 ], { cwd: apiRoot, stdio: "inherit" });
 
-const { MarketService } = await import(pathToFileURL(outFile));
+const { MarketService, preferredKlineFetchTransport, preferredMarketFetchTransport } = await import(pathToFileURL(outFile));
+const originalMarketFetchTransport = process.env.MARKET_FETCH_TRANSPORT;
+const originalKlineFetchTransport = process.env.MARKET_KLINE_FETCH_TRANSPORT;
 
 try {
+  assert.equal(preferredMarketFetchTransport("win32"), "powershell", "Windows must avoid waiting for the known-broken native Binance connection before falling back");
+  assert.equal(preferredMarketFetchTransport("linux"), "native");
+  assert.equal(preferredMarketFetchTransport("win32", "native"), "native", "operators must be able to force native fetch when their Windows network supports it");
+  assert.equal(preferredKlineFetchTransport("win32"), "strategy-proxy", "Windows K-line scans must reuse the persistent Python service instead of spawning PowerShell per request");
+  assert.equal(preferredKlineFetchTransport("linux"), "native");
+  process.env.MARKET_FETCH_TRANSPORT = "native";
+  process.env.MARKET_KLINE_FETCH_TRANSPORT = "native";
+
   const market = new MarketService();
   market["fetchSpotUsdtSymbols"] = async () => { throw new Error("spot exchange info unavailable"); };
   market["fetchFuturesUsdtSymbols"] = async () => { throw new Error("futures exchange info unavailable"); };
@@ -90,5 +100,9 @@ try {
   }
   console.log("market symbol discovery tests passed");
 } finally {
+  if (originalMarketFetchTransport === undefined) delete process.env.MARKET_FETCH_TRANSPORT;
+  else process.env.MARKET_FETCH_TRANSPORT = originalMarketFetchTransport;
+  if (originalKlineFetchTransport === undefined) delete process.env.MARKET_KLINE_FETCH_TRANSPORT;
+  else process.env.MARKET_KLINE_FETCH_TRANSPORT = originalKlineFetchTransport;
   rmSync(outDir, { recursive: true, force: true });
 }

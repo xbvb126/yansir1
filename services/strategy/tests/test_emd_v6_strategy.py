@@ -124,6 +124,46 @@ class EmdV6StrategyReplayTest(unittest.TestCase):
         self.assertIsNotNone(diagnostics.support)
         self.assertIsNotNone(diagnostics.resistance)
 
+    def test_response_contains_pine_visual_overlays(self):
+        request = trend_long_request()
+        response = run_emd_trend_strategy(request)
+
+        overlays = response.diagnostics.overlays
+        self.assertEqual(len(overlays.points), len(request.candles))
+        self.assertEqual(
+            [point.open_time for point in overlays.points],
+            [candle.open_time for candle in request.candles],
+        )
+        latest_point = overlays.points[-1]
+        self.assertIsNotNone(latest_point.avg)
+        self.assertIsNotNone(latest_point.upper)
+        self.assertIsNotNone(latest_point.lower)
+        self.assertIsNotNone(latest_point.upper_extreme)
+        self.assertIsNotNone(latest_point.lower_extreme)
+        self.assertIn(latest_point.direction, {-1, 0, 1})
+        self.assertIn(latest_point.htf_direction, {-1, 0, 1})
+        self.assertTrue(any(event.label == "趋势买入" and event.kind == "entry" for event in overlays.events))
+        self.assertTrue(any(line.kind == "stop" for line in overlays.risk_lines))
+        self.assertTrue(any(line.kind == "take_profit" for line in overlays.risk_lines))
+        self.assertEqual(overlays.panel["当前引擎"], "趋势")
+
+    def test_response_contains_full_signal_timeline_for_parity(self):
+        response = run_emd_trend_strategy(break_retest_long_add_request())
+
+        timeline = response.diagnostics.signal_timeline
+        self.assertTrue(any(item.type == "trend_long_signal" for item in timeline))
+        self.assertTrue(any(item.type == "break_retest_long_add" for item in timeline))
+        self.assertTrue(all(item.bar_time is not None for item in timeline))
+        self.assertTrue(all(item.action for item in timeline))
+
+    def test_response_contains_sr_zone_and_event_overlays_when_present(self):
+        response = run_emd_trend_strategy(break_retest_long_add_request())
+
+        overlays = response.diagnostics.overlays
+        self.assertTrue(any(zone.kind == "resistance" for zone in overlays.zones))
+        self.assertTrue(any(event.label == "突破压力" and event.kind == "sr_break" for event in overlays.events))
+        self.assertTrue(any(event.label == "回踩确认" and event.kind == "sr_retest" for event in overlays.events))
+
     def _only_signal(self, signals, signal_type):
         matches = [signal for signal in signals if signal.type == signal_type]
         self.assertEqual([signal.type for signal in signals], [signal_type])

@@ -16,9 +16,15 @@ from app.models import (
     StrategyBandPoint,
     StrategyDiagnostics,
     StrategyMetrics,
+    StrategyOverlayEvent,
+    StrategyOverlayPoint,
+    StrategyOverlays,
+    StrategyOverlayZone,
+    StrategyRiskLine,
     StrategyRunRequest,
     StrategyRunResponse,
     StrategySignal,
+    StrategyTimelineSignal,
     StrategyZone,
 )
 from app.scoring import score_strategy_signal
@@ -124,6 +130,8 @@ class EmdV6Engine:
         self.has_base_short = False
         self.has_pullback_short = False
         self.has_break_short = False
+        self.overlay_events: list[StrategyOverlayEvent] = []
+        self.signal_timeline: list[StrategyTimelineSignal] = []
 
     def run(self) -> StrategyRunResponse:
         candles = self.payload.candles
@@ -519,10 +527,14 @@ class EmdV6Engine:
             )
 
             if weak_reduce_long_signal:
-                signals.append(self.make_signal("weak_reduce_long_signal", close, atr))
+                signal = self.make_signal("weak_reduce_long_signal", close, atr)
+                signals.append(signal)
+                self.add_signal_event(index, signal)
                 self.state.reduce("reduce_long", "long", close, DEFAULT_WEAK_REDUCE_QTY_PCT)
             if weak_reduce_short_signal:
-                signals.append(self.make_signal("weak_reduce_short_signal", close, atr))
+                signal = self.make_signal("weak_reduce_short_signal", close, atr)
+                signals.append(signal)
+                self.add_signal_event(index, signal)
                 self.state.reduce("reduce_short", "short", close, DEFAULT_WEAK_REDUCE_QTY_PCT)
 
             if self.state.position_size == 0:
@@ -556,7 +568,19 @@ class EmdV6Engine:
                     continue
                 signal = self.make_signal(signal_type, close, atr)
                 signals.append(signal)
+                self.add_signal_event(index, signal)
                 self.state.entry(signal.title, signal.side, close, DEFAULT_ENTRY_QTY_PCT, atr)
+
+            self.add_sr_events(
+                index,
+                close=close,
+                high=high,
+                low=low,
+                break_resistance=bool(break_resistance),
+                break_support=bool(break_support),
+                retest_resistance_as_support=bool(retest_resistance_as_support),
+                retest_support_as_resistance=bool(retest_support_as_resistance),
+            )
 
             if (
                 self.state.position_size == 0
@@ -706,6 +730,8 @@ class EmdV6Engine:
                 bands=self.make_bands(series),
                 support=context.support,
                 resistance=context.resistance,
+                overlays=self.make_overlays(series, latest_signals, context),
+                signal_timeline=self.signal_timeline,
             ),
             metrics=context.metrics,
         )
@@ -738,6 +764,66 @@ class EmdV6Engine:
             score_impact=score_strategy_signal(signal_type),
         )
 
+    def add_signal_event(self, index: int, signal: StrategySignal) -> None:
+        candle = self.payload.candles[index]
+        self.signal_timeline.append(
+            StrategyTimelineSignal(
+                type=signal.type,
+                title=signal.title,
+                engine=signal.engine,
+                side=signal.side,
+                action=signal.action,
+                price=signal.price,
+                reduce_pct=signal.reduce_pct,
+                stop_price=signal.stop_price,
+                take_profit_price=signal.take_profit_price,
+                score_impact=signal.score_impact,
+                bar_time=candle.open_time,
+            )
+        )
+        kind = "reduce" if signal.action and "reduce" in signal.action else "entry"
+        self.overlay_events.append(
+            StrategyOverlayEvent(
+                open_time=candle.open_time,
+                price=signal.price,
+                label=signal.title,
+                kind=kind,
+                side=signal.side,
+            )
+        )
+
+    def add_sr_events(
+        self,
+        index: int,
+        *,
+        close: float,
+        high: float,
+        low: float,
+        break_resistance: bool,
+        break_support: bool,
+        retest_resistance_as_support: bool,
+        retest_support_as_resistance: bool,
+    ) -> None:
+        candle = self.payload.candles[index]
+        event_specs = [
+            (break_resistance, high, "突破压力", "sr_break", "long"),
+            (break_support, low, "跌破支撑", "sr_break", "short"),
+            (retest_resistance_as_support, low, "回踩确认", "sr_retest", "long"),
+            (retest_support_as_resistance, high, "反抽确认", "sr_retest", "short"),
+        ]
+        for enabled, price, label, kind, side in event_specs:
+            if not enabled:
+                continue
+            self.overlay_events.append(
+                StrategyOverlayEvent(
+                    open_time=candle.open_time,
+                    price=price if price else close,
+                    label=label,
+                    kind=kind,
+                    side=side,
+                )
+            )
+
     def risk_multipliers(self, signal_type: str) -> tuple[float, float]:
         if signal_type in {"resume_long", "resume_short"}:
             return DEFAULT_PULLBACK_ADD_SL_ATR_MULT, DEFAULT_TP_ATR_MULT
@@ -746,6 +832,122 @@ class EmdV6Engine:
         if signal_type in {"reversal_long_signal", "reversal_short_signal"}:
             return DEFAULT_REV_SL_ATR_MULT, DEFAULT_REV_TP_ATR_MULT
         return DEFAULT_SL_ATR_MULT, DEFAULT_TP_ATR_MULT
+
+    def make_overlays(
+        self,
+        series: ReplaySeries,
+        latest_signals: list[StrategySignal],
+        context: BarContext,
+    ) -> StrategyOverlays:
+        return StrategyOverlays(
+            points=self.make_overlay_points(series),
+            events=self.overlay_events,
+            zones=self.make_overlay_zones(context),
+            risk_lines=self.make_risk_lines(latest_signals),
+            panel=self.make_overlay_panel(context, series.directions[-1] if series.directions else 0),
+        )
+
+    def make_overlay_points(self, series: ReplaySeries) -> list[StrategyOverlayPoint]:
+        points: list[StrategyOverlayPoint] = []
+        buffer_multiplier = self.payload.config.buffer_ratio * self.payload.config.mult
+        for index, (candle, avg, dev, atr, direction) in enumerate(
+            zip(
+                self.payload.candles,
+                series.avg,
+                series.dev,
+                series.atr,
+                series.directions,
+                strict=True,
+            )
+        ):
+            buffer = dev * buffer_multiplier if dev is not None else None
+            points.append(
+                StrategyOverlayPoint(
+                    open_time=candle.open_time,
+                    close_time=candle.close_time,
+                    avg=avg,
+                    upper=avg + buffer if avg is not None and buffer is not None else None,
+                    lower=avg - buffer if avg is not None and buffer is not None else None,
+                    upper_extreme=avg + atr * DEFAULT_REV_ATR_EXTREME if avg is not None and atr is not None else None,
+                    lower_extreme=avg - atr * DEFAULT_REV_ATR_EXTREME if avg is not None and atr is not None else None,
+                    direction=direction,
+                    htf_direction=int(series.htf["dir"][index] or 0),
+                )
+            )
+        return points
+
+    def make_overlay_zones(self, context: BarContext) -> list[StrategyOverlayZone]:
+        zones: list[StrategyOverlayZone] = []
+        if context.support.top is not None or context.support.bottom is not None:
+            zones.append(
+                StrategyOverlayZone(
+                    kind="support",
+                    top=context.support.top,
+                    bottom=context.support.bottom,
+                    strength=context.support.strength,
+                    touched=context.support.touched,
+                )
+            )
+        if context.resistance.top is not None or context.resistance.bottom is not None:
+            zones.append(
+                StrategyOverlayZone(
+                    kind="resistance",
+                    top=context.resistance.top,
+                    bottom=context.resistance.bottom,
+                    strength=context.resistance.strength,
+                    touched=context.resistance.touched,
+                )
+            )
+        return zones
+
+    def make_risk_lines(self, latest_signals: list[StrategySignal]) -> list[StrategyRiskLine]:
+        lines: list[StrategyRiskLine] = []
+        for signal in latest_signals:
+            if signal.stop_price is not None:
+                lines.append(
+                    StrategyRiskLine(
+                        kind="stop",
+                        price=signal.stop_price,
+                        side=signal.side,
+                        label="止损",
+                    )
+                )
+            if signal.take_profit_price is not None:
+                lines.append(
+                    StrategyRiskLine(
+                        kind="take_profit",
+                        price=signal.take_profit_price,
+                        side=signal.side,
+                        label="止盈",
+                    )
+                )
+        return lines
+
+    def make_overlay_panel(self, context: BarContext, direction: int) -> dict[str, str]:
+        metrics = context.metrics
+        return {
+            "市场状态": context.market_state_text,
+            "风控状态": context.risk_status,
+            "当前周期趋势": self.direction_text(direction),
+            "当前引擎": context.active_engine,
+            "当前持仓": self.state.current_position,
+            "ADX强度": self.format_panel_number(metrics.adx),
+            "斜率ATR倍数": self.format_panel_number(metrics.slope_norm),
+            "ATR波动率%": self.format_panel_number(metrics.atr_pct),
+            "RSI状态": self.format_panel_number(metrics.rsi),
+            "当前R倍数": "-" if context.current_r is None else f"{context.current_r:.2f}R",
+            "剩余仓位": "-" if context.remaining_position_pct is None else f"{context.remaining_position_pct:.2f}%",
+        }
+
+    def format_panel_number(self, value: float | None) -> str:
+        return "-" if value is None else f"{value:.2f}"
+
+    def direction_text(self, direction: int) -> str:
+        if direction > 0:
+            return "多头"
+        if direction < 0:
+            return "空头"
+        return "震荡"
 
     def make_bands(self, series: ReplaySeries) -> list[StrategyBandPoint]:
         bands: list[StrategyBandPoint] = []
