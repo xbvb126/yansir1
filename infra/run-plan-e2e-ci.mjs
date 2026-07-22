@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { isExpectedApi, isExpectedWeb } from "./service-readiness.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -19,7 +20,7 @@ try {
 
 async function ensureApi() {
   const healthUrl = `${apiBaseUrl}/health`;
-  if (await isReachable(healthUrl)) {
+  if (await isExpectedApi(healthUrl)) {
     console.log(`Reusing API at ${healthUrl}`);
     return;
   }
@@ -31,11 +32,11 @@ async function ensureApi() {
     API_PORT: port,
     NODE_ENV: process.env.NODE_ENV || "test"
   });
-  await waitFor(healthUrl, "API health");
+  await waitFor(isExpectedApi, healthUrl, "API health");
 }
 
 async function ensureWeb() {
-  if (await isReachable(webBaseUrl)) {
+  if (await isExpectedWeb(webBaseUrl)) {
     console.log(`Reusing web preview at ${webBaseUrl}`);
     return;
   }
@@ -47,7 +48,7 @@ async function ensureWeb() {
     WEB_PORT: port,
     VITE_BASE_PATH: url.pathname
   });
-  await waitFor(webBaseUrl, "web preview");
+  await waitFor(isExpectedWeb, webBaseUrl, "web preview");
 }
 
 function start(label, args, extraEnv = {}) {
@@ -90,34 +91,16 @@ async function run(label, args) {
   }
 }
 
-async function waitFor(url, label) {
+async function waitFor(check, url, label) {
   const deadline = Date.now() + 30_000;
-  let lastError = "";
   while (Date.now() < deadline) {
-    try {
-      if (await isReachable(url)) {
-        console.log(`${label} is ready at ${url}`);
-        return;
-      }
-    } catch (error) {
-      lastError = error.message;
+    if (await check(url)) {
+      console.log(`${label} is ready at ${url}`);
+      return;
     }
     await delay(500);
   }
-  throw new Error(`${label} did not become ready at ${url}${lastError ? `: ${lastError}` : ""}`);
-}
-
-async function isReachable(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1500);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    return response.status >= 200 && response.status < 500;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
+  throw new Error(`${label} did not become ready at ${url}`);
 }
 
 async function stopStartedProcesses() {

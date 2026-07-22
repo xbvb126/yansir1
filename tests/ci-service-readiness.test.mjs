@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isExpectedApi, isExpectedWeb } from '../infra/service-readiness.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const server = createServer((request, response) => {
   if (request.url === '/api-ok') {
@@ -44,5 +49,11 @@ try {
   server.close();
   await once(server, 'close');
 }
+
+const runner = readFileSync(path.join(repoRoot, 'infra', 'run-plan-e2e-ci.mjs'), 'utf8');
+assert.match(runner, /import\s+\{\s*isExpectedApi,\s*isExpectedWeb\s*\}/);
+assert.ok(runner.includes('isExpectedApi(healthUrl)'), 'runner should validate the API health identity');
+assert.ok(runner.includes('isExpectedWeb(webBaseUrl)'), 'runner should validate the Web identity');
+assert.ok(!runner.includes('isReachable'), 'runner should not use the old status-only reachability check');
 
 console.log('CI service readiness tests passed');
