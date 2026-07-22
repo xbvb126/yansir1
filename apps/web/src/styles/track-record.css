@@ -522,3 +522,84 @@
   line-height: 1.6;
 }
 
+/* The shared shell stays 430px wide even on desktop, so this page must size
+   against the shell instead of the browser viewport. */
+.app-shell.view-track-record > .public-track-record-view {
+  min-width: 0;
+  overflow-x: clip;
+  padding: 28px 16px 112px !important;
+}
+
+.track-record-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: end;
+  gap: 10px;
+}
+
+.track-record-controls form,
+.track-record-controls > div {
+  min-width: 0;
+  width: 100%;
+  gap: 6px;
+}
+
+.track-record-controls form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.track-record-controls label,
+.track-record-controls input {
+  min-width: 0;
+  width: 100%;
+}
+
+.track-record-controls > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.track-record-controls button {
+  min-width: 0;
+  padding-inline: 8px;
+  white-space: nowrap;
+}
+
+.app-shell.view-track-record .track-record-heading {
+  align-items: center;
+  gap: 16px;
+}
+
+.app-shell.view-track-record .track-record-heading h1 {
+  font-size: 42px;
+}
+
+.app-shell.view-track-record .track-record-verified {
+  max-width: 108px;
+  text-align: right;
+}
+
+.app-shell.view-track-record .track-trust-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(116px, 0.8fr);
+  border-radius: 20px;
+}
+
+.app-shell.view-track-record .track-trust-grid article {
+  padding: 18px 16px;
+}
+
+.app-shell.view-track-record .track-trust-grid strong {
+  font-size: 26px;
+}
+
+.app-shell.view-track-record .track-trust-primary strong {
+  font-size: 54px;
+}
+
+@media (max-width: 359px) {
+  .track-record-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+

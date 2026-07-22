@@ -125,3 +125,55 @@ final result: passed
 ## Result
 
 final result: passed
+
+---
+
+# Design QA: AIClaw and Track Record Restoration
+
+## Evidence
+
+- AIClaw source visual truth: `C:\Users\ADMINI~1\AppData\Local\Temp\codex-clipboard-ae058840-7726-43ca-ba53-6ff00620ea7b.png`
+- AIClaw implementation: `D:\yansir\docs\superpowers\specs\assets\ai-claw-restored-shell-qa.png`
+- AIClaw combined comparison: `D:\yansir\docs\superpowers\specs\assets\ai-claw-reference-comparison.png`
+- Track Record source visual truth: `C:\Users\ADMINI~1\AppData\Local\Temp\codex-clipboard-c8c29116-04f1-426b-8535-d93a66d330f8.png`
+- Track Record implementation: `D:\yansir\docs\superpowers\specs\assets\track-record-restored-shell-qa.png`
+- Track Record combined comparison: `D:\yansir\docs\superpowers\specs\assets\track-record-reference-comparison.png`
+- Browser viewport: 1280px wide, device pixel ratio 1. The standard application shell was measured at 430 CSS px.
+- Source pixels: AIClaw 579 x 877; Track Record 853 x 1844.
+- Implementation pixels: AIClaw 430 x 1118; Track Record 430 x 999.
+- Density normalization: each reference was downsampled to 430px wide before the combined comparison.
+- State: AIClaw signed-in live workspace; Track Record public empty state with a successful API response and zero eligible delayed samples.
+
+## Findings
+
+- No actionable P0, P1, or P2 layout issues remain.
+- Fonts and typography: headings and trust metrics now use the 430px-shell sizes from the reference instead of desktop viewport-relative sizes. No heading or metric wraps unexpectedly.
+- Spacing and layout rhythm: both pages preserve 16px horizontal gutters. The AIClaw composer has 16px left and right insets. Track Record restores 28px top padding and its controls fit within 396px of content width.
+- Colors and visual tokens: the existing navy, blue, green, white, and pale-gray product tokens remain consistent with the source direction.
+- Image and icon fidelity: the existing product icon system is preserved; no placeholder or generated replacement assets were introduced.
+- Copy and content: live AIClaw onboarding content is intentionally denser than the reference mock. Track Record shows a truthful empty state because the API returned zero eligible public samples; it does not fabricate the populated rows shown in the reference.
+
+## Focused Comparison
+
+- AIClaw composer: measured shell width 430px, composer width 398px, left inset 16px, right inset 16px.
+- Track Record hero and controls: title renders on one line at 42px; controls measure 396px wide with a 396px scroll width.
+- Track Record trust summary: grid measures 396px wide with a 394px scroll width; the 54px primary metric and 26px secondary metric no longer wrap.
+
+## Comparison History
+
+1. Initial capture found a P1 Track Record overflow: controls required 500px inside a 430px shell, while a global rule removed the page's top padding. AIClaw's composer also touched both shell edges.
+2. After the first fix, all horizontal overflow was removed and AIClaw regained 16px gutters. A second capture found viewport-relative Track Record typography still wrapping the title and empty-state metrics.
+3. The second fix scoped mobile typography and trust-grid sizing to the 430px shell. The final capture shows no clipping, overlap, or unexpected wrapping.
+
+## Interaction and Runtime Checks
+
+- Track Record direction filter: clicked `看多`; `aria-pressed` changed to `true`.
+- AIClaw help control: clicked successfully.
+- Browser console: no errors or warnings during the final interaction pass.
+- Automated checks: page-width contract, AIClaw layout, Track Record restoration, touch targets, and the production web build passed.
+
+## Follow-up Polish
+
+- P3: AIClaw's live onboarding card is taller than the source mock, and Track Record's empty state naturally contains less information than the populated reference. These are content-state differences, not layout defects.
+
+final result: passed

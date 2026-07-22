@@ -19662,3 +19662,12 @@ button.locked,
     width: min(100%, var(--standard-page-width));
   }
 }
+
+/* Keep the floating AIClaw composer inside the standard page gutters. */
+.app-shell.view-claw {
+  padding-bottom: calc(208px + env(safe-area-inset-bottom, 0px));
+}
+
+.view-claw .ai-claw-composer {
+  width: min(calc(var(--standard-page-width) - 32px), calc(100vw - 32px));
+}
