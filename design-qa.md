@@ -96,6 +96,8 @@ final result: passed
 - PASS: Track Record no longer clips its right-side metrics or filter action when a classic scrollbar is present.
 - PASS: K-line Lab remains the wide exception (`956px` at the checked desktop viewport, capped at `1180px`).
 - PASS: visual checks found no incoherent overlap between page content, fixed composer, and bottom navigation.
+- PASS: desktop Login and Register inner layouts stay within the `430px` shell (`428px` auth layout, `380px` form card at the checked viewport).
+- PASS: AIClaw composer is `430px` at both `500px` and `767px` viewport overrides, matching the shell and navigation cap.
 
 ## Result
 
