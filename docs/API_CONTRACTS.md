@@ -84,7 +84,7 @@ Returns the production-readiness diagnostics for the close-confirmed formal-sign
 }
 ```
 
-`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or disconnected, the oldest queued job is older than 60 seconds, or the most recent persistence failure is newer than the most recent persistence success. `reason` is the first active machine-readable blocker.
+`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or has no open socket, reconciliation or delivery retry is stopped or reports an error, the oldest queued job is older than 60 seconds, or the most recent persistence failure is newer than the most recent persistence success. `reason` is the first active machine-readable blocker.
 
 `GET /api/health` remains a liveness endpoint and includes this object as `formalSignals`; `GET /api/health/readiness` also treats a non-ready formal pipeline as a launch blocker.
 

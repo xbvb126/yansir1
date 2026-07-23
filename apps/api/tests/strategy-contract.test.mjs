@@ -1725,9 +1725,10 @@ async function testFormalReadinessReportsDatabaseAndRuntimeState() {
     connected: true,
     lastEventAt: "2026-07-23T04:00:00.000Z"
   };
-  connectedService["realtimeSockets"] = [{}];
+  const connectedSocket = {};
+  connectedService["realtimeSockets"] = [connectedSocket];
+  connectedService["openRealtimeSockets"].add(connectedSocket);
   const connectedStatus = await connectedService.getFormalSignalStatus();
-  assert.equal(connectedStatus.ready, true);
   assert.equal(connectedStatus.queue.capacity, 10000);
   assert.equal(typeof connectedStatus.reconciliation.enabled, "boolean");
   assert.deepEqual(connectedStatus.realtime, {
@@ -1735,6 +1736,142 @@ async function testFormalReadinessReportsDatabaseAndRuntimeState() {
     connected: true,
     lastClosedEventAt: "2026-07-23T04:00:00.000Z"
   });
+}
+
+function createHealthyFormalReadinessService() {
+  const database = {
+    enabled: true,
+    health: async () => ({ mode: "postgres", connected: true }),
+    query: async () => [],
+    queryStrict: async () => [],
+    withTransaction: async (operation) => operation({ query: async () => [] })
+  };
+  const closeEvaluations = {
+    reserve: async () => ({ id: "close-evaluation-1", attempts: 1 }),
+    complete: async () => {},
+    fail: async () => {},
+    getLatestPersistedCloseAt: async () => null,
+    getEarliestIncompleteCloseAt: async () => null,
+    findCompletedKeys: async () => new Set()
+  };
+  const { service } = createService(strategyResult, { database, closeEvaluations });
+  service["realtime"] = {
+    ...service["realtime"],
+    enabled: true,
+    connected: true,
+    lastEventAt: "2026-07-23T04:00:00.000Z"
+  };
+  const socket = { readyState: 1, close: () => {} };
+  service["realtimeSockets"] = [socket];
+  service["openRealtimeSockets"].add(socket);
+  return { service, socket };
+}
+
+async function startHealthyFormalWorkers(service) {
+  service["formalSignalReconciler"].start();
+  service["formalDeliveryRetry"].start();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function testFormalReadinessRequiresHealthyWorkerDependencies() {
+  const { service } = createHealthyFormalReadinessService();
+  try {
+    const beforeStart = await service.getFormalSignalStatus();
+    assert.equal(beforeStart.ready, false);
+    assert.equal(beforeStart.reason, "reconciliation_disabled");
+
+    await startHealthyFormalWorkers(service);
+    const started = await service.getFormalSignalStatus();
+    assert.equal(started.ready, true, "only lifecycle-started healthy workers make the formal pipeline ready");
+
+    service["formalSignalReconciler"].stop();
+    const reconciliationStopped = await service.getFormalSignalStatus();
+    assert.equal(reconciliationStopped.reason, "reconciliation_disabled");
+
+    service["formalSignalReconciler"].start();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    service["formalSignalReconciler"]["options"].closeEvaluations.getLatestPersistedCloseAt = async () => {
+      throw new Error("reconciliation_backend_error");
+    };
+    await service["formalSignalReconciler"].runOnce();
+    const reconciliationFailed = await service.getFormalSignalStatus();
+    assert.equal(reconciliationFailed.reason, "reconciliation_error");
+
+    service["formalSignalReconciler"]["options"].closeEvaluations.getLatestPersistedCloseAt = async () => null;
+    await service["formalSignalReconciler"].runOnce();
+    service["formalDeliveryRetry"].stop();
+    const retryStopped = await service.getFormalSignalStatus();
+    assert.equal(retryStopped.reason, "delivery_retry_disabled");
+
+    service["formalDeliveryRetry"].start();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    service["formalDeliveryRetry"]["options"].database.queryStrict = async () => {
+      throw new Error("delivery_retry_backend_error");
+    };
+    await service["formalDeliveryRetry"].runOnce();
+    const retryFailed = await service.getFormalSignalStatus();
+    assert.equal(retryFailed.reason, "delivery_retry_error");
+  } finally {
+    service["closeRealtimeSocket"](false);
+    service.onModuleDestroy();
+  }
+}
+
+async function testFormalReadinessUsesActualOpenSocketsAcrossChunks() {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets = [];
+
+  class FakeWebSocket {
+    static OPEN = 1;
+    constructor() {
+      this.readyState = 0;
+      this.onopen = null;
+      this.onclose = null;
+      this.onerror = null;
+      this.onmessage = null;
+      sockets.push(this);
+    }
+
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket;
+  const { service } = createHealthyFormalReadinessService();
+  try {
+    await startHealthyFormalWorkers(service);
+    service["realtime"] = {
+      ...service["realtime"],
+      enabled: true,
+      connected: false,
+      symbols: Array.from({ length: 181 }, (_, index) => `COIN${index}USDT`),
+      timeframes: ["5m"]
+    };
+    service["realtimeSockets"] = [];
+    service["openRealtimeSocket"]();
+    assert.equal(sockets.length, 2, "181 streams require two socket chunks");
+
+    sockets[0].readyState = FakeWebSocket.OPEN;
+    sockets[0].onopen();
+    assert.equal((await service.getFormalSignalStatus()).ready, true);
+
+    sockets[0].readyState = 3;
+    sockets[0].onclose();
+    const afterLastOpenSocketCloses = await service.getFormalSignalStatus();
+    assert.equal(afterLastOpenSocketCloses.realtime.connected, false);
+    assert.equal(afterLastOpenSocketCloses.ready, false);
+    assert.equal(afterLastOpenSocketCloses.reason, "realtime_disconnected");
+  } finally {
+    service["closeRealtimeSocket"](false);
+    service.onModuleDestroy();
+    if (originalWebSocket === undefined) delete globalThis.WebSocket;
+    else globalThis.WebSocket = originalWebSocket;
+  }
 }
 
 function testRealtimeWebSocketFallsBackToWsPackage() {
@@ -1857,7 +1994,9 @@ const tests = [
   testGlobalScanPersistsBlockedUserMatchWithoutSending,
   testGlobalScannerHonorsOptOutAndStopsOnShutdown,
   testGlobalScanStatusContract,
-  testFormalReadinessReportsDatabaseAndRuntimeState
+  testFormalReadinessReportsDatabaseAndRuntimeState,
+  testFormalReadinessRequiresHealthyWorkerDependencies,
+  testFormalReadinessUsesActualOpenSocketsAcrossChunks
 ];
 
 try {

@@ -307,6 +307,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private realtimeStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private performanceStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private realtimeSockets: RuntimeWebSocket[] = [];
+  private readonly openRealtimeSockets = new Set<RuntimeWebSocket>();
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private formalSignalQueue: FormalSignalQueue;
   private readonly formalSignalReconciler: FormalSignalReconciler;
@@ -1663,7 +1664,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return {
       realtime: {
         ...this.realtime,
-        socketActive: this.realtimeSockets.length > 0,
+        socketActive: this.hasOpenRealtimeSocket(),
         recentSignals: this.realtime.recentSignals.slice(0, 20)
       },
       formalPipeline: {
@@ -1696,14 +1697,21 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       const url = buildRealtimeStreamUrl(chunk);
       const socket = new WebSocketCtor(url);
       socket.onopen = () => {
-        this.realtime = { ...this.realtime, connected: true, lastError: null };
+        this.openRealtimeSockets.add(socket);
+        this.realtime = { ...this.realtime, connected: this.hasOpenRealtimeSocket(), lastError: null };
       };
       socket.onerror = (event: unknown) => {
-        this.realtime = { ...this.realtime, lastError: `实时行情连接错误：${String(event)}` };
+        this.openRealtimeSockets.delete(socket);
+        this.realtime = {
+          ...this.realtime,
+          connected: this.hasOpenRealtimeSocket(),
+          lastError: `实时行情连接错误：${String(event)}`
+        };
       };
       socket.onclose = () => {
         this.realtimeSockets = this.realtimeSockets.filter((item) => item !== socket);
-        this.realtime = { ...this.realtime, connected: this.realtimeSockets.length > 0 };
+        this.openRealtimeSockets.delete(socket);
+        this.realtime = { ...this.realtime, connected: this.hasOpenRealtimeSocket() };
         if (this.realtime.enabled && !this.realtimeReconnectTimer) {
           this.realtimeReconnectTimer = setTimeout(() => {
             this.realtimeReconnectTimer = null;
@@ -1727,6 +1735,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
     const sockets = this.realtimeSockets;
     this.realtimeSockets = [];
+    this.openRealtimeSockets.clear();
+    this.realtime = { ...this.realtime, connected: false };
     for (const socket of sockets) {
       if (!scheduleReconnect) socket.onclose = null;
       socket.close();
@@ -1740,13 +1750,17 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const deliveryRetry = this.formalDeliveryRetry.getStatus();
     const realtime = {
       enabled: this.realtime.enabled,
-      connected: this.realtime.connected,
+      connected: this.hasOpenRealtimeSocket(),
       lastClosedEventAt: this.realtime.lastEventAt
     };
     const reasons = [
       database.mode === "mock" || !database.connected ? "database_unavailable" : null,
       !realtime.enabled ? "realtime_disabled" : null,
       !realtime.connected ? "realtime_disconnected" : null,
+      !reconciliation.enabled ? "reconciliation_disabled" : null,
+      reconciliation.lastError ? "reconciliation_error" : null,
+      !deliveryRetry.enabled ? "delivery_retry_disabled" : null,
+      deliveryRetry.lastError ? "delivery_retry_error" : null,
       queue.oldestQueuedAt && Date.now() - new Date(queue.oldestQueuedAt).getTime() > 60_000 ? "queue_latency_exceeded" : null,
       this.hasNewerPersistenceFailure() ? "persistence_failed" : null
     ].filter((reason): reason is string => Boolean(reason));
@@ -1774,6 +1788,13 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     if (!failedAt) return false;
     const persistedAt = this.formalPipeline.latestPersistenceAt;
     return !persistedAt || new Date(failedAt).getTime() > new Date(persistedAt).getTime();
+  }
+
+  private hasOpenRealtimeSocket() {
+    for (const socket of this.openRealtimeSockets) {
+      if (this.realtimeSockets.includes(socket)) return true;
+    }
+    return false;
   }
 
   private handleRealtimeMessage(raw: unknown) {
