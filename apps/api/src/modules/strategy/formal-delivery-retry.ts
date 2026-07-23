@@ -221,12 +221,12 @@ export class FormalDeliveryRetry {
     return this.options.database.withTransaction((transaction) => transaction.query<RetryDeliveryRow>(
       `
         with due as (
-          select id
-          from alert_deliveries
-          where channel = 'feishu'
-            and status = 'failed'
-            and retry_count < $1::integer
-            and coalesce(next_retry_at, now()) <= now()
+          select ad.id
+          from alert_deliveries ad
+          where ad.channel = 'feishu'
+            and ad.status = 'failed'
+            and ad.retry_count < $1::integer
+            and coalesce(ad.next_retry_at, now()) <= now()
             and exists (
               select 1
               from signal_events se
@@ -242,7 +242,7 @@ export class FormalDeliveryRetry {
                 )
               where se.id = ad.signal_event_id
             )
-          order by next_retry_at nulls first, created_at
+          order by ad.next_retry_at nulls first, ad.created_at
           limit $2::integer
           for update skip locked
         ), claimed as (

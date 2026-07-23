@@ -146,6 +146,12 @@ try {
     store.strictQueries.some((sql) => sql.replace(/\s+/g, " ").trim().toLowerCase().startsWith("with due as")),
     "due rows must be atomically claimed in a strict transaction before provider I/O"
   );
+  const claimSql = store.strictQueries.find((sql) => sql.replace(/\s+/g, " ").trim().toLowerCase().startsWith("with due as"));
+  assert.match(
+    claimSql.replace(/\s+/g, " ").toLowerCase(),
+    /from alert_deliveries ad where ad\.channel = 'feishu'/,
+    "the due CTE must bind the ad alias before correlated watchlist predicates reference it"
+  );
   assert.equal(store.transactionCalls, 1);
 
   clock.advanceTo(deliveries[0].next_retry_at);
