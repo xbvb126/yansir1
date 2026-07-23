@@ -99,6 +99,38 @@ try {
   }
 
   {
+    const starts = [];
+    const completions = new Map();
+    const queue = new FormalSignalQueue({
+      capacity: 4,
+      concurrency: 1,
+      execute: async (job) => {
+        starts.push(job.key);
+        const completion = deferred();
+        completions.set(job.key, completion);
+        await completion.promise;
+        return { status: "completed", job, signalCount: 0 };
+      }
+    });
+    const first = formalJob("BTCUSDT", "5m", 1_700_000_000_000);
+    const later = formalJob("BTCUSDT", "5m", first.klineOpenTime + 600_000);
+    const earlier = formalJob("BTCUSDT", "5m", first.klineOpenTime + 300_000);
+
+    assert.equal(queue.enqueue(first), "accepted");
+    await waitFor(() => starts.length === 1);
+    assert.equal(queue.enqueue(later), "accepted");
+    assert.equal(queue.enqueue(earlier), "accepted");
+    completions.get(first.key).resolve();
+    await waitFor(() => starts.length === 2);
+    assert.equal(starts[1], earlier.key, "a lane must execute earlier closed candles before later arrivals");
+    completions.get(earlier.key).resolve();
+    await waitFor(() => starts.length === 3);
+    assert.equal(starts[2], later.key);
+    completions.get(later.key).resolve();
+    await waitFor(() => queue.getStatus().completed === 3);
+  }
+
+  {
     const blocked = deferred();
     const pressureJobs = [];
     const queue = new FormalSignalQueue({
@@ -122,6 +154,19 @@ try {
     await waitFor(() => queue.getStatus().completed === 1);
     queue.stop();
     assert.equal(queue.enqueue(eth5m), "pressure", "a stopped queue must reject new formal jobs");
+  }
+
+  {
+    const failures = [];
+    const queue = new FormalSignalQueue({
+      execute: async () => { throw new Error("executor unavailable"); },
+      onFailure: (job, error) => failures.push({ key: job.key, error: error.message })
+    });
+    const job = formalJob("BTCUSDT", "5m", 1_700_000_000_000);
+
+    assert.equal(queue.enqueue(job), "accepted");
+    await waitFor(() => queue.getStatus().failed === 1);
+    assert.deepEqual(failures, [{ key: job.key, error: "executor unavailable" }]);
   }
 
   console.log("formal signal queue tests passed");

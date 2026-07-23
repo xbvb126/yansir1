@@ -25,6 +25,7 @@ export type FormalQueueStatus = {
 export type FormalSignalQueueOptions = {
   execute: (job: FormalSignalJob) => Promise<FormalSignalExecution>;
   onPressure?: (job: FormalSignalJob) => void;
+  onFailure?: (job: FormalSignalJob, error: Error) => void;
   capacity?: number;
   concurrency?: number;
   now?: () => Date;
@@ -33,6 +34,7 @@ export type FormalSignalQueueOptions = {
 export class FormalSignalQueue {
   private readonly execute: (job: FormalSignalJob) => Promise<FormalSignalExecution>;
   private readonly onPressure?: (job: FormalSignalJob) => void;
+  private readonly onFailure?: (job: FormalSignalJob, error: Error) => void;
   private readonly now: () => Date;
   private readonly pendingKeys = new Set<string>();
   private readonly activeLanes = new Set<string>();
@@ -51,6 +53,7 @@ export class FormalSignalQueue {
   constructor(options: FormalSignalQueueOptions) {
     this.execute = options.execute;
     this.onPressure = options.onPressure;
+    this.onFailure = options.onFailure;
     this.now = options.now ?? (() => new Date());
     this.capacity = normalizePositiveInteger(options.capacity ?? process.env.STRATEGY_FORMAL_QUEUE_CAPACITY, DEFAULT_CAPACITY);
     this.concurrency = normalizePositiveInteger(options.concurrency ?? process.env.STRATEGY_REALTIME_CONCURRENCY, DEFAULT_CONCURRENCY);
@@ -85,7 +88,7 @@ export class FormalSignalQueue {
       concurrency: this.concurrency,
       depth: this.queue.length,
       activeWorkers: this.activeWorkers,
-      oldestQueuedAt: this.queue[0]?.enqueuedAt.toISOString() ?? null,
+      oldestQueuedAt: oldestQueuedAt(this.queue),
       accepted: this.accepted,
       duplicates: this.duplicates,
       pressureRejected: this.pressureRejected,
@@ -106,7 +109,7 @@ export class FormalSignalQueue {
 
   private drain() {
     while (!this.stopped && this.activeWorkers < this.concurrency) {
-      const nextIndex = this.queue.findIndex((job) => !this.activeLanes.has(laneKey(job)));
+      const nextIndex = this.nextRunnableIndex();
       if (nextIndex < 0) return;
       const [job] = this.queue.splice(nextIndex, 1);
       this.activeWorkers += 1;
@@ -124,8 +127,13 @@ export class FormalSignalQueue {
       } else if (execution.status === "failed") {
         this.failed += 1;
       }
-    } catch {
+    } catch (error) {
       this.failed += 1;
+      try {
+        this.onFailure?.(job, toError(error));
+      } catch {
+        // Failure observers must not break queue cleanup.
+      }
     } finally {
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
       this.activeLanes.delete(laneKey(job));
@@ -139,10 +147,37 @@ export class FormalSignalQueue {
     this.latencySamples.push(duration);
     if (this.latencySamples.length > MAX_LATENCY_SAMPLES) this.latencySamples.shift();
   }
+
+  private nextRunnableIndex() {
+    let selectedIndex = -1;
+    for (let index = 0; index < this.queue.length; index += 1) {
+      const job = this.queue[index];
+      if (this.activeLanes.has(laneKey(job))) continue;
+      if (selectedIndex < 0 || compareFormalJobs(job, this.queue[selectedIndex]) < 0) selectedIndex = index;
+    }
+    return selectedIndex;
+  }
 }
 
 function laneKey(job: FormalSignalJob) {
   return `${job.symbol}:${job.timeframe}`;
+}
+
+function compareFormalJobs(left: FormalSignalJob, right: FormalSignalJob) {
+  return left.closedAt.getTime() - right.closedAt.getTime()
+    || left.symbol.localeCompare(right.symbol)
+    || left.timeframe.localeCompare(right.timeframe)
+    || left.klineOpenTime - right.klineOpenTime
+    || left.key.localeCompare(right.key);
+}
+
+function oldestQueuedAt(jobs: FormalSignalJob[]) {
+  if (!jobs.length) return null;
+  return new Date(Math.min(...jobs.map((job) => job.enqueuedAt.getTime()))).toISOString();
+}
+
+function toError(error: unknown) {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function normalizePositiveInteger(value: number | string | undefined, fallback: number) {

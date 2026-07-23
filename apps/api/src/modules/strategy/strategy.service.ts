@@ -9,7 +9,7 @@ import { UserEntitlements } from "../users/entitlements";
 import { UsersService } from "../users/users.service";
 import { AlertDirection, AlertRuleDto } from "./dto/alert-rule.dto";
 import { AlignedGlobalScanner } from "./aligned-global-scanner";
-import { CloseEvaluationRepository } from "./close-evaluation.repository";
+import { CloseEvaluationRepository, type CloseEvaluationReservation } from "./close-evaluation.repository";
 import { FormalSignalJob, formalSignalJobFromClosedKline } from "./closed-candle-job";
 import { FormalSignalQueue } from "./formal-signal-queue";
 import { GlobalScanSlot } from "./global-scan-schedule";
@@ -536,10 +536,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async executeFormalSignalJob(job: FormalSignalJob): Promise<FormalSignalExecution> {
-    const reservation = await this.closeEvaluations.reserve(job);
-    if (!reservation) return { status: "duplicate", job, signalCount: 0 };
+    let reservation: CloseEvaluationReservation | null = null;
 
     try {
+      reservation = await this.closeEvaluations.reserve(job);
+      if (!reservation) return { status: "duplicate", job, signalCount: 0 };
       const run = await withPromiseTimeout(
         this.executeStrategy(
           { symbol: job.symbol, timeframe: job.timeframe, limit: 180 },
@@ -578,7 +579,13 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       return { status: "completed", job, signalCount: events.length };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.closeEvaluations.fail(reservation.id, message, new Date());
+      if (reservation) {
+        try {
+          await this.closeEvaluations.fail(reservation.id, message, new Date());
+        } catch {
+          // The original execution failure remains the observable failure; reconciliation retries the ledger write.
+        }
+      }
       this.recordFormalFailure(job, message);
       return { status: "failed", job, signalCount: 0, error: message };
     }
@@ -610,7 +617,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private createFormalSignalQueue() {
     return new FormalSignalQueue({
       execute: (job) => this.executeFormalSignalJob(job),
-      onPressure: (job) => this.recordFormalFailure(job, "formal_queue_pressure")
+      onPressure: (job) => this.recordFormalFailure(job, "formal_queue_pressure"),
+      onFailure: (job, error) => this.recordFormalFailure(job, error.message)
     });
   }
 

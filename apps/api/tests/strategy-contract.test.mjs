@@ -968,6 +968,52 @@ async function testRealtimeStatusExposesFormalPipelineTelemetry() {
   assert.equal(formalPipeline.latestFailure, null);
 }
 
+async function testFormalPipelineRecordsReserveRejection() {
+  const { service } = createService(strategyResult, {
+    closeEvaluations: {
+      reserve: async () => { throw new Error("evaluation reservation unavailable"); },
+      complete: async () => {},
+      fail: async () => {}
+    }
+  });
+  const job = realtimeJob();
+
+  assert.equal(service["formalSignalQueue"].enqueue(job), "accepted");
+  for (let attempt = 0; attempt < 50 && service.getRealtimeStatus().formalPipeline.queue.failed !== 1; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const { formalPipeline } = service.getRealtimeStatus();
+  assert.equal(formalPipeline.queue.failed, 1);
+  assert.equal(formalPipeline.recentFailures, 1);
+  assert.match(formalPipeline.latestFailure?.error ?? "", /evaluation reservation unavailable/);
+}
+
+async function testFormalPipelineRecordsFailureWhenLedgerFailWriteRejects() {
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    {
+      signalsService: { saveStrategySignals: async () => ({ persisted: false, count: 0 }) },
+      closeEvaluations: {
+        reserve: async () => ({ id: "close-evaluation-1", attempts: 1 }),
+        complete: async () => {},
+        fail: async () => { throw new Error("evaluation failure write unavailable"); }
+      }
+    }
+  );
+  const job = realtimeJob();
+
+  assert.equal(service["formalSignalQueue"].enqueue(job), "accepted");
+  for (let attempt = 0; attempt < 50 && service.getRealtimeStatus().formalPipeline.queue.failed !== 1; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const { formalPipeline } = service.getRealtimeStatus();
+  assert.equal(formalPipeline.queue.failed, 1);
+  assert.equal(formalPipeline.recentFailures, 1);
+  assert.match(formalPipeline.latestFailure?.error ?? "", /signal_persistence_unavailable/);
+}
+
 function deliveryEvent(id, overrides = {}) {
   return {
     id,
@@ -1388,6 +1434,8 @@ const tests = [
   testRealtimeFormalExecutorCompletesZeroSignalEvaluation,
   testRealtimeFormalExecutorSkipsDuplicateJobs,
   testRealtimeStatusExposesFormalPipelineTelemetry,
+  testFormalPipelineRecordsReserveRejection,
+  testFormalPipelineRecordsFailureWhenLedgerFailWriteRejects,
   testConcurrentSameUserDeliveriesReserveDailyLimit,
   testConcurrentSameUserDeliveriesReserveCooldown,
   testAdvisoryReservationUsesOnlyItsClientAndReleasesBeforeFeishu,
