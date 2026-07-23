@@ -8,6 +8,9 @@ const USER_ID = '00000000-0000-0000-0000-000000000001';
 
 const baseEntitlements = {
   plan: 'Free',
+  formalSignalAccess: 'delayed',
+  formalSignalDelayHours: 8,
+  intrabarPreview: false,
   maxScanSymbols: 5,
   maxWatchlistSymbols: 5,
   dailySignalQuota: 10,
@@ -30,6 +33,9 @@ const baseEntitlements = {
 const svipEntitlements = {
   ...baseEntitlements,
   plan: 'SVIP',
+  formalSignalAccess: 'realtime',
+  formalSignalDelayHours: 0,
+  intrabarPreview: false,
   maxScanSymbols: 200,
   maxWatchlistSymbols: 200,
   dailySignalQuota: 2000,
@@ -49,6 +55,9 @@ const svipEntitlements = {
 const vipEntitlements = {
   ...baseEntitlements,
   plan: 'VIP',
+  formalSignalAccess: 'realtime',
+  formalSignalDelayHours: 0,
+  intrabarPreview: false,
   maxScanSymbols: 50,
   maxWatchlistSymbols: 50,
   dailySignalQuota: 300,
@@ -188,6 +197,81 @@ function sampleSignalRow(overrides = {}) {
     performance_updated_at: '2026-01-02T00:05:00.000Z',
     ...overrides
   };
+}
+
+function entitlementUser(plan, { signalQuota, feishuEnabled, teamSeats }) {
+  return {
+    id: USER_ID,
+    name: `${plan} user`,
+    phone: '13800000000',
+    role: 'member',
+    plan,
+    status: 'active',
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    signalUsed: 0,
+    signalQuota,
+    feishuEnabled,
+    teamSeats
+  };
+}
+
+function pick(value, keys) {
+  return Object.fromEntries(keys.map((key) => [key, value[key]]));
+}
+
+async function testApprovedFormalSignalEntitlementMatrix() {
+  const keys = [
+    'formalSignalAccess', 'formalSignalDelayHours', 'maxWatchlistSymbols',
+    'allowedTimeframes', 'historyDays', 'feishuAlerts', 'maxPushPerDay',
+    'signalOutcomes', 'apiAccess', 'intrabarPreview'
+  ];
+  const free = buildEntitlements(entitlementUser('Free', { signalQuota: 10, feishuEnabled: false, teamSeats: '0/0' }));
+  const vip = buildEntitlements(entitlementUser('VIP', { signalQuota: 300, feishuEnabled: true, teamSeats: '0/1' }));
+  const svip = buildEntitlements(entitlementUser('SVIP', { signalQuota: 2000, feishuEnabled: true, teamSeats: '0/5' }));
+
+  assert.deepEqual(pick(free, keys), {
+    formalSignalAccess: 'delayed',
+    formalSignalDelayHours: 8,
+    maxWatchlistSymbols: 5,
+    allowedTimeframes: ['5m'],
+    historyDays: 7,
+    feishuAlerts: false,
+    maxPushPerDay: 0,
+    signalOutcomes: false,
+    apiAccess: false,
+    intrabarPreview: false
+  });
+  assert.deepEqual(pick(vip, keys), {
+    formalSignalAccess: 'realtime',
+    formalSignalDelayHours: 0,
+    maxWatchlistSymbols: 50,
+    allowedTimeframes: ['5m', '15m'],
+    historyDays: 30,
+    feishuAlerts: true,
+    maxPushPerDay: 300,
+    signalOutcomes: true,
+    apiAccess: false,
+    intrabarPreview: false
+  });
+  assert.deepEqual(pick(svip, keys), {
+    formalSignalAccess: 'realtime',
+    formalSignalDelayHours: 0,
+    maxWatchlistSymbols: 200,
+    allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
+    historyDays: 180,
+    feishuAlerts: true,
+    maxPushPerDay: 2000,
+    signalOutcomes: true,
+    apiAccess: true,
+    intrabarPreview: false
+  });
+
+  const unpushableFree = buildEntitlements(
+    entitlementUser('Free', { signalQuota: 10, feishuEnabled: false, teamSeats: '0/0' }),
+    { plan: 'Free', supportsFeishu: true, maxPushPerDay: 25 }
+  );
+  assert.equal(unpushableFree.maxPushPerDay, 0);
+  assert.equal(unpushableFree.remainingDailyPushes, 0);
 }
 
 async function expectRejectsMessage(fn, expected) {
@@ -367,6 +451,18 @@ async function testFeishuDailyLimitRecordsSkippedDelivery() {
   assert.match(db.lastDeliveryParams[10], /今日推送次数已达套餐上限/);
 }
 
+async function testDailyPushUsageExposesOnlySentAsConsumed() {
+  const usersServiceSource = readFileSync(new URL('../src/modules/users/users.service.ts', import.meta.url), 'utf8');
+  const repositorySource = readFileSync(new URL('../src/modules/users/users.repository.ts', import.meta.url), 'utf8');
+  assert.match(usersServiceSource, /dailyPushUsed:\s*usage\.sent/);
+  assert.match(usersServiceSource, /dailyPushSkipped:\s*usage\.skipped/);
+  assert.match(usersServiceSource, /dailyPushFailed:\s*usage\.failed/);
+  assert.match(usersServiceSource, /remainingDailyPushes:\s*Math\.max\(0, maxPushPerDay - usage\.sent\)/);
+  assert.match(repositorySource, /count\(\*\) filter \(where status = 'sent'\)::int as sent/);
+  assert.match(repositorySource, /count\(\*\) filter \(where status = 'skipped'\)::int as skipped/);
+  assert.match(repositorySource, /count\(\*\) filter \(where status = 'failed'\)::int as failed/);
+}
+
 async function testWatchlistBoundaryUpdatesDoNotConsumeExtraSlots() {
   const existingRows = ['BTC', 'ETH', 'SOL', 'XRP', 'BNB'].map((symbol) => ({
     id: `wl-${symbol}`,
@@ -444,6 +540,7 @@ async function testFeishuBlankWebhookDoesNotEnablePushAndClampsInvalidSettings()
 }
 
 const tests = [
+  testApprovedFormalSignalEntitlementMatrix,
   testAdvancedApiRequiresSvip,
   testSvipCanUseAdvancedScan,
   testAlertRuleTimeframeAndMinScore,
@@ -454,6 +551,7 @@ const tests = [
   testPublicSignalsAreDelayedAndPreviewOnly,
   testFeishuConfigPlanGuardsAndClamping,
   testFeishuDailyLimitRecordsSkippedDelivery,
+  testDailyPushUsageExposesOnlySentAsConsumed,
   testWatchlistBoundaryUpdatesDoNotConsumeExtraSlots,
   testWatchlistCanDisableLegacyDisallowedTimeframesWhenPlanDowngrades,
   testPublicSignalQueryClampsAndSanitizesBoundaryFilters,

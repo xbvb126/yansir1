@@ -10,6 +10,7 @@ const apiRoot = path.resolve(testDir, "..");
 const outDir = path.join(testDir, ".tmp-strategy-contract");
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, "strategy.service.mjs");
+const entitlementsOutFile = path.join(outDir, "entitlements.mjs");
 const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
 const esbuildCommand = process.platform === "win32" ? process.execPath : esbuildBin;
 const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
@@ -36,18 +37,32 @@ execFileSync(esbuildCommand, [
   `--outfile=${outFile}`
 ], { cwd: apiRoot, stdio: "inherit" });
 
+execFileSync(esbuildCommand, [
+  ...esbuildArgsPrefix,
+  "src/modules/users/entitlements.ts",
+  "--bundle",
+  "--platform=node",
+  "--format=esm",
+  "--packages=external",
+  `--outfile=${entitlementsOutFile}`
+], { cwd: apiRoot, stdio: "inherit" });
+
 const {
   StrategyService,
   buildRealtimeStreamUrl,
   normalizeRealtimeSymbols,
   resolveRuntimeWebSocketCtor
 } = await import(pathToFileURL(outFile));
+const { buildEntitlements } = await import(pathToFileURL(entitlementsOutFile));
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
 const USER_TWO_ID = "00000000-0000-0000-0000-000000000002";
 
 const svipEntitlements = {
   plan: "SVIP",
+  formalSignalAccess: "realtime",
+  formalSignalDelayHours: 0,
+  intrabarPreview: false,
   maxScanSymbols: 200,
   maxWatchlistSymbols: 200,
   dailySignalQuota: 2000,
@@ -65,6 +80,28 @@ const svipEntitlements = {
   historyDays: 180,
   maxPushPerDay: 2000,
   signalOutcomes: true
+};
+
+const freeEntitlements = {
+  ...svipEntitlements,
+  plan: "Free",
+  formalSignalAccess: "delayed",
+  formalSignalDelayHours: 8,
+  intrabarPreview: false,
+  maxScanSymbols: 5,
+  maxWatchlistSymbols: 5,
+  dailySignalQuota: 10,
+  remainingSignals: 10,
+  remainingDailyPushes: 0,
+  feishuAlerts: false,
+  apiAccess: false,
+  teamSeats: 0,
+  minAlertScore: 80,
+  allowedTimeframes: ["5m"],
+  realtimeDelayHours: 8,
+  historyDays: 7,
+  maxPushPerDay: 0,
+  signalOutcomes: false
 };
 
 const diagnostics = {
@@ -125,10 +162,10 @@ const strategyResult = {
   ]
 };
 
-function usersService() {
+function usersService(entitlements = svipEntitlements) {
   return {
-    getCurrentUser: async () => ({ user: { id: USER_ID, plan: svipEntitlements.plan } }),
-    getCurrentEntitlements: async () => ({ entitlements: svipEntitlements })
+    getCurrentUser: async () => ({ user: { id: USER_ID, plan: entitlements.plan } }),
+    getCurrentEntitlements: async () => ({ entitlements })
   };
 }
 
@@ -203,6 +240,109 @@ function createService(result = strategyResult, overrides = {}) {
     strategyCalls,
     marketCalls
   };
+}
+
+function planUser(plan, { signalQuota, feishuEnabled, teamSeats }) {
+  return {
+    id: USER_ID,
+    name: `${plan} user`,
+    phone: "13800000000",
+    role: "member",
+    plan,
+    status: "active",
+    expiresAt: "2027-01-01T00:00:00.000Z",
+    signalUsed: 0,
+    signalQuota,
+    feishuEnabled,
+    teamSeats
+  };
+}
+
+function projectionDatabase(row) {
+  return {
+    enabled: true,
+    queries: [],
+    async query(sql, params = []) {
+      this.queries.push({ sql: String(sql), params });
+      return String(sql).includes("total_count") ? [{ total_count: "1" }] : [row];
+    }
+  };
+}
+
+function persistedSignalProjection(signal) {
+  return {
+    signalEventId: signal.signalEventId,
+    symbol: signal.symbol,
+    rawSymbol: signal.rawSymbol,
+    timeframe: signal.timeframe,
+    direction: signal.direction,
+    signalType: signal.signalType,
+    title: signal.title,
+    reason: signal.reason,
+    engine: signal.engine,
+    price: signal.price,
+    score: signal.score,
+    emittedAt: signal.emittedAt,
+    payload: signal.payload,
+    action: signal.action
+  };
+}
+
+async function testEntitlementProjectionKeepsPersistedFormalSignalUnchanged() {
+  const derivedFree = buildEntitlements(planUser("Free", { signalQuota: 10, feishuEnabled: false, teamSeats: "0/0" }));
+  const derivedVip = buildEntitlements(planUser("VIP", { signalQuota: 300, feishuEnabled: true, teamSeats: "0/1" }));
+  assert.equal(derivedFree.formalSignalAccess, "delayed");
+  assert.equal(derivedFree.formalSignalDelayHours, 8);
+  assert.equal(derivedFree.intrabarPreview, false);
+  assert.equal(derivedVip.formalSignalAccess, "realtime");
+  assert.equal(derivedVip.formalSignalDelayHours, 0);
+  assert.equal(derivedVip.intrabarPreview, false);
+
+  const row = {
+    id: "00000000-0000-0000-0000-000000000777",
+    symbol: "BTCUSDT",
+    timeframe: "5m",
+    direction: "long",
+    signal_type: "trend_long_signal",
+    title: "Formal closed signal",
+    reason: "closed candle confirmation",
+    engine: "pine_v6",
+    price: "64000",
+    score: 88,
+    emitted_at: "2026-07-23T03:50:00.000Z",
+    payload: { action: "long" },
+    performance_entry_price: "64000",
+    performance_price_15m: "64100",
+    performance_price_1h: "64200",
+    performance_price_4h: "64300",
+    performance_price_24h: "65000",
+    performance_return_5m: "0.001",
+    performance_return_15m: "0.002",
+    performance_return_1h: "0.003",
+    performance_return_4h: "0.004",
+    performance_return_24h: "0.01",
+    performance_max_favorable_pct: "0.02",
+    performance_max_adverse_pct: "-0.01",
+    performance_outcome_status: "pending",
+    performance_evaluated_until: "2026-07-23T04:00:00.000Z",
+    performance_updated_at: "2026-07-23T04:00:00.000Z"
+  };
+  const freeDb = projectionDatabase(row);
+  const vipDb = projectionDatabase(row);
+  const free = await createService(strategyResult, { database: freeDb, usersService: usersService(freeEntitlements) }).service.getGlobalSignalEvents(USER_ID);
+  const vip = await createService(strategyResult, { database: vipDb, usersService: usersService({ ...svipEntitlements, plan: "VIP", maxWatchlistSymbols: 50, allowedTimeframes: ["5m", "15m"], historyDays: 30, maxPushPerDay: 300, apiAccess: false, teamSeats: 1 }) }).service.getGlobalSignalEvents(USER_ID);
+
+  assert.deepEqual(persistedSignalProjection(free.signals[0]), persistedSignalProjection(vip.signals[0]));
+  assert.deepEqual(free.access.allowedTimeframes, ["5m"]);
+  assert.deepEqual(vip.access.allowedTimeframes, ["5m", "15m"]);
+  assert.equal(free.historyDays, 7);
+  assert.equal(vip.historyDays, 30);
+  assert.equal(free.delayHours, 8);
+  assert.equal(vip.delayHours, 0);
+  assert.equal(freeEntitlements.feishuAlerts, false);
+  assert.equal(freeEntitlements.maxPushPerDay, 0);
+  assert.equal(vip.access.plan, "VIP");
+  assert.equal(vipDb.queries[0].params.at(-1), 30, "VIP visibility uses its own history window");
 }
 
 function realtimeJob(symbol = "BTCUSDT", timeframe = "5m", closedAt = "2026-07-23T03:50:00.000Z") {
@@ -1631,6 +1771,7 @@ function testRealtimeSymbolsAndStreamUrlAreBinanceCompatible() {
 }
 
 const tests = [
+  testEntitlementProjectionKeepsPersistedFormalSignalUnchanged,
   testRealtimeWebSocketFallsBackToWsPackage,
   testRealtimeSymbolsAndStreamUrlAreBinanceCompatible,
   testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys,

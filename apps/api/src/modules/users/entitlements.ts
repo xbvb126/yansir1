@@ -17,6 +17,9 @@ export type PlanEntitlementRecord = {
 
 export type UserEntitlements = {
   plan: string;
+  formalSignalAccess: "delayed" | "realtime";
+  formalSignalDelayHours: number;
+  intrabarPreview: boolean;
   maxScanSymbols: number;
   maxWatchlistSymbols: number;
   dailySignalQuota: number;
@@ -40,6 +43,9 @@ type PlanLimits = Omit<UserEntitlements, "plan" | "remainingSignals" | "dailyPus
 
 const PLAN_LIMITS: Record<string, PlanLimits> = {
   free: {
+    formalSignalAccess: "delayed",
+    formalSignalDelayHours: 8,
+    intrabarPreview: false,
     maxScanSymbols: 5,
     maxWatchlistSymbols: 5,
     dailySignalQuota: 10,
@@ -54,6 +60,9 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
     signalOutcomes: false
   },
   vip: {
+    formalSignalAccess: "realtime",
+    formalSignalDelayHours: 0,
+    intrabarPreview: false,
     maxScanSymbols: 50,
     maxWatchlistSymbols: 50,
     dailySignalQuota: 300,
@@ -68,6 +77,9 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
     signalOutcomes: true
   },
   svip: {
+    formalSignalAccess: "realtime",
+    formalSignalDelayHours: 0,
+    intrabarPreview: false,
     maxScanSymbols: 200,
     maxWatchlistSymbols: 200,
     dailySignalQuota: 2000,
@@ -93,9 +105,14 @@ export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitleme
   const supportsFeishu = Boolean(planOverride?.supportsFeishu ?? fallback.feishuAlerts);
   const supportsApi = Boolean(planOverride?.supportsApi ?? fallback.apiAccess);
   const supportsTeam = Boolean(planOverride?.supportsTeam ?? fallback.teamSeats > 0);
+  const configuredMaxPushPerDay = Number(planOverride?.maxPushPerDay ?? fallback.maxPushPerDay);
+  const maxPushPerDay = planKey === "free" || !supportsFeishu ? 0 : Math.max(0, configuredMaxPushPerDay);
 
   return {
     plan: planName,
+    formalSignalAccess: fallback.formalSignalAccess,
+    formalSignalDelayHours: fallback.formalSignalDelayHours,
+    intrabarPreview: fallback.intrabarPreview,
     maxScanSymbols: maxWatchlistSymbols,
     maxWatchlistSymbols,
     dailySignalQuota,
@@ -103,7 +120,7 @@ export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitleme
     dailyPushUsed: user.signalUsed,
     dailyPushSkipped: 0,
     dailyPushFailed: 0,
-    remainingDailyPushes: Math.max(0, Number(planOverride?.maxPushPerDay ?? fallback.maxPushPerDay) - user.signalUsed),
+    remainingDailyPushes: Math.max(0, maxPushPerDay - user.signalUsed),
     feishuAlerts: supportsFeishu && user.feishuEnabled,
     apiAccess: supportsApi,
     teamSeats: supportsTeam ? fallback.teamSeats : 0,
@@ -111,7 +128,7 @@ export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitleme
     allowedTimeframes,
     realtimeDelayHours: Number(planOverride?.realtimeDelayHours ?? fallback.realtimeDelayHours),
     historyDays: Number(planOverride?.historyDays ?? fallback.historyDays),
-    maxPushPerDay: Number(planOverride?.maxPushPerDay ?? fallback.maxPushPerDay),
+    maxPushPerDay,
     signalOutcomes: Boolean(planOverride?.supportsSignalOutcomes ?? fallback.signalOutcomes)
   };
 }
