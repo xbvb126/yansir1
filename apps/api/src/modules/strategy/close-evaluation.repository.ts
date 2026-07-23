@@ -85,6 +85,29 @@ export class CloseEvaluationRepository {
     return new Set(rows.map((row) => row.job_key));
   }
 
+  async getLatestPersistedCloseAt(): Promise<Date | null> {
+    const rows = await this.database.queryStrict<{ closed_at: Date | string | null }>(
+      `select max(closed_at) as closed_at
+       from strategy_close_evaluations`
+    );
+    const value = rows[0]?.closed_at;
+    if (!value) return null;
+    const closeAt = new Date(value);
+    return Number.isNaN(closeAt.getTime()) ? null : closeAt;
+  }
+
+  async getEarliestIncompleteCloseAt(): Promise<Date | null> {
+    const rows = await this.database.queryStrict<{ closed_at: Date | string | null }>(
+      `select min(closed_at) as closed_at
+       from strategy_close_evaluations
+       where status <> 'succeeded'`
+    );
+    const value = rows[0]?.closed_at;
+    if (!value) return null;
+    const closeAt = new Date(value);
+    return Number.isNaN(closeAt.getTime()) ? null : closeAt;
+  }
+
   async purgeFinishedBefore(cutoff: Date): Promise<number> {
     const rows = await this.database.queryStrict<{ id: string }>(
       `delete from strategy_close_evaluations

@@ -18,6 +18,7 @@
     "test:closed-candle-job": "node tests/closed-candle-job.test.mjs",
     "test:close-evaluation-repository": "node tests/close-evaluation-repository.test.mjs",
     "test:formal-signal-queue": "node tests/formal-signal-queue.test.mjs",
+    "test:formal-signal-reconciler": "node tests/formal-signal-reconciler.test.mjs",
     "test:e2e:plans": "node tests/plan-e2e.test.mjs"
   },
   "dependencies": {

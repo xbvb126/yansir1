@@ -945,6 +945,53 @@ async function testRealtimeFormalExecutorSkipsDuplicateJobs() {
   assert.equal(strategyCalls.length, 1);
 }
 
+async function testReconciledSignalsCreateInboxButSkipPushesOlderThanFiveMinutes() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+  const job = { ...realtimeJob(), source: "reconciliation" };
+  const originalDateNow = Date.now;
+  Date.now = () => job.closedAt.getTime() + 6 * 60_000;
+  try {
+    const outcome = await service["executeFormalSignalJob"](job);
+    assert.equal(outcome.status, "completed");
+  } finally {
+    Date.now = originalDateNow;
+  }
+
+  assert.equal(fixture.inbox.size, 1, "a reconciled signal must remain visible in the idempotent inbox");
+  assert.deepEqual(
+    fixture.deliveries.map(({ status, reason }) => ({ status, reason })),
+    [{ status: "skipped", reason: "reconciliation_too_old" }]
+  );
+  assert.equal(fixture.alertCalls.length, 0, "late reconciliation must not reserve or call Feishu");
+}
+
+async function testRecentReconciledSignalsRemainEligibleForPush() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+  const job = { ...realtimeJob(), source: "reconciliation" };
+  const originalDateNow = Date.now;
+  Date.now = () => job.closedAt.getTime() + 4 * 60_000;
+  try {
+    const outcome = await service["executeFormalSignalJob"](job);
+    assert.equal(outcome.status, "completed");
+  } finally {
+    Date.now = originalDateNow;
+  }
+
+  assert.equal(fixture.inbox.size, 1);
+  assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
+  assert.equal(fixture.alertCalls.length, 1);
+}
+
 async function testRealtimeStatusExposesFormalPipelineTelemetry() {
   const evaluations = closeEvaluationFixture();
   const { service } = createService(
@@ -1274,22 +1321,29 @@ async function testGlobalScannerHonorsOptOutAndStopsOnShutdown() {
     cleared.clear();
 
     delete process.env.STRATEGY_GLOBAL_SCAN_ENABLED;
-    const enabled = createService().service;
+    const defaultDisabled = createService().service;
     let realtimeStarts = 0;
     let performanceStarts = 0;
-    enabled.startRealtimeTracking = async () => { realtimeStarts += 1; };
-    enabled.startPerformanceUpdater = async () => { performanceStarts += 1; };
-    enabled.onModuleInit();
-    assert.equal(enabled.getGlobalScanStatus().scanner.enabled, true);
-    assert.ok(enabled.getGlobalScanStatus().scanner.nextRunAt);
-    assert.equal(timers.length, 3, "global, realtime, and performance startup timers must be scheduled");
-    enabled.onModuleDestroy();
-    assert.equal(enabled.getGlobalScanStatus().scanner.enabled, false);
-    assert.equal(enabled.getGlobalScanStatus().scanner.nextRunAt, null);
-    assert.equal(cleared.size, 3, "destroy must cancel every pending startup timer");
+    defaultDisabled.startRealtimeTracking = async () => { realtimeStarts += 1; };
+    defaultDisabled.startPerformanceUpdater = async () => { performanceStarts += 1; };
+    defaultDisabled.onModuleInit();
+    assert.equal(defaultDisabled.getGlobalScanStatus().scanner.enabled, false, "global scanning is an explicit diagnostic opt-in");
+    assert.equal(timers.length, 2, "default startup schedules only realtime and performance work");
+    defaultDisabled.onModuleDestroy();
+    assert.equal(cleared.size, 2, "destroy must cancel every pending startup timer");
     await Promise.all(timers.map((timer) => timer.callback()));
     assert.equal(realtimeStarts, 0, "a cleared realtime startup callback must remain inert after destroy");
     assert.equal(performanceStarts, 0, "a cleared performance startup callback must remain inert after destroy");
+
+    timers.length = 0;
+    cleared.clear();
+    process.env.STRATEGY_GLOBAL_SCAN_ENABLED = "true";
+    const enabled = createService().service;
+    enabled.onModuleInit();
+    assert.equal(enabled.getGlobalScanStatus().scanner.enabled, true);
+    assert.ok(enabled.getGlobalScanStatus().scanner.nextRunAt);
+    assert.equal(timers.length, 3, "explicit diagnostic opt-in includes the global scanner timer");
+    enabled.onModuleDestroy();
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
@@ -1316,16 +1370,19 @@ async function testGlobalScanStatusContract() {
     service.onModuleInit();
 
     assert.deepEqual(service.getGlobalScanStatus(), {
-      scanner: service["globalScanner"].getStatus()
+      scanner: service["globalScanner"].getStatus(),
+      reconciliation: service["formalSignalReconciler"].getStatus()
     });
 
-    const { scanner } = service.getGlobalScanStatus();
-    assert.equal(scanner.enabled, true);
-    assert.match(scanner.nextRunAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    const { scanner, reconciliation } = service.getGlobalScanStatus();
+    assert.equal(scanner.enabled, false);
+    assert.equal(scanner.nextRunAt, null);
     assert.deepEqual(scanner.errors, []);
     for (const counter of ["scannedSymbols", "matchedSignals", "failedSymbols", "skippedOverlappingRuns"]) {
       assert.equal(typeof scanner[counter], "number", `${counter} must be numeric`);
     }
+    assert.equal(reconciliation.enabled, false);
+    assert.equal(reconciliation.intervalSeconds, 900);
     service.onModuleDestroy();
   } finally {
     globalThis.setTimeout = originalSetTimeout;
@@ -1433,6 +1490,8 @@ const tests = [
   testRealtimeFormalExecutorDoesNotDeliverUnpersistedSignals,
   testRealtimeFormalExecutorCompletesZeroSignalEvaluation,
   testRealtimeFormalExecutorSkipsDuplicateJobs,
+  testReconciledSignalsCreateInboxButSkipPushesOlderThanFiveMinutes,
+  testRecentReconciledSignalsRemainEligibleForPush,
   testRealtimeStatusExposesFormalPipelineTelemetry,
   testFormalPipelineRecordsReserveRejection,
   testFormalPipelineRecordsFailureWhenLedgerFailWriteRejects,

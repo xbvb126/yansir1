@@ -80,6 +80,18 @@ function evaluationDatabase(rows, statements) {
         return [{ id }];
       }
 
+      if (text.includes("select max(closed_at)")) {
+        const closes = [...rows.values()].map((row) => row.closed_at);
+        return [{ closed_at: closes.length ? new Date(Math.max(...closes.map((closeAt) => new Date(closeAt).getTime()))) : null }];
+      }
+
+      if (text.includes("select min(closed_at)") && text.includes("status <> 'succeeded'")) {
+        const closes = [...rows.values()]
+          .filter((row) => row.status !== "succeeded")
+          .map((row) => row.closed_at);
+        return [{ closed_at: closes.length ? new Date(Math.min(...closes.map((closeAt) => new Date(closeAt).getTime()))) : null }];
+      }
+
       if (text.includes("select job_key")) {
         return params[0].filter((key) => rows.get(key)?.status === "succeeded").map((job_key) => ({ job_key }));
       }
@@ -153,7 +165,20 @@ try {
     await repository.findCompletedKeys([job.key, failedJob.key, "SOLUSDT:5m:1784778300000"]),
     new Set([job.key, failedJob.key])
   );
-  assert.equal(await repository.purgeFinishedBefore(new Date("2026-07-23T03:50:15.000Z")), 2);
+  assert.equal(
+    (await repository.getLatestPersistedCloseAt()).toISOString(),
+    "2026-07-23T03:50:00.000Z",
+    "reconciliation uses the latest ledger close as its restart baseline"
+  );
+  const incompleteJob = { ...job, key: "SOLUSDT:5m:1784778000000", symbol: "SOLUSDT", klineOpenTime: 1784778000000 };
+  const incompleteReservation = await repository.reserve(incompleteJob);
+  assert.equal(
+    (await repository.getEarliestIncompleteCloseAt()).toISOString(),
+    "2026-07-23T03:50:00.000Z",
+    "an incomplete ledger row is retained for reconciliation even when newer evaluations succeeded"
+  );
+  await repository.complete(incompleteReservation.id, 0, new Date("2026-07-23T03:50:14.000Z"));
+  assert.equal(await repository.purgeFinishedBefore(new Date("2026-07-23T03:50:15.000Z")), 3);
   assert.equal(rows.size, 0);
 
   const reserveSql = statements.find((statement) => statement.sql.includes("insert into strategy_close_evaluations"))?.sql;

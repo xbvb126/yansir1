@@ -12,6 +12,7 @@ import { AlignedGlobalScanner } from "./aligned-global-scanner";
 import { CloseEvaluationRepository, type CloseEvaluationReservation } from "./close-evaluation.repository";
 import { FormalSignalJob, formalSignalJobFromClosedKline } from "./closed-candle-job";
 import { FormalSignalQueue } from "./formal-signal-queue";
+import { FormalSignalReconciler } from "./formal-signal-reconciler";
 import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
@@ -304,6 +305,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private realtimeSockets: RuntimeWebSocket[] = [];
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private formalSignalQueue: FormalSignalQueue;
+  private readonly formalSignalReconciler: FormalSignalReconciler;
   private formalPipeline: FormalPipelineState = {
     latestSuccessfulCalculationAt: null,
     latestPersistenceAt: null,
@@ -367,10 +369,18 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       executeSlot: (slot) => this.runGlobalScanSlot(slot)
     });
     this.formalSignalQueue = this.createFormalSignalQueue();
+    this.formalSignalReconciler = new FormalSignalReconciler({
+      targets: async () => ({
+        symbols: await this.resolveGlobalScanSymbols(),
+        timeframes: DEFAULT_STRATEGY_TIMEFRAMES.map((timeframe) => timeframe as FormalSignalJob["timeframe"])
+      }),
+      closeEvaluations: this.closeEvaluations,
+      enqueue: (job) => this.formalSignalQueue.enqueue(job)
+    });
   }
 
   onModuleInit() {
-    if (process.env.STRATEGY_GLOBAL_SCAN_ENABLED !== "false") this.globalScanner.start();
+    if (process.env.STRATEGY_GLOBAL_SCAN_ENABLED === "true") this.globalScanner.start();
 
     this.realtimeStartupTimer = setTimeout(() => {
       this.realtimeStartupTimer = null;
@@ -386,6 +396,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           enabled: false,
           lastError: (error as Error).message
         };
+      }).finally(() => {
+        if (!this.destroyed) this.formalSignalReconciler.start();
       });
     }, 1000);
 
@@ -414,11 +426,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       this.performanceStartupTimer = null;
     }
     this.globalScanner.stop();
+    this.formalSignalReconciler.stop();
     this.formalSignalQueue.stop();
   }
 
   getGlobalScanStatus() {
-    return { scanner: this.globalScanner.getStatus() };
+    return { scanner: this.globalScanner.getStatus(), reconciliation: this.formalSignalReconciler.getStatus() };
   }
 
   private async runGlobalScanSlot(slot: GlobalScanSlot) {
@@ -465,7 +478,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
             throw new Error(`signal_persistence_incomplete:expected=${run.result.signals.length}:actual=${run.persistence.count}`);
           }
           const events = await this.loadSignalEventsForResult(run.result, true);
-          await this.matchSignalEventsToUsers(events);
+          await this.matchSignalEventsToUsers(events, { source: "realtime", closedAt: slot.closedAt });
         }
         return { ok: true, matchedSignals: run.result.signals.length } as const;
       } catch (error) {
@@ -1819,7 +1832,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private async matchSignalEventsToUsers(
     events: SignalEventRow[],
-    _context?: Pick<FormalSignalJob, "source" | "closedAt">
+    context: Pick<FormalSignalJob, "source" | "closedAt">
   ) {
     if (!this.database.enabled || !events.length) return;
     for (const event of events) {
@@ -1869,7 +1882,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
             })
           ]
         );
-        if (inserted.length) await this.deliverInboxSignal(event, watchlist);
+        if (!inserted.length) continue;
+        if (context.source === "reconciliation" && Date.now() - context.closedAt.getTime() > reconciliationPushMaxAgeMs()) {
+          await this.recordSkippedDelivery(event, watchlist.user_id, "reconciliation_too_old");
+          continue;
+        }
+        await this.deliverInboxSignal(event, watchlist);
       }
     }
   }
@@ -2860,6 +2878,12 @@ function formalStrategyTimeoutMs() {
   const configured = Number(process.env.STRATEGY_FORMAL_EXECUTION_TIMEOUT_MS || 55_000);
   if (!Number.isFinite(configured) || configured <= 0) return 55_000;
   return Math.max(1_000, Math.min(Math.round(configured), 60_000));
+}
+
+function reconciliationPushMaxAgeMs() {
+  const configured = Number(process.env.STRATEGY_RECONCILIATION_PUSH_MAX_AGE_MS || 300_000);
+  if (!Number.isFinite(configured) || configured < 0) return 300_000;
+  return Math.min(Math.round(configured), 86_400_000);
 }
 
 async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
