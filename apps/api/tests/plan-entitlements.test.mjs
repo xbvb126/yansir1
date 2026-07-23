@@ -10,6 +10,7 @@ const baseEntitlements = {
   plan: 'Free',
   formalSignalAccess: 'delayed',
   formalSignalDelayHours: 8,
+  formalSignalHistoryDays: 7,
   intrabarPreview: false,
   maxScanSymbols: 5,
   maxWatchlistSymbols: 5,
@@ -35,6 +36,7 @@ const svipEntitlements = {
   plan: 'SVIP',
   formalSignalAccess: 'realtime',
   formalSignalDelayHours: 0,
+  formalSignalHistoryDays: 180,
   intrabarPreview: false,
   maxScanSymbols: 200,
   maxWatchlistSymbols: 200,
@@ -57,6 +59,7 @@ const vipEntitlements = {
   plan: 'VIP',
   formalSignalAccess: 'realtime',
   formalSignalDelayHours: 0,
+  formalSignalHistoryDays: 30,
   intrabarPreview: false,
   maxScanSymbols: 50,
   maxWatchlistSymbols: 50,
@@ -221,7 +224,7 @@ function pick(value, keys) {
 
 async function testApprovedFormalSignalEntitlementMatrix() {
   const keys = [
-    'formalSignalAccess', 'formalSignalDelayHours', 'maxWatchlistSymbols',
+    'formalSignalAccess', 'formalSignalDelayHours', 'formalSignalHistoryDays', 'maxWatchlistSymbols',
     'allowedTimeframes', 'historyDays', 'feishuAlerts', 'maxPushPerDay',
     'signalOutcomes', 'apiAccess', 'intrabarPreview'
   ];
@@ -232,6 +235,7 @@ async function testApprovedFormalSignalEntitlementMatrix() {
   assert.deepEqual(pick(free, keys), {
     formalSignalAccess: 'delayed',
     formalSignalDelayHours: 8,
+    formalSignalHistoryDays: 7,
     maxWatchlistSymbols: 5,
     allowedTimeframes: ['5m'],
     historyDays: 7,
@@ -244,6 +248,7 @@ async function testApprovedFormalSignalEntitlementMatrix() {
   assert.deepEqual(pick(vip, keys), {
     formalSignalAccess: 'realtime',
     formalSignalDelayHours: 0,
+    formalSignalHistoryDays: 30,
     maxWatchlistSymbols: 50,
     allowedTimeframes: ['5m', '15m'],
     historyDays: 30,
@@ -256,6 +261,7 @@ async function testApprovedFormalSignalEntitlementMatrix() {
   assert.deepEqual(pick(svip, keys), {
     formalSignalAccess: 'realtime',
     formalSignalDelayHours: 0,
+    formalSignalHistoryDays: 180,
     maxWatchlistSymbols: 200,
     allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
     historyDays: 180,
@@ -268,8 +274,13 @@ async function testApprovedFormalSignalEntitlementMatrix() {
 
   const unpushableFree = buildEntitlements(
     entitlementUser('Free', { signalQuota: 10, feishuEnabled: false, teamSeats: '0/0' }),
-    { plan: 'Free', supportsFeishu: true, maxPushPerDay: 25 }
+    { plan: 'Free', supportsFeishu: true, maxPushPerDay: 25, realtimeDelayHours: 0, historyDays: 365 }
   );
+  assert.equal(unpushableFree.formalSignalAccess, 'delayed');
+  assert.equal(unpushableFree.formalSignalDelayHours, 8);
+  assert.equal(unpushableFree.formalSignalHistoryDays, 7);
+  assert.equal(unpushableFree.realtimeDelayHours, 8);
+  assert.equal(unpushableFree.historyDays, 7);
   assert.equal(unpushableFree.maxPushPerDay, 0);
   assert.equal(unpushableFree.remainingDailyPushes, 0);
 }
@@ -349,9 +360,11 @@ async function testInboxAppliesPlanWindowAndPerformanceLock() {
   assert.equal(response.signals[0].performance.returns['4h'], null);
   assert.deepEqual(response.signals[0].performance.access.lockedFields, ['4h', '24h', 'maxFavorablePct', 'maxAdversePct']);
   const countQuery = db.queries.find((query) => query.sql.includes('from user_signal_inbox inbox') && query.sql.includes('count(*)'));
-  assert.ok(countQuery.sql.includes("se.emitted_at >= now() - ($3::integer * interval '1 day')"));
+  assert.ok(countQuery.sql.includes("se.emitted_at >= now() - ($4::integer * interval '1 day')"));
   assert.deepEqual(countQuery.params[1], ['5m']);
-  assert.equal(countQuery.params[2], 7);
+  assert.ok(countQuery.sql.includes("se.emitted_at <= now() - ($3::integer * interval '1 hour')"));
+  assert.equal(countQuery.params[2], 8);
+  assert.equal(countQuery.params[3], 7);
 }
 
 async function testSvipInboxGetsFullPerformance() {
@@ -420,6 +433,9 @@ async function testPublicSignalsAreDelayedAndPreviewOnly() {
   const response = await service.getPublicDelayedSignals({ limit: '5', symbol: 'BTC' });
   assert.equal(response.delayHours, 8);
   assert.equal(response.historyDays, 7);
+  assert.equal(response.access.formalSignalAccess, 'delayed');
+  assert.equal(response.access.formalSignalDelayHours, 8);
+  assert.equal(response.access.formalSignalHistoryDays, 7);
   assert.equal(response.access.performancePreviewOnly, true);
   assert.equal(response.signals[0].performance.returns['1h'], 0.02);
   assert.equal(response.signals[0].performance.returns['24h'], null);

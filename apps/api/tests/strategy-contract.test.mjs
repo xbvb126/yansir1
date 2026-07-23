@@ -62,6 +62,7 @@ const svipEntitlements = {
   plan: "SVIP",
   formalSignalAccess: "realtime",
   formalSignalDelayHours: 0,
+  formalSignalHistoryDays: 180,
   intrabarPreview: false,
   maxScanSymbols: 200,
   maxWatchlistSymbols: 200,
@@ -80,28 +81,6 @@ const svipEntitlements = {
   historyDays: 180,
   maxPushPerDay: 2000,
   signalOutcomes: true
-};
-
-const freeEntitlements = {
-  ...svipEntitlements,
-  plan: "Free",
-  formalSignalAccess: "delayed",
-  formalSignalDelayHours: 8,
-  intrabarPreview: false,
-  maxScanSymbols: 5,
-  maxWatchlistSymbols: 5,
-  dailySignalQuota: 10,
-  remainingSignals: 10,
-  remainingDailyPushes: 0,
-  feishuAlerts: false,
-  apiAccess: false,
-  teamSeats: 0,
-  minAlertScore: 80,
-  allowedTimeframes: ["5m"],
-  realtimeDelayHours: 8,
-  historyDays: 7,
-  maxPushPerDay: 0,
-  signalOutcomes: false
 };
 
 const diagnostics = {
@@ -289,14 +268,23 @@ function persistedSignalProjection(signal) {
 }
 
 async function testEntitlementProjectionKeepsPersistedFormalSignalUnchanged() {
-  const derivedFree = buildEntitlements(planUser("Free", { signalQuota: 10, feishuEnabled: false, teamSeats: "0/0" }));
+  const derivedFree = buildEntitlements(
+    planUser("Free", { signalQuota: 10, feishuEnabled: false, teamSeats: "0/0" }),
+    { plan: "Free", realtimeDelayHours: 0, historyDays: 365, supportsFeishu: true, maxPushPerDay: 100 }
+  );
   const derivedVip = buildEntitlements(planUser("VIP", { signalQuota: 300, feishuEnabled: true, teamSeats: "0/1" }));
+  const derivedSvip = buildEntitlements(planUser("SVIP", { signalQuota: 2000, feishuEnabled: true, teamSeats: "0/5" }));
   assert.equal(derivedFree.formalSignalAccess, "delayed");
   assert.equal(derivedFree.formalSignalDelayHours, 8);
+  assert.equal(derivedFree.formalSignalHistoryDays, 7);
   assert.equal(derivedFree.intrabarPreview, false);
   assert.equal(derivedVip.formalSignalAccess, "realtime");
   assert.equal(derivedVip.formalSignalDelayHours, 0);
+  assert.equal(derivedVip.formalSignalHistoryDays, 30);
   assert.equal(derivedVip.intrabarPreview, false);
+  assert.equal(derivedSvip.formalSignalAccess, "realtime");
+  assert.equal(derivedSvip.formalSignalDelayHours, 0);
+  assert.equal(derivedSvip.formalSignalHistoryDays, 180);
 
   const row = {
     id: "00000000-0000-0000-0000-000000000777",
@@ -329,8 +317,8 @@ async function testEntitlementProjectionKeepsPersistedFormalSignalUnchanged() {
   };
   const freeDb = projectionDatabase(row);
   const vipDb = projectionDatabase(row);
-  const free = await createService(strategyResult, { database: freeDb, usersService: usersService(freeEntitlements) }).service.getGlobalSignalEvents(USER_ID);
-  const vip = await createService(strategyResult, { database: vipDb, usersService: usersService({ ...svipEntitlements, plan: "VIP", maxWatchlistSymbols: 50, allowedTimeframes: ["5m", "15m"], historyDays: 30, maxPushPerDay: 300, apiAccess: false, teamSeats: 1 }) }).service.getGlobalSignalEvents(USER_ID);
+  const free = await createService(strategyResult, { database: freeDb, usersService: usersService(derivedFree) }).service.getGlobalSignalEvents(USER_ID);
+  const vip = await createService(strategyResult, { database: vipDb, usersService: usersService(derivedVip) }).service.getGlobalSignalEvents(USER_ID);
 
   assert.deepEqual(persistedSignalProjection(free.signals[0]), persistedSignalProjection(vip.signals[0]));
   assert.deepEqual(free.access.allowedTimeframes, ["5m"]);
@@ -339,9 +327,17 @@ async function testEntitlementProjectionKeepsPersistedFormalSignalUnchanged() {
   assert.equal(vip.historyDays, 30);
   assert.equal(free.delayHours, 8);
   assert.equal(vip.delayHours, 0);
-  assert.equal(freeEntitlements.feishuAlerts, false);
-  assert.equal(freeEntitlements.maxPushPerDay, 0);
+  assert.equal(free.access.formalSignalAccess, "delayed");
+  assert.equal(free.access.formalSignalDelayHours, 8);
+  assert.equal(free.access.formalSignalHistoryDays, 7);
+  assert.equal(derivedFree.feishuAlerts, false);
+  assert.equal(derivedFree.maxPushPerDay, 0);
   assert.equal(vip.access.plan, "VIP");
+  assert.equal(vip.access.formalSignalAccess, "realtime");
+  assert.equal(vip.access.formalSignalDelayHours, 0);
+  assert.equal(vip.access.formalSignalHistoryDays, 30);
+  assert.ok(freeDb.queries[0].params.includes(8), "Free formal query retains its fixed eight-hour delay despite the legacy override");
+  assert.ok(freeDb.queries[0].params.includes(7), "Free formal query retains its fixed seven-day history despite the legacy override");
   assert.equal(vipDb.queries[0].params.at(-1), 30, "VIP visibility uses its own history window");
 }
 

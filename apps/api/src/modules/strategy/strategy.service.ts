@@ -912,8 +912,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const where = ["inbox.user_id = $1::uuid"];
     params.push(entitlements.allowedTimeframes);
     where.push(`se.timeframe = any($${params.length}::varchar[])`);
-    if (entitlements.historyDays > 0) {
-      params.push(entitlements.historyDays);
+    if (entitlements.formalSignalAccess === "delayed" && entitlements.formalSignalDelayHours > 0) {
+      params.push(entitlements.formalSignalDelayHours);
+      where.push(`se.emitted_at <= now() - ($${params.length}::integer * interval '1 hour')`);
+    }
+    if (entitlements.formalSignalHistoryDays > 0) {
+      params.push(entitlements.formalSignalHistoryDays);
       where.push(`se.emitted_at >= now() - ($${params.length}::integer * interval '1 day')`);
     }
     if (mode === "current") {
@@ -1040,12 +1044,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       params.push(entitlements.allowedTimeframes);
       where.push(`se.timeframe = any($${params.length}::varchar[])`);
     }
-    if (entitlements.realtimeDelayHours > 0) {
-      params.push(entitlements.realtimeDelayHours);
+    if (entitlements.formalSignalAccess === "delayed" && entitlements.formalSignalDelayHours > 0) {
+      params.push(entitlements.formalSignalDelayHours);
       where.push(`se.emitted_at <= now() - ($${params.length}::integer * interval '1 hour')`);
     }
-    if (entitlements.historyDays > 0) {
-      params.push(entitlements.historyDays);
+    if (entitlements.formalSignalHistoryDays > 0) {
+      params.push(entitlements.formalSignalHistoryDays);
       where.push(`se.emitted_at >= now() - ($${params.length}::integer * interval '1 day')`);
     }
     if (filters.symbols.length) {
@@ -1127,8 +1131,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       signals: rows.map((row) => mapSignalEventRow(row, entitlements.signalOutcomes)),
       source: "global_signal_events",
       mode: "global",
-      delayHours: entitlements.realtimeDelayHours,
-      historyDays: entitlements.historyDays,
+      delayHours: entitlements.formalSignalDelayHours,
+      historyDays: entitlements.formalSignalHistoryDays,
       access: signalAccessSummary(entitlements),
       filters: publicSignalFiltersResponse(filters),
       pagination: publicSignalPagination(filters, total)
@@ -1147,6 +1151,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         historyDays,
         access: {
           plan: "Guest",
+          formalSignalAccess: "delayed",
+          formalSignalDelayHours: delayHours,
+          formalSignalHistoryDays: historyDays,
           realtimeDelayHours: delayHours,
           historyDays,
           signalOutcomes: false,
@@ -1245,6 +1252,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       historyDays,
       access: {
         plan: "Guest",
+        formalSignalAccess: "delayed",
+        formalSignalDelayHours: delayHours,
+        formalSignalHistoryDays: historyDays,
         realtimeDelayHours: delayHours,
         historyDays,
         signalOutcomes: false,
@@ -3112,8 +3122,11 @@ function signalAccessSummary(entitlements: UserEntitlements) {
   return {
     plan: entitlements.plan,
     allowedTimeframes: entitlements.allowedTimeframes,
-    historyDays: entitlements.historyDays,
-    realtimeDelayHours: entitlements.realtimeDelayHours,
+    formalSignalAccess: entitlements.formalSignalAccess,
+    formalSignalDelayHours: entitlements.formalSignalDelayHours,
+    formalSignalHistoryDays: entitlements.formalSignalHistoryDays,
+    historyDays: entitlements.formalSignalHistoryDays,
+    realtimeDelayHours: entitlements.formalSignalDelayHours,
     signalOutcomes: entitlements.signalOutcomes,
     performancePreviewOnly: !entitlements.signalOutcomes,
     lockedPerformanceFields: entitlements.signalOutcomes ? [] : ["4h", "24h", "maxFavorablePct", "maxAdversePct"]

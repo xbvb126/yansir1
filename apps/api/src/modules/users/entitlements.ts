@@ -19,6 +19,7 @@ export type UserEntitlements = {
   plan: string;
   formalSignalAccess: "delayed" | "realtime";
   formalSignalDelayHours: number;
+  formalSignalHistoryDays: number;
   intrabarPreview: boolean;
   maxScanSymbols: number;
   maxWatchlistSymbols: number;
@@ -45,6 +46,7 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
   free: {
     formalSignalAccess: "delayed",
     formalSignalDelayHours: 8,
+    formalSignalHistoryDays: 7,
     intrabarPreview: false,
     maxScanSymbols: 5,
     maxWatchlistSymbols: 5,
@@ -62,6 +64,7 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
   vip: {
     formalSignalAccess: "realtime",
     formalSignalDelayHours: 0,
+    formalSignalHistoryDays: 30,
     intrabarPreview: false,
     maxScanSymbols: 50,
     maxWatchlistSymbols: 50,
@@ -79,6 +82,7 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
   svip: {
     formalSignalAccess: "realtime",
     formalSignalDelayHours: 0,
+    formalSignalHistoryDays: 180,
     intrabarPreview: false,
     maxScanSymbols: 200,
     maxWatchlistSymbols: 200,
@@ -112,6 +116,7 @@ export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitleme
     plan: planName,
     formalSignalAccess: fallback.formalSignalAccess,
     formalSignalDelayHours: fallback.formalSignalDelayHours,
+    formalSignalHistoryDays: fallback.formalSignalHistoryDays,
     intrabarPreview: fallback.intrabarPreview,
     maxScanSymbols: maxWatchlistSymbols,
     maxWatchlistSymbols,
@@ -126,8 +131,8 @@ export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitleme
     teamSeats: supportsTeam ? fallback.teamSeats : 0,
     minAlertScore: Number(planOverride?.minAlertScore ?? fallback.minAlertScore),
     allowedTimeframes,
-    realtimeDelayHours: Number(planOverride?.realtimeDelayHours ?? fallback.realtimeDelayHours),
-    historyDays: Number(planOverride?.historyDays ?? fallback.historyDays),
+    realtimeDelayHours: fallback.formalSignalDelayHours,
+    historyDays: fallback.formalSignalHistoryDays,
     maxPushPerDay,
     signalOutcomes: Boolean(planOverride?.supportsSignalOutcomes ?? fallback.signalOutcomes)
   };
