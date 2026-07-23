@@ -263,6 +263,32 @@ create table if not exists strategy_runs (
   finished_at timestamptz
 );
 
+create table if not exists strategy_close_evaluations (
+  id uuid primary key default gen_random_uuid(),
+  job_key varchar(255) not null unique,
+  symbol varchar(32) not null,
+  timeframe varchar(16) not null,
+  bar_time timestamptz not null,
+  closed_at timestamptz not null,
+  source varchar(32) not null,
+  status varchar(32) not null default 'running',
+  attempts integer not null default 1,
+  signal_count integer not null default 0,
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (source in ('realtime', 'reconciliation')),
+  check (status in ('running', 'succeeded', 'failed'))
+);
+
+create index if not exists idx_close_evaluations_status_time
+  on strategy_close_evaluations(status, closed_at);
+
+create index if not exists idx_close_evaluations_symbol_time
+  on strategy_close_evaluations(symbol, timeframe, bar_time desc);
+
 create table if not exists scheduled_tasks (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references users(id),
