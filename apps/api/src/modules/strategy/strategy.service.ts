@@ -439,6 +439,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       clearTimeout(this.performanceStartupTimer);
       this.performanceStartupTimer = null;
     }
+    this.closeRealtimeSocket(false);
     this.globalScanner.stop();
     this.formalSignalReconciler.stop();
     this.formalSignalQueue.stop();

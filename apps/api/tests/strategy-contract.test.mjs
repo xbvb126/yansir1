@@ -1874,6 +1874,62 @@ async function testFormalReadinessUsesActualOpenSocketsAcrossChunks() {
   }
 }
 
+async function testFormalSignalDestroyClosesSocketsAndStopsWorkers() {
+  const originalWebSocket = globalThis.WebSocket;
+  const sockets = [];
+
+  class FakeWebSocket {
+    constructor() {
+      this.readyState = 0;
+      this.onopen = null;
+      this.onclose = null;
+      this.onerror = null;
+      this.onmessage = null;
+      this.closeCalls = 0;
+      sockets.push(this);
+    }
+
+    close() {
+      this.closeCalls += 1;
+      this.readyState = 3;
+      this.onclose?.();
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket;
+  const { service } = createHealthyFormalReadinessService();
+  try {
+    await startHealthyFormalWorkers(service);
+    service["openRealtimeSockets"].clear();
+    service["realtime"] = {
+      ...service["realtime"],
+      enabled: true,
+      connected: false,
+      symbols: Array.from({ length: 181 }, (_, index) => `COIN${index}USDT`),
+      timeframes: ["5m"]
+    };
+    service["realtimeSockets"] = [];
+    service["openRealtimeSocket"]();
+    sockets[0].onopen();
+
+    service.onModuleDestroy();
+
+    assert.deepEqual(sockets.map((socket) => socket.closeCalls), [1, 1]);
+    assert.equal(service["realtimeSockets"].length, 0);
+    assert.equal(service["openRealtimeSockets"].size, 0);
+    assert.equal(service["realtime"].connected, false);
+    assert.ok(sockets.every((socket) => socket.onclose === null), "destroy must neutralize close handlers before closing sockets");
+    assert.equal(service["realtimeReconnectTimer"], null);
+    assert.equal(service["formalSignalReconciler"].getStatus().enabled, false);
+    assert.equal(service["formalDeliveryRetry"].getStatus().enabled, false);
+    assert.equal(service["formalSignalQueue"]["stopped"], true);
+  } finally {
+    service["closeRealtimeSocket"](false);
+    if (originalWebSocket === undefined) delete globalThis.WebSocket;
+    else globalThis.WebSocket = originalWebSocket;
+  }
+}
+
 function testRealtimeWebSocketFallsBackToWsPackage() {
   const original = globalThis.WebSocket;
   try {
@@ -1996,7 +2052,8 @@ const tests = [
   testGlobalScanStatusContract,
   testFormalReadinessReportsDatabaseAndRuntimeState,
   testFormalReadinessRequiresHealthyWorkerDependencies,
-  testFormalReadinessUsesActualOpenSocketsAcrossChunks
+  testFormalReadinessUsesActualOpenSocketsAcrossChunks,
+  testFormalSignalDestroyClosesSocketsAndStopsWorkers
 ];
 
 try {
