@@ -59,6 +59,18 @@ try {
     x: true
   }), /unexpected_closed_kline_boundary/);
 
+  assert.throws(() => formalSignalJobFromClosedKline({
+    t: Date.parse("2026-07-23T03:40:00.000Z"),
+    T: Date.parse("2026-07-23T03:49:59.998Z"),
+    s: "BTCUSDT",
+    i: "5m",
+    x: true
+  }), /unexpected_closed_kline_boundary/);
+
+  assert.throws(
+    () => expectedFormalBarTime("toString", new Date("2026-07-23T03:50:00.000Z")),
+    /unsupported_formal_timeframe/);
+
   assert.deepEqual(
     closedCandleOpenTimesBetween(
       "5m",

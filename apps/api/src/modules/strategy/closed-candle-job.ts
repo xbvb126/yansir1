@@ -27,7 +27,9 @@ export type ClosedBinanceKline = {
 };
 
 function normalizeFormalTimeframe(timeframe: string): keyof typeof TIMEFRAME_MS {
-  if (timeframe in TIMEFRAME_MS) return timeframe as keyof typeof TIMEFRAME_MS;
+  if (Object.prototype.hasOwnProperty.call(TIMEFRAME_MS, timeframe)) {
+    return timeframe as keyof typeof TIMEFRAME_MS;
+  }
   throw new Error(`unsupported_formal_timeframe:${timeframe}`);
 }
 
@@ -41,7 +43,7 @@ export function formalSignalJobKey(symbol: string, timeframe: string, klineOpenT
 
 export function expectedFormalBarTime(timeframe: string, closedAt: Date): number {
   const duration = timeframeMs(timeframe);
-  return Math.floor(closedAt.getTime() / duration) * duration - duration;
+  return closedAt.getTime() - duration;
 }
 
 export function formalSignalJobFromClosedKline(
