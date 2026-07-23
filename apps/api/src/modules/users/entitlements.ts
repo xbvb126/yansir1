@@ -100,17 +100,19 @@ const PLAN_LIMITS: Record<string, PlanLimits> = {
 };
 
 export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitlementRecord | null): UserEntitlements {
-  const planName = planOverride?.plan || user.plan;
+  const planName = user.plan || "Free";
   const planKey = planName.toLowerCase();
   const fallback = PLAN_LIMITS[planKey] ?? PLAN_LIMITS.free;
-  const dailySignalQuota = Number(planOverride?.dailySignalQuota ?? user.signalQuota ?? fallback.dailySignalQuota);
-  const maxWatchlistSymbols = Number(planOverride?.maxWatchlistSymbols ?? fallback.maxWatchlistSymbols);
+  const dailySignalQuota = tightenNumericLimit(fallback.dailySignalQuota, planOverride?.dailySignalQuota, user.signalQuota);
+  const maxWatchlistSymbols = tightenNumericLimit(fallback.maxWatchlistSymbols, planOverride?.maxWatchlistSymbols);
   const allowedTimeframes = normalizeAllowedTimeframes(planOverride?.allowedTimeframes, fallback.allowedTimeframes);
-  const supportsFeishu = Boolean(planOverride?.supportsFeishu ?? fallback.feishuAlerts);
-  const supportsApi = Boolean(planOverride?.supportsApi ?? fallback.apiAccess);
-  const supportsTeam = Boolean(planOverride?.supportsTeam ?? fallback.teamSeats > 0);
-  const configuredMaxPushPerDay = Number(planOverride?.maxPushPerDay ?? fallback.maxPushPerDay);
-  const maxPushPerDay = planKey === "free" || !supportsFeishu ? 0 : Math.max(0, configuredMaxPushPerDay);
+  const supportsFeishu = tightenBooleanLimit(fallback.feishuAlerts, planOverride?.supportsFeishu);
+  const supportsApi = tightenBooleanLimit(fallback.apiAccess, planOverride?.supportsApi);
+  const supportsTeam = tightenBooleanLimit(fallback.teamSeats > 0, planOverride?.supportsTeam);
+  const configuredMaxPushPerDay = tightenNumericLimit(fallback.maxPushPerDay, planOverride?.maxPushPerDay);
+  const maxPushPerDay = supportsFeishu ? configuredMaxPushPerDay : 0;
+  const minAlertScore = tightenMinimumScore(fallback.minAlertScore, planOverride?.minAlertScore);
+  const signalOutcomes = tightenBooleanLimit(fallback.signalOutcomes, planOverride?.supportsSignalOutcomes);
 
   return {
     plan: planName,
@@ -129,18 +131,36 @@ export function buildEntitlements(user: UserRecord, planOverride?: PlanEntitleme
     feishuAlerts: supportsFeishu && user.feishuEnabled,
     apiAccess: supportsApi,
     teamSeats: supportsTeam ? fallback.teamSeats : 0,
-    minAlertScore: Number(planOverride?.minAlertScore ?? fallback.minAlertScore),
+    minAlertScore,
     allowedTimeframes,
     realtimeDelayHours: fallback.formalSignalDelayHours,
     historyDays: fallback.formalSignalHistoryDays,
     maxPushPerDay,
-    signalOutcomes: Boolean(planOverride?.supportsSignalOutcomes ?? fallback.signalOutcomes)
+    signalOutcomes
   };
 }
 
 function normalizeAllowedTimeframes(value: string[] | null | undefined, fallback: string[]) {
-  const timeframes = (value?.length ? value : fallback)
+  const timeframes = (value === null || value === undefined ? fallback : value)
     .map((timeframe) => String(timeframe || "").trim().toLowerCase())
     .filter(Boolean);
-  return Array.from(new Set(timeframes));
+  const planTimeframes = new Set(fallback);
+  return Array.from(new Set(timeframes)).filter((timeframe) => planTimeframes.has(timeframe));
+}
+
+function tightenNumericLimit(cap: number, ...overrides: Array<number | null | undefined>) {
+  return overrides.reduce<number>((limit, override) => {
+    if (override === null || override === undefined) return limit;
+    const numeric = Number(override);
+    return Number.isFinite(numeric) ? Math.min(limit, Math.max(0, numeric)) : limit;
+  }, cap);
+}
+
+function tightenBooleanLimit(planAllows: boolean, override: boolean | null | undefined) {
+  return planAllows && override !== false;
+}
+
+function tightenMinimumScore(floor: number, override: number | null | undefined) {
+  if (override === null || override === undefined || !Number.isFinite(Number(override))) return floor;
+  return Math.max(floor, Math.min(100, Number(override)));
 }

@@ -283,6 +283,79 @@ async function testApprovedFormalSignalEntitlementMatrix() {
   assert.equal(unpushableFree.historyDays, 7);
   assert.equal(unpushableFree.maxPushPerDay, 0);
   assert.equal(unpushableFree.remainingDailyPushes, 0);
+
+  const staleFreeOverride = buildEntitlements(
+    entitlementUser('Free', { signalQuota: 2000, feishuEnabled: true, teamSeats: '0/5' }),
+    {
+      plan: 'SVIP',
+      dailySignalQuota: 2000,
+      supportsFeishu: true,
+      supportsApi: true,
+      maxWatchlistSymbols: 200,
+      allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
+      maxPushPerDay: 2000,
+      supportsSignalOutcomes: true,
+      realtimeDelayHours: 0,
+      historyDays: 365,
+      minAlertScore: 0
+    }
+  );
+  assert.equal(staleFreeOverride.maxWatchlistSymbols, 5);
+  assert.equal(staleFreeOverride.maxScanSymbols, 5);
+  assert.deepEqual(staleFreeOverride.allowedTimeframes, ['5m']);
+  assert.equal(staleFreeOverride.feishuAlerts, false, 'a stale Feishu binding cannot expand Free');
+  assert.equal(staleFreeOverride.apiAccess, false);
+  assert.equal(staleFreeOverride.maxPushPerDay, 0);
+  assert.equal(staleFreeOverride.dailySignalQuota, 10);
+  assert.equal(staleFreeOverride.formalSignalDelayHours, 8);
+  assert.equal(staleFreeOverride.formalSignalHistoryDays, 7);
+  assert.equal(staleFreeOverride.signalOutcomes, false);
+  assert.equal(staleFreeOverride.minAlertScore, 80);
+
+  const staleVipOverride = buildEntitlements(
+    entitlementUser('VIP', { signalQuota: 2000, feishuEnabled: true, teamSeats: '0/5' }),
+    {
+      plan: 'VIP',
+      dailySignalQuota: 2000,
+      supportsFeishu: true,
+      supportsApi: true,
+      maxWatchlistSymbols: 200,
+      allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
+      maxPushPerDay: 2000,
+      supportsSignalOutcomes: true
+    }
+  );
+  assert.equal(staleVipOverride.maxWatchlistSymbols, 50);
+  assert.deepEqual(staleVipOverride.allowedTimeframes, ['5m', '15m']);
+  assert.equal(staleVipOverride.feishuAlerts, true);
+  assert.equal(staleVipOverride.apiAccess, false, 'VIP must not gain SVIP API access');
+  assert.equal(staleVipOverride.maxPushPerDay, 300);
+  assert.equal(staleVipOverride.dailySignalQuota, 300);
+  assert.equal(staleVipOverride.formalSignalDelayHours, 0);
+  assert.equal(staleVipOverride.formalSignalHistoryDays, 30);
+
+  const tightenedVipOverride = buildEntitlements(
+    entitlementUser('VIP', { signalQuota: 300, feishuEnabled: true, teamSeats: '0/1' }),
+    {
+      plan: 'VIP',
+      dailySignalQuota: 5,
+      supportsFeishu: false,
+      supportsApi: false,
+      maxWatchlistSymbols: 3,
+      allowedTimeframes: ['5m'],
+      maxPushPerDay: 1,
+      minAlertScore: 90,
+      supportsSignalOutcomes: false
+    }
+  );
+  assert.equal(tightenedVipOverride.maxWatchlistSymbols, 3);
+  assert.deepEqual(tightenedVipOverride.allowedTimeframes, ['5m']);
+  assert.equal(tightenedVipOverride.feishuAlerts, false);
+  assert.equal(tightenedVipOverride.apiAccess, false);
+  assert.equal(tightenedVipOverride.maxPushPerDay, 0, 'disabling Feishu removes push allowance');
+  assert.equal(tightenedVipOverride.dailySignalQuota, 5);
+  assert.equal(tightenedVipOverride.minAlertScore, 90);
+  assert.equal(tightenedVipOverride.signalOutcomes, false);
 }
 
 async function expectRejectsMessage(fn, expected) {
