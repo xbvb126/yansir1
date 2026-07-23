@@ -41,7 +41,7 @@ try {
       return "accepted";
     },
     intervalSeconds: 900,
-    lookbackMinutes: 1440,
+    lookbackMinutes: 30,
     batchSize: 300
   });
 
@@ -88,6 +88,27 @@ try {
   assert.ok(
     retryJobs.some((job) => job.closedAt.getTime() <= new Date("2026-07-23T03:35:00.000Z").getTime()),
     "a failed close before the latest successful evaluation remains eligible for reconciliation"
+  );
+
+  const globalCompleted = new Set(["ETHUSDT:5m:1784778900000"]);
+  const gapJobs = [];
+  const gapReconciler = new FormalSignalReconciler({
+    targets: async () => ({ symbols: ["BTCUSDT", "ETHUSDT"], timeframes: ["5m"] }),
+    closeEvaluations: {
+      getLatestPersistedCloseAt: async () => new Date("2026-07-23T04:00:00.000Z"),
+      getEarliestIncompleteCloseAt: async () => null,
+      findCompletedKeys: async (keys) => new Set(keys.filter((key) => globalCompleted.has(key)))
+    },
+    enqueue: (job) => {
+      gapJobs.push(job);
+      return "accepted";
+    },
+    lookbackMinutes: 60
+  });
+  await gapReconciler.runOnce(now);
+  assert.ok(
+    gapJobs.some((job) => job.key === "BTCUSDT:5m:1784778900000"),
+    "a BTC close with no ledger row must be reconciled even when ETH reached the same or later global close"
   );
 
   console.log("formal signal reconciler tests passed");

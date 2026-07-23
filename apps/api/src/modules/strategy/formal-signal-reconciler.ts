@@ -97,18 +97,18 @@ export class FormalSignalReconciler {
     try {
       const latestPersistedCloseAt = await this.options.closeEvaluations.getLatestPersistedCloseAt();
       const earliestIncompleteCloseAt = await this.options.closeEvaluations.getEarliestIncompleteCloseAt();
-      const baseline = this.resolveBaseline(latestPersistedCloseAt, earliestIncompleteCloseAt, startedAt);
+      const baseline = this.resolveWindowStart(latestPersistedCloseAt, earliestIncompleteCloseAt, startedAt);
       const oldestKnownCloseAt = earliestIncompleteCloseAt ?? latestPersistedCloseAt;
       const recoveryWindowExceeded = oldestKnownCloseAt !== null
         && oldestKnownCloseAt.getTime() < startedAt.getTime() - this.lookbackMinutes * 60_000;
       const { symbols, timeframes } = await this.options.targets();
-      const candidates = buildCandidates(symbols, timeframes, baseline, startedAt).slice(0, this.batchSize);
+      const candidates = buildCandidates(symbols, timeframes, baseline, startedAt);
       const completedKeys = await this.findCompletedKeys(candidates.map((candidate) => candidate.key));
+      const missingCandidates = candidates.filter((candidate) => !completedKeys.has(candidate.key)).slice(0, this.batchSize);
       let enqueued = 0;
       let duplicates = 0;
       let pressure = 0;
-      for (const candidate of candidates) {
-        if (completedKeys.has(candidate.key)) continue;
+      for (const candidate of missingCandidates) {
         const outcome = this.options.enqueue(candidate);
         if (outcome === "accepted") enqueued += 1;
         else if (outcome === "duplicate") duplicates += 1;
@@ -120,7 +120,7 @@ export class FormalSignalReconciler {
         running: false,
         lastFinishedAt: finishedAt.toISOString(),
         nextRunAt: this.status.enabled ? new Date(finishedAt.getTime() + this.intervalSeconds * 1000).toISOString() : null,
-        candidates: candidates.length,
+        candidates: missingCandidates.length,
         enqueued,
         duplicates,
         pressure,
@@ -143,17 +143,9 @@ export class FormalSignalReconciler {
     return { ...this.status };
   }
 
-  private resolveBaseline(latestPersistedCloseAt: Date | null, earliestIncompleteCloseAt: Date | null, now: Date): Date {
+  private resolveWindowStart(latestPersistedCloseAt: Date | null, earliestIncompleteCloseAt: Date | null, now: Date): Date {
     const lookbackFloor = new Date(now.getTime() - this.lookbackMinutes * 60_000);
-    const latestBaseline = latestPersistedCloseAt
-      ? new Date(Math.max(latestPersistedCloseAt.getTime(), lookbackFloor.getTime()))
-      : null;
-    const incompleteBaseline = earliestIncompleteCloseAt
-      ? new Date(Math.max(earliestIncompleteCloseAt.getTime(), lookbackFloor.getTime()))
-      : null;
-    if (latestBaseline && incompleteBaseline) return new Date(Math.min(latestBaseline.getTime(), incompleteBaseline.getTime()));
-    if (latestBaseline) return latestBaseline;
-    if (incompleteBaseline) return incompleteBaseline;
+    if (latestPersistedCloseAt || earliestIncompleteCloseAt) return lookbackFloor;
     if (!this.initialBaseline) this.initialBaseline = new Date(now);
     return new Date(Math.max(this.initialBaseline.getTime(), lookbackFloor.getTime()));
   }
