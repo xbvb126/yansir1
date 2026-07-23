@@ -123,7 +123,10 @@ create table if not exists alert_deliveries (
   skip_reason text,
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  sent_at timestamptz
+  sent_at timestamptz,
+  retry_count integer not null default 0,
+  next_retry_at timestamptz,
+  last_attempt_at timestamptz
 );
 
 create table if not exists watchlists (
@@ -344,6 +347,9 @@ alter table alert_deliveries add column if not exists timeframe varchar(16);
 alter table alert_deliveries add column if not exists signal_type varchar(120);
 alter table alert_deliveries add column if not exists skip_reason text;
 alter table alert_deliveries add column if not exists sent_at timestamptz;
+alter table alert_deliveries add column if not exists retry_count integer not null default 0;
+alter table alert_deliveries add column if not exists next_retry_at timestamptz;
+alter table alert_deliveries add column if not exists last_attempt_at timestamptz;
 
 
 alter table plans add column if not exists max_watchlist_symbols integer not null default 5;
@@ -373,6 +379,9 @@ create index if not exists idx_market_snapshots_symbol_time on market_snapshots(
 create index if not exists idx_strategy_runs_symbol_time on strategy_runs(symbol, started_at desc);
 create index if not exists idx_alert_deliveries_user_time on alert_deliveries(user_id, created_at desc);
 create unique index if not exists idx_alert_deliveries_user_signal_channel on alert_deliveries(user_id, signal_event_id, channel) where signal_event_id is not null;
+create index if not exists idx_alert_deliveries_retry
+  on alert_deliveries(status, next_retry_at)
+  where status in ('failed', 'sending');
 create index if not exists idx_billing_orders_user_time on billing_orders(user_id, created_at desc);
 
 

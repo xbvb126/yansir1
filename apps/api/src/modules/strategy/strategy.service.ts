@@ -13,6 +13,7 @@ import { CloseEvaluationRepository, type CloseEvaluationReservation } from "./cl
 import { FormalSignalJob, formalSignalJobFromClosedKline } from "./closed-candle-job";
 import { FormalSignalQueue } from "./formal-signal-queue";
 import { FormalSignalReconciler } from "./formal-signal-reconciler";
+import { FormalDeliveryRetry, type FormalDeliveryRetryCandidate } from "./formal-delivery-retry";
 import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
@@ -306,6 +307,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private formalSignalQueue: FormalSignalQueue;
   private readonly formalSignalReconciler: FormalSignalReconciler;
+  private readonly formalDeliveryRetry: FormalDeliveryRetry;
   private formalPipeline: FormalPipelineState = {
     latestSuccessfulCalculationAt: null,
     latestPersistenceAt: null,
@@ -377,10 +379,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       closeEvaluations: this.closeEvaluations,
       enqueue: (job) => this.formalSignalQueue.enqueue(job)
     });
+    this.formalDeliveryRetry = new FormalDeliveryRetry({
+      database: this.database,
+      retryDelivery: (candidate) => this.retryFormalDelivery(candidate)
+    });
   }
 
   onModuleInit() {
     if (process.env.STRATEGY_GLOBAL_SCAN_ENABLED === "true") this.globalScanner.start();
+    this.formalDeliveryRetry.start();
 
     this.realtimeStartupTimer = setTimeout(() => {
       this.realtimeStartupTimer = null;
@@ -428,10 +435,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     this.globalScanner.stop();
     this.formalSignalReconciler.stop();
     this.formalSignalQueue.stop();
+    this.formalDeliveryRetry.stop();
   }
 
   getGlobalScanStatus() {
-    return { scanner: this.globalScanner.getStatus(), reconciliation: this.formalSignalReconciler.getStatus() };
+    return {
+      scanner: this.globalScanner.getStatus(),
+      reconciliation: this.formalSignalReconciler.getStatus(),
+      deliveryRetry: this.formalDeliveryRetry.getStatus()
+    };
   }
 
   private async runGlobalScanSlot(slot: GlobalScanSlot) {
@@ -1892,7 +1904,29 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow) {
+  private async retryFormalDelivery(candidate: FormalDeliveryRetryCandidate) {
+    const event: SignalEventRow = {
+      ...candidate.event,
+      performance_entry_price: null,
+      performance_price_15m: null,
+      performance_price_1h: null,
+      performance_price_4h: null,
+      performance_price_24h: null,
+      performance_return_5m: null,
+      performance_return_15m: null,
+      performance_return_1h: null,
+      performance_return_4h: null,
+      performance_return_24h: null,
+      performance_max_favorable_pct: null,
+      performance_max_adverse_pct: null,
+      performance_outcome_status: null,
+      performance_evaluated_until: null,
+      performance_updated_at: null
+    };
+    return (await this.deliverInboxSignal(event, candidate.watchlist, true)) ?? { skipped: true };
+  }
+
+  private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow, retry = false) {
     return this.withUserDeliveryLock(watchlist.user_id, async () => {
       const preparation = await this.prepareDelivery(event, watchlist.user_id);
       if (!this.database.enabled) {
@@ -1902,7 +1936,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
       const reserved = await this.database.withAdvisoryTransaction(
         `formal-delivery:${watchlist.user_id}`,
-        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction)
+        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction, retry)
       );
       if (!reserved) return;
 
@@ -1952,21 +1986,29 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     event: SignalEventRow,
     watchlist: WatchlistRow,
     preparation: DeliveryPreparation,
-    transaction: DatabaseTransaction
+    transaction: DatabaseTransaction,
+    retry = false
   ) {
     const channel = "feishu";
-    const existing = await transaction.query<{ status: string }>(
-      `
-        select status
-        from alert_deliveries
-        where user_id = $1::uuid
-          and signal_event_id = $2::uuid
-          and channel = $3::varchar
-        limit 1
-      `,
-      [watchlist.user_id, event.id, channel]
-    );
-    if (existing.length) return false;
+    if (!retry) {
+      const existing = await transaction.query<{ status: string }>(
+        `
+          select status
+          from alert_deliveries
+          where user_id = $1::uuid
+            and signal_event_id = $2::uuid
+            and channel = $3::varchar
+          limit 1
+        `,
+        [watchlist.user_id, event.id, channel]
+      );
+      if (existing.length) return false;
+    }
+
+    if (!watchlist.enabled) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_disabled", transaction);
+      return false;
+    }
 
     if (!watchlist.push_enabled) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled", transaction);
@@ -2017,11 +2059,25 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
+    const conflictAction = retry
+      ? `
+          on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
+            status = 'sending',
+            retry_count = alert_deliveries.retry_count + 1,
+            last_attempt_at = now(),
+            next_retry_at = null,
+            reason = null,
+            skip_reason = null
+          where alert_deliveries.status = 'failed'
+            and alert_deliveries.retry_count < 3
+            and coalesce(alert_deliveries.next_retry_at, now()) <= now()
+        `
+      : "on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do nothing";
     const inserted = await transaction.query<{ id: string }>(
       `
-        insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, payload)
-        values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'sending', $9::jsonb)
-        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do nothing
+        insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, payload, last_attempt_at)
+        values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'sending', $9::jsonb, now())
+        ${conflictAction}
         returning id::text
       `,
       [watchlist.user_id, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, JSON.stringify(event.payload ?? {})]
@@ -2078,7 +2134,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
               reason = $6::text,
               skip_reason = null,
               payload = $7::jsonb,
-              sent_at = case when $4::varchar = 'sent' then now() else sent_at end
+              sent_at = case when $4::varchar = 'sent' then now() else sent_at end,
+              last_attempt_at = now(),
+              next_retry_at = case
+                when $4::varchar = 'sent' then null
+                when retry_count <= 1 then now() + interval '1 minute'
+                when retry_count = 2 then now() + interval '2 minutes'
+                else now() + interval '4 minutes'
+              end
           where user_id = $1::uuid
             and signal_event_id = $2::uuid
             and channel = $3::varchar

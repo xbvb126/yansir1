@@ -254,7 +254,7 @@ function timeframeDurationMs(timeframe) {
   return Number(match[1]) * (match[2] === "h" ? 60 : 1) * 60_000;
 }
 
-function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
+function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}) {
   const signalEvents = new Map();
   const inbox = new Map();
   const deliveries = [];
@@ -321,7 +321,7 @@ function createLifecycleFixture({ cooldownMinutes = 0 } = {}) {
       }
       if (normalizedSql.includes("from users u") && normalizedSql.includes("user_push_settings")) {
         return [{
-          enabled: true,
+          enabled: pushEnabled,
           min_score: 0,
           cooldown_minutes: cooldownMinutes,
           target_encrypted: "https://example.test/webhook",
@@ -1236,6 +1236,73 @@ async function testStalledFeishuTimesOutAfterReservationTransactionReleases() {
   }
 }
 
+async function testFormalDeliveryRetryRechecksCurrentEntitlements() {
+  const fixture = createLifecycleFixture();
+  const downgradedUsersService = usersService();
+  downgradedUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, feishuAlerts: false }
+  });
+  const { service } = createService(strategyResult, { ...fixture, usersService: downgradedUsersService });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000306");
+  fixture.deliveries.push({
+    user_id: USER_ID,
+    signal_event_id: event.id,
+    channel: "feishu",
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    direction: event.direction,
+    signal_type: event.signal_type,
+    status: "failed",
+    reason: "provider_failed"
+  });
+
+  const outcome = await service["retryFormalDelivery"]({
+    deliveryId: "delivery-1",
+    userId: USER_ID,
+    signalEventId: event.id,
+    event,
+    watchlist: deliveryWatchlist()
+  });
+
+  assert.equal(outcome?.skipped, true);
+  assert.equal(fixture.alertCalls.length, 0);
+  assert.deepEqual(
+    fixture.deliveries.map(({ status, reason }) => ({ status, reason })),
+    [{ status: "skipped", reason: "plan_or_feishu_disabled" }],
+    "a retry must not bypass the user's current plan"
+  );
+}
+
+async function testFormalDeliveryRetryRechecksDisabledPushSetting() {
+  const fixture = createLifecycleFixture({ pushEnabled: false });
+  const { service } = createService(strategyResult, fixture);
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000307");
+  fixture.deliveries.push({
+    user_id: USER_ID,
+    signal_event_id: event.id,
+    channel: "feishu",
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    direction: event.direction,
+    signal_type: event.signal_type,
+    status: "failed",
+    reason: "provider_failed"
+  });
+
+  const outcome = await service["retryFormalDelivery"]({
+    deliveryId: "delivery-2",
+    userId: USER_ID,
+    signalEventId: event.id,
+    event,
+    watchlist: deliveryWatchlist()
+  });
+
+  assert.equal(outcome?.skipped, true);
+  assert.equal(fixture.alertCalls.length, 0);
+  assert.equal(fixture.deliveries[0].status, "skipped");
+  assert.equal(fixture.deliveries[0].reason, "push_setting_disabled");
+}
+
 async function testGlobalScanPersistsAndDeliversEachMatchOnce() {
   const fixture = createLifecycleFixture();
   const { service } = createService(
@@ -1371,10 +1438,11 @@ async function testGlobalScanStatusContract() {
 
     assert.deepEqual(service.getGlobalScanStatus(), {
       scanner: service["globalScanner"].getStatus(),
-      reconciliation: service["formalSignalReconciler"].getStatus()
+      reconciliation: service["formalSignalReconciler"].getStatus(),
+      deliveryRetry: service["formalDeliveryRetry"].getStatus()
     });
 
-    const { scanner, reconciliation } = service.getGlobalScanStatus();
+    const { scanner, reconciliation, deliveryRetry } = service.getGlobalScanStatus();
     assert.equal(scanner.enabled, false);
     assert.equal(scanner.nextRunAt, null);
     assert.deepEqual(scanner.errors, []);
@@ -1383,6 +1451,8 @@ async function testGlobalScanStatusContract() {
     }
     assert.equal(reconciliation.enabled, false);
     assert.equal(reconciliation.intervalSeconds, 900);
+    assert.equal(deliveryRetry.enabled, true);
+    assert.equal(deliveryRetry.intervalSeconds, 60);
     service.onModuleDestroy();
   } finally {
     globalThis.setTimeout = originalSetTimeout;
@@ -1501,6 +1571,8 @@ const tests = [
   testConcurrentDistinctUsersDoNotBlockEachOther,
   testConcurrentSameSignalEventIsReservedOnceAcrossInstances,
   testStalledFeishuTimesOutAfterReservationTransactionReleases,
+  testFormalDeliveryRetryRechecksCurrentEntitlements,
+  testFormalDeliveryRetryRechecksDisabledPushSetting,
   testGlobalScanPersistsAndDeliversEachMatchOnce,
   testGlobalScanPersistsBlockedUserMatchWithoutSending,
   testGlobalScannerHonorsOptOutAndStopsOnShutdown,
