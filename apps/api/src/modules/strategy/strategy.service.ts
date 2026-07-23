@@ -1923,10 +1923,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       performance_evaluated_until: null,
       performance_updated_at: null
     };
-    return (await this.deliverInboxSignal(event, candidate.watchlist, true)) ?? { skipped: true };
+    return (await this.deliverInboxSignal(event, candidate.watchlist, true, true)) ?? { skipped: true };
   }
 
-  private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow, retry = false) {
+  private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow, retry = false, preclaimedRetry = false) {
     return this.withUserDeliveryLock(watchlist.user_id, async () => {
       const preparation = await this.prepareDelivery(event, watchlist.user_id);
       if (!this.database.enabled) {
@@ -1936,7 +1936,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
       const reserved = await this.database.withAdvisoryTransaction(
         `formal-delivery:${watchlist.user_id}`,
-        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction, retry)
+        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction, retry, preclaimedRetry)
       );
       if (!reserved) return;
 
@@ -1987,7 +1987,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     watchlist: WatchlistRow,
     preparation: DeliveryPreparation,
     transaction: DatabaseTransaction,
-    retry = false
+    retry = false,
+    preclaimedRetry = false
   ) {
     const channel = "feishu";
     if (!retry) {
@@ -2058,6 +2059,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       await this.recordSkippedDelivery(event, watchlist.user_id, "memory_cooldown", transaction);
       return false;
     }
+
+    if (preclaimedRetry) return true;
 
     const conflictAction = retry
       ? `

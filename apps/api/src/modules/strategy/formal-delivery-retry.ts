@@ -58,6 +58,11 @@ export type FormalDeliveryRetryResult = {
 
 type RetryDatabase = {
   enabled: boolean;
+  queryStrict<T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  withTransaction<T>(operation: (transaction: RetryTransaction) => Promise<T>): Promise<T>;
+};
+
+type RetryTransaction = {
   query<T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 };
 
@@ -198,7 +203,7 @@ export class FormalDeliveryRetry {
   }
 
   private async recoverStaleReservations(now: Date) {
-    await this.options.database.query(
+    await this.options.database.queryStrict(
       `
         update alert_deliveries
         set status = 'failed',
@@ -212,8 +217,30 @@ export class FormalDeliveryRetry {
   }
 
   private async pickDueDeliveries(): Promise<RetryDeliveryRow[]> {
-    return this.options.database.query<RetryDeliveryRow>(
+    return this.options.database.withTransaction((transaction) => transaction.query<RetryDeliveryRow>(
       `
+        with due as (
+          select id
+          from alert_deliveries
+          where channel = 'feishu'
+            and status = 'failed'
+            and retry_count < $1::integer
+            and coalesce(next_retry_at, now()) <= now()
+          order by next_retry_at nulls first, created_at
+          limit $2::integer
+          for update skip locked
+        ), claimed as (
+          update alert_deliveries ad
+          set status = 'sending',
+              retry_count = ad.retry_count + 1,
+              last_attempt_at = now(),
+              next_retry_at = null,
+              reason = null,
+              skip_reason = null
+          from due
+          where ad.id = due.id
+          returning ad.id, ad.user_id, ad.signal_event_id
+        )
         select
           ad.id::text as delivery_id,
           ad.user_id::text as user_id,
@@ -241,25 +268,19 @@ export class FormalDeliveryRetry {
           w.created_at as watchlist_created_at,
           w.updated_at as watchlist_updated_at,
           w.disabled_at as watchlist_disabled_at
-        from alert_deliveries ad
-        join signal_events se on se.id = ad.signal_event_id
-        join watchlists w on w.user_id = ad.user_id
+        from claimed c
+        join alert_deliveries ad on ad.id = c.id
+        join signal_events se on se.id = c.signal_event_id
+        join watchlists w on w.user_id = c.user_id
           and w.symbol = se.symbol
           and se.timeframe = any(w.timeframes)
-        where ad.channel = 'feishu'
-          and ad.status = 'failed'
-          and ad.retry_count < $1::integer
-          and coalesce(ad.next_retry_at, now()) <= now()
-        order by ad.next_retry_at nulls first, ad.created_at
-        limit $2::integer
-        for update skip locked
       `,
       [this.maxRetries, this.batchSize]
-    );
+    ));
   }
 
   private async countExhaustedDeliveries(): Promise<number> {
-    const rows = await this.options.database.query<{ exhausted: string | number }>(
+    const rows = await this.options.database.queryStrict<{ exhausted: string | number }>(
       `
         select count(*)::text as exhausted
         from alert_deliveries

@@ -36,30 +36,54 @@ function delivery(id, overrides = {}) {
 }
 
 function retryStore(deliveries, clock) {
+  const strictQueries = [];
+  let transactionActive = 0;
+  let transactionCalls = 0;
+  const queryStrict = async (sql) => {
+    strictQueries.push(sql);
+    const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalized.startsWith("update alert_deliveries") && normalized.includes("stale_delivery_reservation")) {
+      for (const row of deliveries) {
+        if (row.status === "sending" && new Date(row.last_attempt_at).getTime() <= clock.now().getTime() - 300_000) {
+          row.status = "failed";
+          row.reason = "stale_delivery_reservation";
+          row.next_retry_at = clock.now().toISOString();
+        }
+      }
+      return [];
+    }
+    if (normalized.startsWith("with due as") && normalized.includes("update alert_deliveries")) {
+      return deliveries
+        .filter((row) => row.status === "failed" && row.retry_count < 3 && (!row.next_retry_at || new Date(row.next_retry_at) <= clock.now()))
+        .slice(0, 50)
+        .map((row) => {
+          row.status = "sending";
+          row.retry_count += 1;
+          row.last_attempt_at = clock.now().toISOString();
+          row.next_retry_at = null;
+          return { delivery_id: row.id, user_id: row.user_id, signal_event_id: row.signal_event_id };
+        });
+    }
+    if (normalized.includes("count(*)::text as exhausted")) {
+      return [{ exhausted: String(deliveries.filter((row) => row.status === "failed" && row.retry_count >= 3).length) }];
+    }
+    throw new Error(`Unhandled retry query: ${normalized}`);
+  };
   return {
     enabled: true,
-    async query(sql) {
-      const normalized = sql.replace(/\s+/g, " ").trim().toLowerCase();
-      if (normalized.startsWith("update alert_deliveries") && normalized.includes("stale_delivery_reservation")) {
-        for (const row of deliveries) {
-          if (row.status === "sending" && new Date(row.last_attempt_at).getTime() <= clock.now().getTime() - 300_000) {
-            row.status = "failed";
-            row.reason = "stale_delivery_reservation";
-            row.next_retry_at = clock.now().toISOString();
-          }
-        }
-        return [];
+    strictQueries,
+    get transactionActive() { return transactionActive; },
+    get transactionCalls() { return transactionCalls; },
+    query: async () => { throw new Error("retry worker must use strict database access"); },
+    queryStrict,
+    withTransaction: async (operation) => {
+      transactionCalls += 1;
+      transactionActive += 1;
+      try {
+        return await operation({ query: queryStrict });
+      } finally {
+        transactionActive -= 1;
       }
-      if (normalized.includes("from alert_deliveries ad") && normalized.includes("for update skip locked")) {
-        return deliveries
-          .filter((row) => row.status === "failed" && row.retry_count < 3 && (!row.next_retry_at || new Date(row.next_retry_at) <= clock.now()))
-          .slice(0, 50)
-          .map((row) => ({ delivery_id: row.id, user_id: row.user_id, signal_event_id: row.signal_event_id }));
-      }
-      if (normalized.includes("count(*)::text as exhausted")) {
-        return [{ exhausted: String(deliveries.filter((row) => row.status === "failed" && row.retry_count >= 3).length) }];
-      }
-      throw new Error(`Unhandled retry query: ${normalized}`);
     }
   };
 }
@@ -67,11 +91,8 @@ function retryStore(deliveries, clock) {
 function reserveAndDeliver(deliveries, clock, provider) {
   return async (candidate) => {
     const row = deliveries.find((item) => item.id === candidate.deliveryId);
-    if (!row || row.status !== "failed" || row.retry_count >= 3 || (row.next_retry_at && new Date(row.next_retry_at) > clock.now())) return { skipped: true };
-    row.status = "sending";
-    row.retry_count += 1;
-    row.last_attempt_at = clock.now().toISOString();
-    row.next_retry_at = null;
+    if (!row || row.status !== "sending" || row.retry_count > 3) return { skipped: true };
+    provider.assertOutsideTransaction?.();
     if (provider.result.sent) {
       row.status = "sent";
       return { sent: true };
@@ -98,8 +119,10 @@ try {
   const clock = createClock();
   const deliveries = [delivery("1")];
   const provider = { result: { sent: false } };
+  const store = retryStore(deliveries, clock);
+  provider.assertOutsideTransaction = () => assert.equal(store.transactionActive, 0, "provider I/O must occur after the claim transaction commits");
   const retry = new FormalDeliveryRetry({
-    database: retryStore(deliveries, clock),
+    database: store,
     retryDelivery: reserveAndDeliver(deliveries, clock, provider),
     now: clock.now
   });
@@ -109,6 +132,11 @@ try {
   assert.equal(first.failed, 1);
   assert.equal(deliveries[0].retry_count, 1);
   assert.ok(new Date(deliveries[0].next_retry_at) > clock.now());
+  assert.ok(
+    store.strictQueries.some((sql) => sql.replace(/\s+/g, " ").trim().toLowerCase().startsWith("with due as")),
+    "due rows must be atomically claimed in a strict transaction before provider I/O"
+  );
+  assert.equal(store.transactionCalls, 1);
 
   clock.advanceTo(deliveries[0].next_retry_at);
   provider.result = { sent: true };
@@ -131,8 +159,7 @@ try {
   let reservationCalls = 0;
   const reserveOnce = async (candidate) => {
     const row = contended.find((item) => item.id === candidate.deliveryId);
-    if (row.status !== "failed") return { skipped: true };
-    row.status = "sending";
+    if (row.status !== "sending") return { skipped: true };
     reservationCalls += 1;
     return { sent: true };
   };
@@ -141,7 +168,7 @@ try {
   await Promise.all([workerA.runOnce(), workerB.runOnce()]);
   assert.equal(reservationCalls, 1, "two workers must only reserve one retry attempt");
 
-  const stale = [delivery("4", { status: "sending", last_attempt_at: "2026-07-23T03:54:00.000Z" })];
+  const stale = [delivery("4", { status: "sending", retry_count: 3, last_attempt_at: "2026-07-23T03:54:00.000Z" })];
   const staleRetry = new FormalDeliveryRetry({
     database: retryStore(stale, clock),
     retryDelivery: async () => ({ skipped: true }),
@@ -180,6 +207,19 @@ try {
   idleRetry.start();
   await timerCallback();
   idleRetry.stop();
+
+  const outageRetry = new FormalDeliveryRetry({
+    database: {
+      enabled: true,
+      query: async () => { throw new Error("must not use swallowing query"); },
+      queryStrict: async () => { throw new Error("database_offline"); },
+      withTransaction: async () => { throw new Error("database_offline"); }
+    },
+    retryDelivery: async () => ({ sent: true }),
+    now: clock.now
+  });
+  const outage = await outageRetry.runOnce();
+  assert.equal(outage.lastError, "database_offline", "a database outage must not be reported as an empty healthy retry run");
 
   console.log("formal delivery retry tests passed");
 } finally {
