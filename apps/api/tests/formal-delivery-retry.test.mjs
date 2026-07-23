@@ -52,9 +52,19 @@ function retryStore(deliveries, clock) {
       }
       return [];
     }
+    if (normalized.startsWith("update alert_deliveries") && normalized.includes("watchlist_no_longer_matches")) {
+      for (const row of deliveries) {
+        if (row.status === "failed" && row.matches_watchlist === false) {
+          row.status = "skipped";
+          row.reason = "watchlist_no_longer_matches";
+          row.next_retry_at = null;
+        }
+      }
+      return [];
+    }
     if (normalized.startsWith("with due as") && normalized.includes("update alert_deliveries")) {
       return deliveries
-        .filter((row) => row.status === "failed" && row.retry_count < 3 && (!row.next_retry_at || new Date(row.next_retry_at) <= clock.now()))
+        .filter((row) => row.status === "failed" && row.matches_watchlist !== false && row.retry_count < 3 && (!row.next_retry_at || new Date(row.next_retry_at) <= clock.now()))
         .slice(0, 50)
         .map((row) => {
           row.status = "sending";
@@ -220,6 +230,22 @@ try {
   });
   const outage = await outageRetry.runOnce();
   assert.equal(outage.lastError, "database_offline", "a database outage must not be reported as an empty healthy retry run");
+
+  const removedWatchlist = [delivery("6", { matches_watchlist: false })];
+  let removedAttempts = 0;
+  const removedRetry = new FormalDeliveryRetry({
+    database: retryStore(removedWatchlist, clock),
+    retryDelivery: async () => { removedAttempts += 1; return { sent: true }; },
+    now: clock.now
+  });
+  const firstRemoved = await removedRetry.runOnce();
+  const secondRemoved = await removedRetry.runOnce();
+  assert.equal(firstRemoved.picked, 0);
+  assert.equal(secondRemoved.picked, 0, "a removed watchlist must not be repeatedly claimed");
+  assert.equal(removedAttempts, 0);
+  assert.equal(removedWatchlist[0].status, "skipped");
+  assert.equal(removedWatchlist[0].reason, "watchlist_no_longer_matches");
+  assert.equal(removedWatchlist[0].retry_count, 0, "terminal watchlist handling must not burn a retry attempt");
 
   console.log("formal delivery retry tests passed");
 } finally {

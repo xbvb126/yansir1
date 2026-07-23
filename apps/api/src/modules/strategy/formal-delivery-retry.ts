@@ -178,6 +178,7 @@ export class FormalDeliveryRetry {
 
     try {
       await this.recoverStaleReservations(startedAt);
+      await this.skipDeliveriesWithoutCurrentWatchlist();
       const rows = await this.pickDueDeliveries();
       let sent = 0;
       let failed = 0;
@@ -226,6 +227,21 @@ export class FormalDeliveryRetry {
             and status = 'failed'
             and retry_count < $1::integer
             and coalesce(next_retry_at, now()) <= now()
+            and exists (
+              select 1
+              from signal_events se
+              join watchlists w on w.user_id = ad.user_id
+                and w.symbol = se.symbol
+                and se.timeframe = any(w.timeframes)
+                and w.enabled = true
+                and w.min_score <= se.score
+                and (
+                  w.signal_scope not in ('trend_only', 'reversal_only')
+                  or (w.signal_scope = 'trend_only' and coalesce(se.signal_type, '') like '%trend%')
+                  or (w.signal_scope = 'reversal_only' and coalesce(se.signal_type, '') like '%reversal%')
+                )
+              where se.id = ad.signal_event_id
+            )
           order by next_retry_at nulls first, created_at
           limit $2::integer
           for update skip locked
@@ -271,9 +287,22 @@ export class FormalDeliveryRetry {
         from claimed c
         join alert_deliveries ad on ad.id = c.id
         join signal_events se on se.id = c.signal_event_id
-        join watchlists w on w.user_id = c.user_id
-          and w.symbol = se.symbol
-          and se.timeframe = any(w.timeframes)
+        join lateral (
+          select w.*
+          from watchlists w
+          where w.user_id = c.user_id
+            and w.symbol = se.symbol
+            and se.timeframe = any(w.timeframes)
+            and w.enabled = true
+            and w.min_score <= se.score
+            and (
+              w.signal_scope not in ('trend_only', 'reversal_only')
+              or (w.signal_scope = 'trend_only' and coalesce(se.signal_type, '') like '%trend%')
+              or (w.signal_scope = 'reversal_only' and coalesce(se.signal_type, '') like '%reversal%')
+            )
+          order by w.updated_at desc
+          limit 1
+        ) w on true
       `,
       [this.maxRetries, this.batchSize]
     ));
@@ -291,6 +320,35 @@ export class FormalDeliveryRetry {
       [this.maxRetries]
     );
     return Math.max(0, Number(rows[0]?.exhausted ?? 0));
+  }
+
+  private async skipDeliveriesWithoutCurrentWatchlist() {
+    await this.options.database.queryStrict(
+      `
+        update alert_deliveries ad
+        set status = 'skipped',
+            reason = 'watchlist_no_longer_matches',
+            skip_reason = 'watchlist_no_longer_matches',
+            next_retry_at = null
+        where ad.channel = 'feishu'
+          and ad.status = 'failed'
+          and not exists (
+            select 1
+            from signal_events se
+            join watchlists w on w.user_id = ad.user_id
+              and w.symbol = se.symbol
+              and se.timeframe = any(w.timeframes)
+              and w.enabled = true
+              and w.min_score <= se.score
+              and (
+                w.signal_scope not in ('trend_only', 'reversal_only')
+                or (w.signal_scope = 'trend_only' and coalesce(se.signal_type, '') like '%trend%')
+                or (w.signal_scope = 'reversal_only' and coalesce(se.signal_type, '') like '%reversal%')
+              )
+            where se.id = ad.signal_event_id
+          )
+      `
+    );
   }
 
   private finish(runAt: Date, error?: string): DeliveryRetryStatus {
