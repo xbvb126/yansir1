@@ -192,11 +192,49 @@ function createService(result = strategyResult, overrides = {}) {
     enabled: false,
     query: async () => []
   };
+  const closeEvaluations = overrides.closeEvaluations ?? {
+    reserve: async () => ({ id: "close-evaluation-1", attempts: 1 }),
+    complete: async () => {},
+    fail: async () => {}
+  };
   return {
-    service: new StrategyService(strategyClient, marketService, signalsService, alertsService, overrides.usersService ?? usersService(), database),
+    service: new StrategyService(strategyClient, marketService, signalsService, alertsService, overrides.usersService ?? usersService(), database, closeEvaluations),
     savedSignals,
     strategyCalls,
     marketCalls
+  };
+}
+
+function realtimeJob(symbol = "BTCUSDT", timeframe = "5m", closedAt = "2026-07-23T03:50:00.000Z") {
+  const closed = new Date(closedAt);
+  const klineOpenTime = closed.getTime() - timeframeDurationMs(timeframe);
+  return {
+    key: `${symbol}:${timeframe}:${klineOpenTime}`,
+    symbol,
+    timeframe,
+    klineOpenTime,
+    closedAt: closed,
+    enqueuedAt: new Date(closed.getTime() + 500),
+    source: "realtime"
+  };
+}
+
+function closeEvaluationFixture() {
+  const completed = [];
+  const failed = [];
+  const reservations = new Set();
+  return {
+    completed,
+    failed,
+    repository: {
+      reserve: async (job) => {
+        if (reservations.has(job.key)) return null;
+        reservations.add(job.key);
+        return { id: `evaluation-${reservations.size}`, attempts: 1 };
+      },
+      complete: async (id, signalCount, finishedAt) => { completed.push({ id, signalCount, finishedAt }); },
+      fail: async (id, error, finishedAt) => { failed.push({ id, error, finishedAt }); }
+    }
   };
 }
 
@@ -811,6 +849,102 @@ async function testGlobalScanFuturesFailureCreatesNoFormalLifecycle() {
   assert.equal(fixture.deliveries.length, 0);
 }
 
+async function testRealtimeFormalExecutorUsesOnlyTheClosedCandleAndDeliversOnce() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const { service, marketCalls, strategyCalls } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+  const job = realtimeJob("BTCUSDT", "5m", "2026-07-23T03:50:00.000Z");
+
+  const outcome = await service["executeFormalSignalJob"](job);
+
+  assert.equal(outcome.status, "completed");
+  assert.equal(marketCalls[0].endTime, job.closedAt.getTime() - 1);
+  assert.equal(strategyCalls[0].candles.at(-1).open_time, job.klineOpenTime);
+  assert.equal(fixture.signalEvents.size, 1);
+  assert.equal(fixture.inbox.size, 1);
+  assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
+  assert.deepEqual(evaluations.completed.map(({ signalCount }) => signalCount), [1]);
+}
+
+async function testRealtimeFormalExecutorRejectsTheNewlyOpenedBar() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(
+      symbol,
+      timeframe,
+      true,
+      candles.at(-1).open_time + timeframeDurationMs(timeframe)
+    ),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+
+  const outcome = await service["executeFormalSignalJob"](realtimeJob());
+
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.error, /unexpected_formal_bar_time/);
+  assert.equal(fixture.signalEvents.size, 0);
+  assert.equal(fixture.inbox.size, 0);
+  assert.deepEqual(evaluations.completed, []);
+  assert.equal(evaluations.failed.length, 1);
+}
+
+async function testRealtimeFormalExecutorDoesNotDeliverUnpersistedSignals() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const signalsService = {
+    saveStrategySignals: async () => ({ persisted: false, count: 0 })
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository, signalsService }
+  );
+
+  const outcome = await service["executeFormalSignalJob"](realtimeJob());
+
+  assert.equal(outcome.status, "failed");
+  assert.match(outcome.error, /signal_persistence_unavailable/);
+  assert.equal(fixture.inbox.size, 0);
+  assert.equal(fixture.deliveries.length, 0);
+  assert.equal(evaluations.failed.length, 1);
+}
+
+async function testRealtimeFormalExecutorCompletesZeroSignalEvaluation() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, false, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+
+  const outcome = await service["executeFormalSignalJob"](realtimeJob());
+
+  assert.equal(outcome.status, "completed");
+  assert.equal(outcome.signalCount, 0);
+  assert.deepEqual(evaluations.completed.map(({ signalCount }) => signalCount), [0]);
+  assert.equal(fixture.inbox.size, 0);
+}
+
+async function testRealtimeFormalExecutorSkipsDuplicateJobs() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const { service, strategyCalls } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, false, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+  const job = realtimeJob();
+
+  const first = await service["executeFormalSignalJob"](job);
+  const second = await service["executeFormalSignalJob"](job);
+
+  assert.equal(first.status, "completed");
+  assert.equal(second.status, "duplicate");
+  assert.equal(strategyCalls.length, 1);
+}
+
 function deliveryEvent(id, overrides = {}) {
   return {
     id,
@@ -1225,6 +1359,11 @@ const tests = [
   testGlobalScanRejectsPersistedCountMismatch,
   testGlobalScanRejectsIncompleteStrictEventLookup,
   testGlobalScanFuturesFailureCreatesNoFormalLifecycle,
+  testRealtimeFormalExecutorUsesOnlyTheClosedCandleAndDeliversOnce,
+  testRealtimeFormalExecutorRejectsTheNewlyOpenedBar,
+  testRealtimeFormalExecutorDoesNotDeliverUnpersistedSignals,
+  testRealtimeFormalExecutorCompletesZeroSignalEvaluation,
+  testRealtimeFormalExecutorSkipsDuplicateJobs,
   testConcurrentSameUserDeliveriesReserveDailyLimit,
   testConcurrentSameUserDeliveriesReserveCooldown,
   testAdvisoryReservationUsesOnlyItsClientAndReleasesBeforeFeishu,

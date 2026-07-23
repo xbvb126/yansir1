@@ -9,6 +9,8 @@ import { UserEntitlements } from "../users/entitlements";
 import { UsersService } from "../users/users.service";
 import { AlertDirection, AlertRuleDto } from "./dto/alert-rule.dto";
 import { AlignedGlobalScanner } from "./aligned-global-scanner";
+import { CloseEvaluationRepository } from "./close-evaluation.repository";
+import { FormalSignalJob, formalSignalJobFromClosedKline } from "./closed-candle-job";
 import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
@@ -91,6 +93,13 @@ type RealtimeState = {
   connected: boolean;
   reconnects: number;
   recentSignals: ScanResult[];
+};
+
+type FormalSignalExecution = {
+  status: "completed" | "duplicate" | "failed";
+  job: FormalSignalJob;
+  signalCount: number;
+  error?: string;
 };
 
 type BinanceKlineEvent = {
@@ -263,6 +272,14 @@ type DeliveryPreparation = {
 type MarketDataLoadOptions = {
   strictClosedAt?: Date;
   cache?: Map<string, Promise<MarketKlinesResult>>;
+  expectedFormalJob?: ExpectedFormalBar;
+  formalErrorCode?: string;
+};
+
+type ExpectedFormalBar = {
+  symbol: string;
+  timeframe: string;
+  klineOpenTime: number;
 };
 
 @Injectable()
@@ -278,7 +295,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private realtimeSockets: RuntimeWebSocket[] = [];
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly realtimeBusyKeys = new Set<string>();
-  private realtimeQueue: Array<{ symbol: string; timeframe: string; klineOpenTime: number }> = [];
+  private realtimeQueue: FormalSignalJob[] = [];
   private realtimeWorkers = 0;
   private readonly userDeliveryTails = new Map<string, Promise<void>>();
   private destroyed = false;
@@ -326,7 +343,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     private readonly signalsService: SignalsService,
     private readonly alertsService: AlertsService,
     private readonly usersService: UsersService,
-    private readonly database: DatabaseService
+    private readonly database: DatabaseService,
+    private readonly closeEvaluations: CloseEvaluationRepository
   ) {
     this.globalScanner = new AlignedGlobalScanner({
       now: () => new Date(),
@@ -403,14 +421,26 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         try {
           run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
             strictClosedAt: slot.closedAt,
-            cache: marketDataCache
+            cache: marketDataCache,
+            expectedFormalJob: {
+              symbol,
+              timeframe,
+              klineOpenTime: slot.closedAt.getTime() - timeframeDurationMs(timeframe)
+            },
+            formalErrorCode: "unexpected_global_scan_bar_time"
           });
         } catch (error) {
           if (!isTransientGlobalScanTransportError(error)) throw error;
           marketDataCache.clear();
           run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
             strictClosedAt: slot.closedAt,
-            cache: marketDataCache
+            cache: marketDataCache,
+            expectedFormalJob: {
+              symbol,
+              timeframe,
+              klineOpenTime: slot.closedAt.getTime() - timeframeDurationMs(timeframe)
+            },
+            formalErrorCode: "unexpected_global_scan_bar_time"
           });
         }
         if (run.result.signals.length) {
@@ -465,7 +495,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const enrichedPayload = await this.withMarketData(payload, marketDataOptions);
     const result = await this.strategyClient.runStrategy(enrichedPayload);
     if (marketDataOptions?.strictClosedAt) {
-      assertExpectedGlobalBarTime(result, payload.timeframe ?? "5m", marketDataOptions.strictClosedAt);
+      assertExpectedFormalBarTime(
+        result,
+        marketDataOptions.expectedFormalJob ?? {
+          symbol: payload.symbol,
+          timeframe: payload.timeframe ?? "5m",
+          klineOpenTime: marketDataOptions.strictClosedAt.getTime() - timeframeDurationMs(payload.timeframe ?? "5m")
+        },
+        marketDataOptions.formalErrorCode
+      );
     }
     const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result), {
       strict: Boolean(marketDataOptions?.strictClosedAt)
@@ -479,6 +517,59 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       },
       persistence
     };
+  }
+
+  private async executeFormalSignalJob(job: FormalSignalJob): Promise<FormalSignalExecution> {
+    const reservation = await this.closeEvaluations.reserve(job);
+    if (!reservation) return { status: "duplicate", job, signalCount: 0 };
+
+    try {
+      const run = await withPromiseTimeout(
+        this.executeStrategy(
+          { symbol: job.symbol, timeframe: job.timeframe, limit: 180 },
+          { strictClosedAt: job.closedAt, cache: new Map(), expectedFormalJob: job }
+        ),
+        formalStrategyTimeoutMs(),
+        `formal_strategy_timeout:${job.key}`
+      );
+      assertExpectedFormalBarTime(run.result, job);
+
+      if (run.result.signals.length) {
+        if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
+        if (run.persistence.count !== run.result.signals.length) {
+          throw new Error(
+            `signal_persistence_incomplete:expected=${run.result.signals.length}:actual=${run.persistence.count}`
+          );
+        }
+      }
+
+      const events = await this.loadSignalEventsForResult(run.result, true);
+      await this.matchSignalEventsToUsers(events, {
+        source: job.source,
+        closedAt: job.closedAt
+      });
+      await this.closeEvaluations.complete(reservation.id, events.length, new Date());
+      this.recordFormalSuccess(job, events.length);
+      return { status: "completed", job, signalCount: events.length };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.closeEvaluations.fail(reservation.id, message, new Date());
+      this.recordFormalFailure(job, message);
+      return { status: "failed", job, signalCount: 0, error: message };
+    }
+  }
+
+  private recordFormalSuccess(job: FormalSignalJob, signalCount: number) {
+    if (job.source !== "realtime" || !signalCount) return;
+    this.realtime = {
+      ...this.realtime,
+      lastSignalAt: new Date().toISOString()
+    };
+  }
+
+  private recordFormalFailure(job: FormalSignalJob, error: string) {
+    if (job.source !== "realtime") return;
+    this.realtime = { ...this.realtime, lastError: error };
   }
 
   async scanSymbols(payload: StrategyScanPayload = {}, userId?: string) {
@@ -1529,15 +1620,21 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const kline = event.data?.k;
-    if (!kline?.x || !kline.s || !kline.i) return;
-    const symbol = kline.s.toUpperCase();
-    const timeframe = fromBinanceInterval(kline.i);
+    if (!kline?.s || !kline.i) return;
+    let job: FormalSignalJob | null;
+    try {
+      job = formalSignalJobFromClosedKline(kline);
+    } catch (error) {
+      this.realtime = { ...this.realtime, lastError: error instanceof Error ? error.message : String(error) };
+      return;
+    }
+    if (!job) return;
+    const { symbol, timeframe } = job;
     if (!this.realtime.symbols.includes(symbol) || !this.realtime.timeframes.includes(timeframe)) return;
 
-    const busyKey = `${symbol}:${timeframe}:${kline.t}`;
-    if (this.realtimeBusyKeys.has(busyKey)) return;
-    this.realtimeBusyKeys.add(busyKey);
-    this.realtimeQueue.push({ symbol, timeframe, klineOpenTime: kline.t });
+    if (this.realtimeBusyKeys.has(job.key)) return;
+    this.realtimeBusyKeys.add(job.key);
+    this.realtimeQueue.push(job);
     this.realtime = { ...this.realtime, lastEventAt: new Date().toISOString() };
     this.drainRealtimeQueue();
   }
@@ -1548,53 +1645,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       const job = this.realtimeQueue.shift();
       if (!job) return;
       this.realtimeWorkers += 1;
-      void this.processRealtimeKline(job.symbol, job.timeframe, job.klineOpenTime)
+      void this.executeFormalSignalJob(job)
         .finally(() => {
           this.realtimeWorkers = Math.max(0, this.realtimeWorkers - 1);
-          this.realtimeBusyKeys.delete(`${job.symbol}:${job.timeframe}:${job.klineOpenTime}`);
+          this.realtimeBusyKeys.delete(job.key);
           this.drainRealtimeQueue();
         });
-    }
-  }
-
-  private async processRealtimeKline(symbol: string, timeframe: string, klineOpenTime: number) {
-    try {
-      const run = await this.runStrategy({ symbol, timeframe, limit: 180 });
-      const item: ScanItem = {
-        symbol,
-        ok: true,
-        signalCount: run.result.signals.length,
-        marketData: run.marketData,
-        persistence: run.persistence,
-        result: run.result
-      };
-      const scan = buildSingleScan(symbol, timeframe, item);
-      if (run.result.signals.length) {
-        this.lastScan = scan;
-        const events = await this.loadSignalEventsForResult(run.result);
-        await this.matchSignalEventsToUsers(events);
-        this.realtime = {
-          ...this.realtime,
-          lastSignalAt: new Date().toISOString(),
-          recentSignals: [scan, ...this.realtime.recentSignals].slice(0, 80)
-        };
-      }
-    } catch (error) {
-      this.realtime = { ...this.realtime, lastError: (error as Error).message };
-    }
-  }
-
-  private async deliverRealtimeAlerts(scan: ScanResult) {
-    const currentUserId = await this.currentUserId(this.realtime.payload.userId);
-    const entitlements = (await this.usersService.getCurrentEntitlements(currentUserId)).entitlements;
-    const rule = normalizeAlertRule({ ...(await this.currentAlertRule(currentUserId)), ...this.realtime.payload });
-    const minScore = Math.max(rule.minScore, entitlements.minAlertScore);
-    const candidates = extractAlertCandidates(scan, minScore).filter((signal) => rule.directions.includes(signal.direction));
-    const deliverableCandidates = filterCooldownCandidates(candidates, rule, this.lastAlertAtByKey, currentUserId);
-    if (!entitlements.feishuAlerts || !deliverableCandidates.length) return;
-    for (const candidate of deliverableCandidates) {
-      await this.alertsService.sendFeishu(candidate, currentUserId);
-      this.lastAlertAtByKey.set(alertCooldownKey(candidate, currentUserId), Date.now());
     }
   }
 
@@ -1715,7 +1771,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return rows;
   }
 
-  private async matchSignalEventsToUsers(events: SignalEventRow[]) {
+  private async matchSignalEventsToUsers(
+    events: SignalEventRow[],
+    _context?: Pick<FormalSignalJob, "source" | "closedAt">
+  ) {
     if (!this.database.enabled || !events.length) return;
     for (const event of events) {
       const watchlists = await this.database.query<WatchlistRow>(
@@ -2705,11 +2764,22 @@ function authoritativeClosedKlines(result: MarketKlinesResult, closedAt: Date): 
   return { ...result, candles };
 }
 
-function assertExpectedGlobalBarTime(result: StrategyRunResult, timeframe: string, closedAt: Date) {
-  const expected = closedAt.getTime() - timeframeDurationMs(timeframe);
+function assertExpectedFormalBarTime(
+  result: StrategyRunResult,
+  job: ExpectedFormalBar,
+  errorCode = "unexpected_formal_bar_time"
+) {
+  const expected = job.klineOpenTime;
   const actual = Number(result.bar_time);
-  if (!Number.isFinite(actual) || actual !== expected || result.timeframe !== timeframe) {
-    throw new Error(`unexpected_global_scan_bar_time:${timeframe}:expected=${expected}:actual=${String(result.bar_time)}`);
+  if (
+    !Number.isFinite(actual)
+    || actual !== expected
+    || result.timeframe !== job.timeframe
+    || result.symbol !== job.symbol
+  ) {
+    throw new Error(
+      `${errorCode}:${job.symbol}:${job.timeframe}:expected=${expected}:actual=${String(result.bar_time)}`
+    );
   }
 }
 
@@ -2738,6 +2808,12 @@ function formalDeliveryTimeoutMs() {
   const configured = Number(process.env.STRATEGY_FEISHU_TIMEOUT_MS || 10_000);
   if (!Number.isFinite(configured) || configured <= 0) return 10_000;
   return Math.max(10, Math.min(Math.round(configured), 60_000));
+}
+
+function formalStrategyTimeoutMs() {
+  const configured = Number(process.env.STRATEGY_FORMAL_EXECUTION_TIMEOUT_MS || 55_000);
+  if (!Number.isFinite(configured) || configured <= 0) return 55_000;
+  return Math.max(1_000, Math.min(Math.round(configured), 60_000));
 }
 
 async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
