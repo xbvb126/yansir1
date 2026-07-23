@@ -87,6 +87,14 @@ flowchart TB
 
 ## 4. 模块关系
 
+## Formal close-confirmed signal pipeline
+
+Binance closed-candle WebSocket events create ordered formal jobs. Each job loads strict authoritative candles ending at the specified close, evaluates the strategy, persists every resulting event before user matching, and only then creates inbox and Feishu delivery records. The pipeline therefore never publishes an intrabar signal or a signal that failed strict persistence.
+
+The bounded queue reports p50/p95 close-to-persistence latency and treats an oldest queued job beyond 60 seconds as not ready. A reconciler runs every 15 minutes to recover missed close events. A recovered signal can still appear in the inbox, while its push is withheld once its close is over five minutes old. Mock or disconnected database mode is deliberately degraded and non-delivering for formal signals.
+
+Commercial access is enforced after the globally identical formal signal is persisted: Free receives 5m signals after 8 hours with five symbols and seven days of history; VIP receives realtime 5m/15m signals for 50 symbols, 30 days, Feishu, and 300 daily signals; SVIP receives realtime all supported timeframes for 200 symbols, 180 days, Feishu, 2,000 daily signals, and API access.
+
 ```mermaid
 flowchart TD
     App["AppModule"] --> DB["DatabaseModule"]

@@ -107,6 +107,11 @@ export class StrategyController {
     return this.strategyService.getRealtimeStatus();
   }
 
+  @Get("formal/status")
+  getFormalSignalStatus() {
+    return this.strategyService.getFormalSignalStatus();
+  }
+
   @Get("performance/status")
   getPerformanceStatus() {
     return this.strategyService.getPerformanceStatus();

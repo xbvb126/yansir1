@@ -108,8 +108,11 @@ export type FormalSignalExecution = {
 type FormalPipelineState = {
   latestSuccessfulCalculationAt: string | null;
   latestPersistenceAt: string | null;
+  latestPersistenceFailureAt: string | null;
   recentSuccesses: number;
   recentFailures: number;
+  recentTimedOut: number;
+  recentReconciled: number;
   latestFailure: { at: string; key: string; error: string } | null;
 };
 
@@ -311,8 +314,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private formalPipeline: FormalPipelineState = {
     latestSuccessfulCalculationAt: null,
     latestPersistenceAt: null,
+    latestPersistenceFailureAt: null,
     recentSuccesses: 0,
     recentFailures: 0,
+    recentTimedOut: 0,
+    recentReconciled: 0,
     latestFailure: null
   };
   private readonly userDeliveryTails = new Map<string, Promise<void>>();
@@ -532,7 +538,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return this.executeStrategy(payload);
   }
 
-  private async executeStrategy(payload: StrategyRunPayload, marketDataOptions?: MarketDataLoadOptions) {
+  private async executeStrategy(
+    payload: StrategyRunPayload,
+    marketDataOptions?: MarketDataLoadOptions,
+    onCalculationComplete?: () => void
+  ) {
     const enrichedPayload = await this.withMarketData(payload, marketDataOptions);
     const result = await this.strategyClient.runStrategy(enrichedPayload);
     if (marketDataOptions?.strictClosedAt) {
@@ -546,6 +556,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         marketDataOptions.formalErrorCode
       );
     }
+    onCalculationComplete?.();
     const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result), {
       strict: Boolean(marketDataOptions?.strictClosedAt)
     });
@@ -565,6 +576,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     reportPersistence: (completedAt: Date) => void = () => undefined
   ): Promise<FormalSignalExecution> {
     let reservation: CloseEvaluationReservation | null = null;
+    let calculationCompleted = false;
+    let persistenceCompleted = false;
 
     try {
       reservation = await this.closeEvaluations.reserve(job);
@@ -572,18 +585,19 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       const run = await withPromiseTimeout(
         this.executeStrategy(
           { symbol: job.symbol, timeframe: job.timeframe, limit: 180 },
-          { strictClosedAt: job.closedAt, cache: new Map(), expectedFormalJob: job }
+          { strictClosedAt: job.closedAt, cache: new Map(), expectedFormalJob: job },
+          () => {
+            calculationCompleted = true;
+            this.formalPipeline = {
+              ...this.formalPipeline,
+              latestSuccessfulCalculationAt: new Date().toISOString()
+            };
+          }
         ),
         formalStrategyTimeoutMs(),
         `formal_strategy_timeout:${job.key}`
       );
       assertExpectedFormalBarTime(run.result, job);
-      const completedCalculationAt = new Date().toISOString();
-      this.formalPipeline = {
-        ...this.formalPipeline,
-        latestSuccessfulCalculationAt: completedCalculationAt
-      };
-
       if (run.result.signals.length) {
         if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
         if (run.persistence.count !== run.result.signals.length) {
@@ -598,6 +612,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         ...this.formalPipeline,
         latestPersistenceAt: persistenceCompletedAt.toISOString()
       };
+      persistenceCompleted = true;
 
       const events = await this.loadSignalEventsForResult(run.result, true);
       await this.matchSignalEventsToUsers(events, {
@@ -616,7 +631,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           // The original execution failure remains the observable failure; reconciliation retries the ledger write.
         }
       }
-      this.recordFormalFailure(job, message);
+      this.recordFormalFailure(job, message, calculationCompleted && !persistenceCompleted);
       return { status: "failed", job, signalCount: 0, error: message };
     }
   }
@@ -624,7 +639,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private recordFormalSuccess(job: FormalSignalJob, signalCount: number) {
     this.formalPipeline = {
       ...this.formalPipeline,
-      recentSuccesses: Math.min(1_000, this.formalPipeline.recentSuccesses + 1)
+      recentSuccesses: Math.min(1_000, this.formalPipeline.recentSuccesses + 1),
+      recentReconciled: job.source === "reconciliation"
+        ? Math.min(1_000, this.formalPipeline.recentReconciled + 1)
+        : this.formalPipeline.recentReconciled
     };
     if (job.source === "realtime" && signalCount) {
       this.realtime = {
@@ -634,11 +652,15 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private recordFormalFailure(job: FormalSignalJob, error: string) {
+  private recordFormalFailure(job: FormalSignalJob, error: string, persistenceFailure = false) {
     const at = new Date().toISOString();
     this.formalPipeline = {
       ...this.formalPipeline,
       recentFailures: Math.min(1_000, this.formalPipeline.recentFailures + 1),
+      recentTimedOut: error.startsWith("formal_strategy_timeout:")
+        ? Math.min(1_000, this.formalPipeline.recentTimedOut + 1)
+        : this.formalPipeline.recentTimedOut,
+      latestPersistenceFailureAt: persistenceFailure ? at : this.formalPipeline.latestPersistenceFailureAt,
       latestFailure: { at, key: job.key, error }
     };
     if (job.source === "realtime") this.realtime = { ...this.realtime, lastError: error };
@@ -1709,6 +1731,49 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       if (!scheduleReconnect) socket.onclose = null;
       socket.close();
     }
+  }
+
+  async getFormalSignalStatus() {
+    const database = await this.database.health();
+    const queue = this.formalSignalQueue.getStatus();
+    const reconciliation = this.formalSignalReconciler.getStatus();
+    const deliveryRetry = this.formalDeliveryRetry.getStatus();
+    const realtime = {
+      enabled: this.realtime.enabled,
+      connected: this.realtime.connected,
+      lastClosedEventAt: this.realtime.lastEventAt
+    };
+    const reasons = [
+      database.mode === "mock" || !database.connected ? "database_unavailable" : null,
+      !realtime.enabled ? "realtime_disabled" : null,
+      !realtime.connected ? "realtime_disconnected" : null,
+      queue.oldestQueuedAt && Date.now() - new Date(queue.oldestQueuedAt).getTime() > 60_000 ? "queue_latency_exceeded" : null,
+      this.hasNewerPersistenceFailure() ? "persistence_failed" : null
+    ].filter((reason): reason is string => Boolean(reason));
+
+    return {
+      ready: reasons.length === 0,
+      reason: reasons[0] ?? null,
+      realtime,
+      queue,
+      reconciliation,
+      latestCalculationAt: this.formalPipeline.latestSuccessfulCalculationAt,
+      latestPersistenceAt: this.formalPipeline.latestPersistenceAt,
+      recent: {
+        succeeded: this.formalPipeline.recentSuccesses,
+        failed: this.formalPipeline.recentFailures,
+        timedOut: this.formalPipeline.recentTimedOut,
+        reconciled: this.formalPipeline.recentReconciled
+      },
+      deliveryRetry
+    };
+  }
+
+  private hasNewerPersistenceFailure() {
+    const failedAt = this.formalPipeline.latestPersistenceFailureAt;
+    if (!failedAt) return false;
+    const persistedAt = this.formalPipeline.latestPersistenceAt;
+    return !persistedAt || new Date(failedAt).getTime() > new Date(persistedAt).getTime();
   }
 
   private handleRealtimeMessage(raw: unknown) {

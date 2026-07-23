@@ -16,6 +16,7 @@ const esbuildCommand = process.platform === "win32" ? process.execPath : esbuild
 const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
 const serviceSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.service.ts"), "utf8");
 const controllerSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.controller.ts"), "utf8");
+const appModuleSource = readFileSync(path.join(apiRoot, "src/modules/app.module.ts"), "utf8");
 
 assert.match(serviceSource, /function normalizeSignalPayload/);
 assert.match(serviceSource, /function signalActionFromPayload/);
@@ -26,6 +27,9 @@ assert.ok(
   controllerSource.indexOf('@Get("scan/global/status")') < controllerSource.indexOf('@Post("scan/schedule/start")'),
   "global scanner status must be declared before user schedule routes"
 );
+assert.match(appModuleSource, /path\.resolve\(process\.cwd\(\), "\.env\.local"\)/, "the API must load the workspace local environment file");
+assert.match(appModuleSource, /path\.resolve\(process\.cwd\(\), "\.\.\/\.\.\/\.env\.local"\)/, "the API must load the repository local environment file");
+assert.match(controllerSource, /@Get\("formal\/status"\)/, "the formal signal readiness route must be exposed");
 
 execFileSync(esbuildCommand, [
   ...esbuildArgsPrefix,
@@ -1693,6 +1697,46 @@ async function testGlobalScanStatusContract() {
   }
 }
 
+async function testFormalReadinessReportsDatabaseAndRuntimeState() {
+  const mockDatabase = {
+    enabled: false,
+    health: async () => ({ mode: "mock", connected: false }),
+    query: async () => []
+  };
+  const { service: mockService } = createService(strategyResult, { database: mockDatabase });
+  const mockDbStatus = await mockService.getFormalSignalStatus();
+  assert.deepEqual(
+    { ready: mockDbStatus.ready, reason: mockDbStatus.reason },
+    {
+      ready: false,
+      reason: "database_unavailable"
+    }
+  );
+
+  const connectedDatabase = {
+    enabled: true,
+    health: async () => ({ mode: "postgres", connected: true }),
+    query: async () => []
+  };
+  const { service: connectedService } = createService(strategyResult, { database: connectedDatabase });
+  connectedService["realtime"] = {
+    ...connectedService["realtime"],
+    enabled: true,
+    connected: true,
+    lastEventAt: "2026-07-23T04:00:00.000Z"
+  };
+  connectedService["realtimeSockets"] = [{}];
+  const connectedStatus = await connectedService.getFormalSignalStatus();
+  assert.equal(connectedStatus.ready, true);
+  assert.equal(connectedStatus.queue.capacity, 10000);
+  assert.equal(typeof connectedStatus.reconciliation.enabled, "boolean");
+  assert.deepEqual(connectedStatus.realtime, {
+    enabled: true,
+    connected: true,
+    lastClosedEventAt: "2026-07-23T04:00:00.000Z"
+  });
+}
+
 function testRealtimeWebSocketFallsBackToWsPackage() {
   const original = globalThis.WebSocket;
   try {
@@ -1812,7 +1856,8 @@ const tests = [
   testGlobalScanPersistsAndDeliversEachMatchOnce,
   testGlobalScanPersistsBlockedUserMatchWithoutSending,
   testGlobalScannerHonorsOptOutAndStopsOnShutdown,
-  testGlobalScanStatusContract
+  testGlobalScanStatusContract,
+  testFormalReadinessReportsDatabaseAndRuntimeState
 ];
 
 try {

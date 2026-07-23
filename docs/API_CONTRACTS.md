@@ -18,6 +18,7 @@ GET  /api/signals/:id/performance
 GET  /api/strategy/scan/latest
 GET  /api/strategy/scan/schedule
 GET  /api/strategy/scan/global/status
+GET  /api/strategy/formal/status
 POST /api/strategy/run
 POST /api/strategy/scan
 POST /api/strategy/scan/alert
@@ -49,6 +50,10 @@ Current implementation notes:
 - `/api/strategy/scan/schedule` returns the current in-memory schedule state and last run result.
 - `/api/strategy/scan/schedule/stop` stops the recurring scan task.
 - `/api/strategy/scan/global/status` reports the automatic system-level global scanner. It is UTC-aligned and runs 5 seconds after each closed-candle boundary; it is not controlled by the user schedule start/stop endpoints.
+- Formal signals are emitted only from a confirmed, closed K-line. A still-forming candle is never evaluated or published as a formal signal.
+- Formal signal persistence is a strict boundary: a signal cannot enter inbox matching or push delivery unless the signal event has been durably persisted and then read back from the configured database.
+- The close-event reconciler runs every 15 minutes to fill missed close jobs. Reconciled events always create eligible inbox records, but Feishu push is skipped when the close is more than five minutes old.
+- Mock database mode is degraded, non-delivering local behavior. It is never formal-signal ready and must not be treated as a production signal source.
 - Scan and alert endpoints enforce current user entitlements. Free/VIP/SVIP limits affect symbol count, remaining quota, allowed timeframe, Feishu delivery, and minimum alert score.
 - If `DATABASE_URL` is not configured or Postgres is unavailable, read APIs fall back to local mock data and strategy persistence returns `persisted: false`.
 - Vite proxies `/api/*` from `http://localhost:3200` to the NestJS API on `http://localhost:3101`.
@@ -56,6 +61,40 @@ Current implementation notes:
 - `POST /api/auth/register` creates a Free member account. `POST /api/auth/change-password` requires a valid Bearer token.
 - Auth endpoints use process-memory rate limiting in the MVP. Multi-instance production should move those counters to Redis.
 - Admin user mutation endpoints reject non-admin Bearer tokens with `403`. Local demo calls without a Bearer token can still use the mock management flow.
+
+## `GET /api/strategy/formal/status`
+
+Returns the production-readiness diagnostics for the close-confirmed formal-signal pipeline. It contains no credentials, webhook addresses, or user delivery targets.
+
+```json
+{
+  "ready": true,
+  "reason": null,
+  "realtime": {
+    "enabled": true,
+    "connected": true,
+    "lastClosedEventAt": "2026-07-23T04:00:00.000Z"
+  },
+  "queue": { "capacity": 10000, "depth": 0, "latencyMs": { "p95": 1200 } },
+  "reconciliation": { "enabled": true, "intervalSeconds": 900 },
+  "latestCalculationAt": "2026-07-23T04:00:01.000Z",
+  "latestPersistenceAt": "2026-07-23T04:00:01.200Z",
+  "recent": { "succeeded": 42, "failed": 0, "timedOut": 0, "reconciled": 3 },
+  "deliveryRetry": { "enabled": true, "intervalSeconds": 60 }
+}
+```
+
+`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or disconnected, the oldest queued job is older than 60 seconds, or the most recent persistence failure is newer than the most recent persistence success. `reason` is the first active machine-readable blocker.
+
+`GET /api/health` remains a liveness endpoint and includes this object as `formalSignals`; `GET /api/health/readiness` also treats a non-ready formal pipeline as a launch blocker.
+
+## Formal signal subscription matrix
+
+| Plan | Formal availability | Watchlist symbols | Timeframes | History | Feishu push | Daily signal/API quota |
+| --- | --- | ---: | --- | --- | --- | --- |
+| Free | 8-hour delay | 5 | 5m | 7 days | No | No API |
+| VIP | Realtime | 50 | 5m, 15m | 30 days | Yes | 300/day |
+| SVIP | Realtime | 200 | 5m, 15m, 30m, 1h, 4h | 180 days | Yes | 2,000/day + API |
 
 ## Strategy API
 

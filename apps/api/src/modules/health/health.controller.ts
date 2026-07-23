@@ -1,30 +1,35 @@
 import { Controller, Get } from "@nestjs/common";
 import { PaymentProviders } from "../billing/payment.providers";
 import { DatabaseService } from "../database/database.service";
+import { StrategyService } from "../strategy/strategy.service";
 import { getAuthTokenSecretStatus } from "../users/auth-tokens";
 
 @Controller("api/health")
 export class HealthController {
   constructor(
     private readonly database: DatabaseService,
-    private readonly paymentProviders: PaymentProviders
+    private readonly paymentProviders: PaymentProviders,
+    private readonly strategyService: StrategyService
   ) {}
 
   @Get()
   async getHealth() {
     return {
       status: "ok",
-      database: await this.database.health()
+      database: await this.database.health(),
+      formalSignals: await this.strategyService.getFormalSignalStatus()
     };
   }
 
   @Get("readiness")
   async getReadiness() {
     const database = await this.database.health();
+    const formalSignals = await this.strategyService.getFormalSignalStatus();
     const authSecret = getAuthTokenSecretStatus();
     const strategy = await checkStrategyHealth(process.env.STRATEGY_SERVICE_URL || "http://127.0.0.1:8000");
     const checks = {
       database,
+      formalSignals,
       authSecret,
       feishu: {
         defaultWebhookConfigured: Boolean(process.env.FEISHU_WEBHOOK_URL)
@@ -42,6 +47,7 @@ export class HealthController {
     };
     const blockers = [
       database.connected ? null : "Postgres is not connected; persisted user, billing, team, and stored signal data are unavailable.",
+      formalSignals.ready ? null : `Formal close-confirmed signals are not ready: ${formalSignals.reason}.`,
       authSecret.usingDefault ? "AUTH_TOKEN_SECRET is missing or still using the development default." : null,
       process.env.BILLING_WEBHOOK_SECRET ? null : "BILLING_WEBHOOK_SECRET is missing; billing webhooks are open for local demo mode.",
       this.paymentProviders.defaultProvider() === "mock" ? "BILLING_PROVIDER is mock; configure a real payment provider before launch." : null,
