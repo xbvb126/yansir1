@@ -1923,10 +1923,16 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       performance_evaluated_until: null,
       performance_updated_at: null
     };
-    return (await this.deliverInboxSignal(event, candidate.watchlist, true, true)) ?? { skipped: true };
+    return (await this.deliverInboxSignal(event, candidate.watchlist, true, true, candidate.deliveryId)) ?? { skipped: true };
   }
 
-  private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow, retry = false, preclaimedRetry = false) {
+  private async deliverInboxSignal(
+    event: SignalEventRow,
+    watchlist: WatchlistRow,
+    retry = false,
+    preclaimedRetry = false,
+    preclaimedDeliveryId?: string
+  ) {
     return this.withUserDeliveryLock(watchlist.user_id, async () => {
       const preparation = await this.prepareDelivery(event, watchlist.user_id);
       if (!this.database.enabled) {
@@ -1936,7 +1942,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
       const reserved = await this.database.withAdvisoryTransaction(
         `formal-delivery:${watchlist.user_id}`,
-        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction, retry, preclaimedRetry)
+        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction, retry, preclaimedRetry, preclaimedDeliveryId)
       );
       if (!reserved) return;
 
@@ -1988,7 +1994,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     preparation: DeliveryPreparation,
     transaction: DatabaseTransaction,
     retry = false,
-    preclaimedRetry = false
+    preclaimedRetry = false,
+    preclaimedDeliveryId?: string
   ) {
     const channel = "feishu";
     if (!retry) {
@@ -2041,13 +2048,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_not_allowed", transaction);
       return false;
     }
-    const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel, transaction);
+    const excludeDeliveryId = preclaimedRetry ? preclaimedDeliveryId ?? null : null;
+    const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel, transaction, excludeDeliveryId);
     if (sentToday >= dailyLimit) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_limit", transaction);
       return false;
     }
 
-    const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes, transaction);
+    const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes, transaction, excludeDeliveryId);
     if (inDbCooldown) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "db_cooldown", transaction);
       return false;
@@ -2208,7 +2216,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async countDailySentDeliveries(userId: string, channel: string, transaction: DatabaseTransaction) {
+  private async countDailySentDeliveries(userId: string, channel: string, transaction: DatabaseTransaction, excludeDeliveryId: string | null = null) {
     if (!this.database.enabled) return 0;
     const rows = await transaction.query<{ sent_count: string | number }>(
       `
@@ -2217,15 +2225,23 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         where user_id = $1::uuid
           and channel = $2::varchar
           and status in ('sending', 'sent')
+          and ($3::uuid is null or id <> $3::uuid)
           and coalesce(sent_at, created_at) >= date_trunc('day', now())
           and coalesce(sent_at, created_at) < date_trunc('day', now()) + interval '1 day'
       `,
-      [userId, channel]
+      [userId, channel, excludeDeliveryId]
     );
     return Number(rows[0]?.sent_count ?? 0);
   }
 
-  private async isDeliveryInCooldown(event: SignalEventRow, userId: string, channel: string, cooldownMinutes: number, transaction: DatabaseTransaction) {
+  private async isDeliveryInCooldown(
+    event: SignalEventRow,
+    userId: string,
+    channel: string,
+    cooldownMinutes: number,
+    transaction: DatabaseTransaction,
+    excludeDeliveryId: string | null = null
+  ) {
     if (!this.database.enabled || cooldownMinutes <= 0) return false;
     const rows = await transaction.query<{ in_cooldown: boolean }>(
       `
@@ -2241,6 +2257,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
               and coalesce(signal_type, 'unknown') = $6::varchar
               and status in ('sending', 'sent')
               and coalesce(sent_at, created_at) > now() - ($7::integer * interval '1 minute')
+              and ($8::uuid is null or id <> $8::uuid)
           )
           or exists (
           select 1
@@ -2255,7 +2272,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           )
         ) as in_cooldown
       `,
-      [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown", cooldownMinutes]
+      [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown", cooldownMinutes, excludeDeliveryId]
     );
     return Boolean(rows[0]?.in_cooldown);
   }

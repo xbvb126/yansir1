@@ -352,6 +352,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
           sent_count: deliveries.filter((delivery) =>
             delivery.user_id === values[0]
             && delivery.channel === values[1]
+            && (values[2] == null || delivery.id !== values[2])
             && ["sending", "sent"].includes(delivery.status)
           ).length
         }];
@@ -365,6 +366,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
           && delivery.timeframe === values[3]
           && delivery.direction === values[4]
           && delivery.signal_type === values[5]
+          && (values[7] == null || delivery.id !== values[7])
           && ["sending", "sent"].includes(delivery.status)
         );
         return [{ in_cooldown: cooldowns.has(key) || occupiedByDelivery }];
@@ -1236,6 +1238,16 @@ async function testStalledFeishuTimesOutAfterReservationTransactionReleases() {
   }
 }
 
+function preclaimedRetryCandidate(event, deliveryId = "delivery-self") {
+  return {
+    deliveryId,
+    userId: USER_ID,
+    signalEventId: event.id,
+    event,
+    watchlist: deliveryWatchlist()
+  };
+}
+
 async function testFormalDeliveryRetryRechecksCurrentEntitlements() {
   const fixture = createLifecycleFixture();
   const downgradedUsersService = usersService();
@@ -1301,6 +1313,89 @@ async function testFormalDeliveryRetryRechecksDisabledPushSetting() {
   assert.equal(fixture.alertCalls.length, 0);
   assert.equal(fixture.deliveries[0].status, "skipped");
   assert.equal(fixture.deliveries[0].reason, "push_setting_disabled");
+}
+
+async function testPreclaimedRetryExcludesItselfFromDailyLimit() {
+  const fixture = createLifecycleFixture();
+  const onePushUsersService = usersService();
+  onePushUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, maxPushPerDay: 1 }
+  });
+  const { service } = createService(strategyResult, { ...fixture, usersService: onePushUsersService });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000308");
+  fixture.deliveries.push({
+    id: "delivery-self",
+    user_id: USER_ID,
+    signal_event_id: event.id,
+    channel: "feishu",
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    direction: event.direction,
+    signal_type: event.signal_type,
+    status: "sending",
+    reason: null
+  });
+
+  const outcome = await service["retryFormalDelivery"](preclaimedRetryCandidate(event));
+  assert.equal(outcome?.sent, true, "the claimed retry itself must not consume the only remaining daily slot");
+  assert.equal(fixture.alertCalls.length, 1);
+  assert.equal(fixture.deliveries[0].status, "sent");
+}
+
+async function testPreclaimedRetryStillCountsOtherDailyDeliveries() {
+  const fixture = createLifecycleFixture();
+  const onePushUsersService = usersService();
+  onePushUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, maxPushPerDay: 1 }
+  });
+  const { service } = createService(strategyResult, { ...fixture, usersService: onePushUsersService });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000309");
+  fixture.deliveries.push(
+    { id: "delivery-self", user_id: USER_ID, signal_event_id: event.id, channel: "feishu", symbol: event.symbol, timeframe: event.timeframe, direction: event.direction, signal_type: event.signal_type, status: "sending", reason: null },
+    { id: "delivery-other", user_id: USER_ID, signal_event_id: "00000000-0000-0000-0000-000000000399", channel: "feishu", symbol: event.symbol, timeframe: event.timeframe, direction: event.direction, signal_type: event.signal_type, status: "sent", reason: null }
+  );
+
+  const outcome = await service["retryFormalDelivery"](preclaimedRetryCandidate(event));
+  assert.equal(outcome?.skipped, true);
+  assert.equal(fixture.alertCalls.length, 0);
+  assert.equal(fixture.deliveries.find(({ id }) => id === "delivery-self")?.reason, "daily_push_limit");
+}
+
+async function testPreclaimedRetryExcludesItselfFromCooldown() {
+  const fixture = createLifecycleFixture({ cooldownMinutes: 15 });
+  const { service } = createService(strategyResult, fixture);
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000310");
+  fixture.deliveries.push({
+    id: "delivery-self",
+    user_id: USER_ID,
+    signal_event_id: event.id,
+    channel: "feishu",
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    direction: event.direction,
+    signal_type: event.signal_type,
+    status: "sending",
+    reason: null
+  });
+
+  const outcome = await service["retryFormalDelivery"](preclaimedRetryCandidate(event));
+  assert.equal(outcome?.sent, true, "the claimed retry itself must not trigger its own database cooldown");
+  assert.equal(fixture.alertCalls.length, 1);
+}
+
+async function testPreclaimedRetryStillCountsOtherCooldownDeliveries() {
+  const fixture = createLifecycleFixture({ cooldownMinutes: 15 });
+  const { service } = createService(strategyResult, fixture);
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000311");
+  fixture.deliveries.push(
+    { id: "delivery-self", user_id: USER_ID, signal_event_id: event.id, channel: "feishu", symbol: event.symbol, timeframe: event.timeframe, direction: event.direction, signal_type: event.signal_type, status: "sending", reason: null },
+    { id: "delivery-other", user_id: USER_ID, signal_event_id: "00000000-0000-0000-0000-000000000398", channel: "feishu", symbol: event.symbol, timeframe: event.timeframe, direction: event.direction, signal_type: event.signal_type, status: "sent", reason: null }
+  );
+
+  const outcome = await service["retryFormalDelivery"](preclaimedRetryCandidate(event));
+  assert.equal(outcome?.skipped, true);
+  assert.equal(fixture.alertCalls.length, 0);
+  assert.equal(fixture.deliveries.find(({ id }) => id === "delivery-self")?.reason, "db_cooldown");
 }
 
 async function testGlobalScanPersistsAndDeliversEachMatchOnce() {
@@ -1573,6 +1668,10 @@ const tests = [
   testStalledFeishuTimesOutAfterReservationTransactionReleases,
   testFormalDeliveryRetryRechecksCurrentEntitlements,
   testFormalDeliveryRetryRechecksDisabledPushSetting,
+  testPreclaimedRetryExcludesItselfFromDailyLimit,
+  testPreclaimedRetryStillCountsOtherDailyDeliveries,
+  testPreclaimedRetryExcludesItselfFromCooldown,
+  testPreclaimedRetryStillCountsOtherCooldownDeliveries,
   testGlobalScanPersistsAndDeliversEachMatchOnce,
   testGlobalScanPersistsBlockedUserMatchWithoutSending,
   testGlobalScannerHonorsOptOutAndStopsOnShutdown,
