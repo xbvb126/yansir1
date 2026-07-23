@@ -11,6 +11,7 @@ import { AlertDirection, AlertRuleDto } from "./dto/alert-rule.dto";
 import { AlignedGlobalScanner } from "./aligned-global-scanner";
 import { CloseEvaluationRepository } from "./close-evaluation.repository";
 import { FormalSignalJob, formalSignalJobFromClosedKline } from "./closed-candle-job";
+import { FormalSignalQueue } from "./formal-signal-queue";
 import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
@@ -95,11 +96,19 @@ type RealtimeState = {
   recentSignals: ScanResult[];
 };
 
-type FormalSignalExecution = {
+export type FormalSignalExecution = {
   status: "completed" | "duplicate" | "failed";
   job: FormalSignalJob;
   signalCount: number;
   error?: string;
+};
+
+type FormalPipelineState = {
+  latestSuccessfulCalculationAt: string | null;
+  latestPersistenceAt: string | null;
+  recentSuccesses: number;
+  recentFailures: number;
+  latestFailure: { at: string; key: string; error: string } | null;
 };
 
 type BinanceKlineEvent = {
@@ -294,9 +303,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private performanceStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private realtimeSockets: RuntimeWebSocket[] = [];
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly realtimeBusyKeys = new Set<string>();
-  private realtimeQueue: FormalSignalJob[] = [];
-  private realtimeWorkers = 0;
+  private formalSignalQueue: FormalSignalQueue;
+  private formalPipeline: FormalPipelineState = {
+    latestSuccessfulCalculationAt: null,
+    latestPersistenceAt: null,
+    recentSuccesses: 0,
+    recentFailures: 0,
+    latestFailure: null
+  };
   private readonly userDeliveryTails = new Map<string, Promise<void>>();
   private destroyed = false;
   private realtime: RealtimeState = {
@@ -352,6 +366,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
       executeSlot: (slot) => this.runGlobalScanSlot(slot)
     });
+    this.formalSignalQueue = this.createFormalSignalQueue();
   }
 
   onModuleInit() {
@@ -399,6 +414,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       this.performanceStartupTimer = null;
     }
     this.globalScanner.stop();
+    this.formalSignalQueue.stop();
   }
 
   getGlobalScanStatus() {
@@ -533,6 +549,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         `formal_strategy_timeout:${job.key}`
       );
       assertExpectedFormalBarTime(run.result, job);
+      const completedCalculationAt = new Date().toISOString();
+      this.formalPipeline = {
+        ...this.formalPipeline,
+        latestSuccessfulCalculationAt: completedCalculationAt
+      };
 
       if (run.result.signals.length) {
         if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
@@ -542,6 +563,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           );
         }
       }
+      this.formalPipeline = {
+        ...this.formalPipeline,
+        latestPersistenceAt: new Date().toISOString()
+      };
 
       const events = await this.loadSignalEventsForResult(run.result, true);
       await this.matchSignalEventsToUsers(events, {
@@ -560,16 +585,33 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private recordFormalSuccess(job: FormalSignalJob, signalCount: number) {
-    if (job.source !== "realtime" || !signalCount) return;
-    this.realtime = {
-      ...this.realtime,
-      lastSignalAt: new Date().toISOString()
+    this.formalPipeline = {
+      ...this.formalPipeline,
+      recentSuccesses: Math.min(1_000, this.formalPipeline.recentSuccesses + 1)
     };
+    if (job.source === "realtime" && signalCount) {
+      this.realtime = {
+        ...this.realtime,
+        lastSignalAt: new Date().toISOString()
+      };
+    }
   }
 
   private recordFormalFailure(job: FormalSignalJob, error: string) {
-    if (job.source !== "realtime") return;
-    this.realtime = { ...this.realtime, lastError: error };
+    const at = new Date().toISOString();
+    this.formalPipeline = {
+      ...this.formalPipeline,
+      recentFailures: Math.min(1_000, this.formalPipeline.recentFailures + 1),
+      latestFailure: { at, key: job.key, error }
+    };
+    if (job.source === "realtime") this.realtime = { ...this.realtime, lastError: error };
+  }
+
+  private createFormalSignalQueue() {
+    return new FormalSignalQueue({
+      execute: (job) => this.executeFormalSignalJob(job),
+      onPressure: (job) => this.recordFormalFailure(job, "formal_queue_pressure")
+    });
   }
 
   async scanSymbols(payload: StrategyScanPayload = {}, userId?: string) {
@@ -1502,6 +1544,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     if (userId) await this.assertApiAccess(userId);
     this.stopTimer();
     this.closeRealtimeSocket(false);
+    this.formalSignalQueue.stop();
+    this.formalSignalQueue = this.createFormalSignalQueue();
 
     const entitlements = (await this.usersService.getCurrentEntitlements(userId)).entitlements;
     const rule = normalizeAlertRule({ ...(await this.currentAlertRule(userId)), ...payload });
@@ -1540,6 +1584,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       enabled: false,
       connected: false
     };
+    this.formalSignalQueue.stop();
     this.closeRealtimeSocket(false);
     return this.getRealtimeStatus();
   }
@@ -1550,6 +1595,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         ...this.realtime,
         socketActive: this.realtimeSockets.length > 0,
         recentSignals: this.realtime.recentSignals.slice(0, 20)
+      },
+      formalPipeline: {
+        queue: this.formalSignalQueue.getStatus(),
+        latestSuccessfulCalculationAt: this.formalPipeline.latestSuccessfulCalculationAt,
+        latestPersistenceAt: this.formalPipeline.latestPersistenceAt,
+        recentSuccesses: this.formalPipeline.recentSuccesses,
+        recentFailures: this.formalPipeline.recentFailures,
+        latestFailure: this.formalPipeline.latestFailure ? { ...this.formalPipeline.latestFailure } : null
       }
     };
   }
@@ -1608,8 +1661,6 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       if (!scheduleReconnect) socket.onclose = null;
       socket.close();
     }
-    this.realtimeQueue = [];
-    this.realtimeWorkers = 0;
   }
 
   private handleRealtimeMessage(raw: unknown) {
@@ -1632,26 +1683,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const { symbol, timeframe } = job;
     if (!this.realtime.symbols.includes(symbol) || !this.realtime.timeframes.includes(timeframe)) return;
 
-    if (this.realtimeBusyKeys.has(job.key)) return;
-    this.realtimeBusyKeys.add(job.key);
-    this.realtimeQueue.push(job);
     this.realtime = { ...this.realtime, lastEventAt: new Date().toISOString() };
-    this.drainRealtimeQueue();
-  }
-
-  private drainRealtimeQueue() {
-    const maxWorkers = Math.max(1, Math.min(Number(process.env.STRATEGY_REALTIME_CONCURRENCY || 8), 24));
-    while (this.realtime.enabled && this.realtimeWorkers < maxWorkers && this.realtimeQueue.length) {
-      const job = this.realtimeQueue.shift();
-      if (!job) return;
-      this.realtimeWorkers += 1;
-      void this.executeFormalSignalJob(job)
-        .finally(() => {
-          this.realtimeWorkers = Math.max(0, this.realtimeWorkers - 1);
-          this.realtimeBusyKeys.delete(job.key);
-          this.drainRealtimeQueue();
-        });
-    }
+    this.formalSignalQueue.enqueue(job);
   }
 
   private async runScheduledScan() {

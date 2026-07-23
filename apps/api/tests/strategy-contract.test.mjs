@@ -945,6 +945,29 @@ async function testRealtimeFormalExecutorSkipsDuplicateJobs() {
   assert.equal(strategyCalls.length, 1);
 }
 
+async function testRealtimeStatusExposesFormalPipelineTelemetry() {
+  const evaluations = closeEvaluationFixture();
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, false, candles.at(-1).open_time),
+    { closeEvaluations: evaluations.repository }
+  );
+  const job = realtimeJob();
+
+  assert.equal(service["formalSignalQueue"].enqueue(job), "accepted");
+  for (let attempt = 0; attempt < 50 && service.getRealtimeStatus().formalPipeline.queue.completed !== 1; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const { formalPipeline } = service.getRealtimeStatus();
+  assert.equal(formalPipeline.queue.completed, 1);
+  assert.equal(formalPipeline.queue.failed, 0);
+  assert.equal(formalPipeline.recentSuccesses, 1);
+  assert.equal(formalPipeline.recentFailures, 0);
+  assert.match(formalPipeline.latestSuccessfulCalculationAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(formalPipeline.latestPersistenceAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(formalPipeline.latestFailure, null);
+}
+
 function deliveryEvent(id, overrides = {}) {
   return {
     id,
@@ -1364,6 +1387,7 @@ const tests = [
   testRealtimeFormalExecutorDoesNotDeliverUnpersistedSignals,
   testRealtimeFormalExecutorCompletesZeroSignalEvaluation,
   testRealtimeFormalExecutorSkipsDuplicateJobs,
+  testRealtimeStatusExposesFormalPipelineTelemetry,
   testConcurrentSameUserDeliveriesReserveDailyLimit,
   testConcurrentSameUserDeliveriesReserveCooldown,
   testAdvisoryReservationUsesOnlyItsClientAndReleasesBeforeFeishu,
