@@ -61,7 +61,27 @@ npm run smoke
 
 `deploy:check` must pass for production launch. `smoke` must pass against the deployed API and web URLs.
 
-## 5. Manual Browser QA
+## 5. Formal Signal Runtime Gate
+
+After the API starts with the production environment, verify the close-confirmed pipeline before allowing user delivery:
+
+```text
+GET /api/health
+GET /api/strategy/formal/status
+```
+
+Required checks:
+
+- `database.mode` is `postgres` and `database.connected` is `true`; mock or disconnected database mode is a launch blocker.
+- `formalSignals.ready` is `true`; investigate the returned `reason` before continuing when it is false.
+- Queue depth is bounded and the oldest queued job is under 60 seconds. Check `formalSignals.queue` latency and age diagnostics.
+- Reconciliation is enabled, healthy, and fresh; verify its interval and latest reconciliation/persistence timestamps in `formalSignals.reconciliation`.
+- Delivery retry is enabled and has no active error in `formalSignals.deliveryRetry`.
+- `GET /api/strategy/performance/status` reports an enabled, healthy performance updater with a fresh latest run after persisted formal signals exist. Confirm `GET /api/strategy/public-performance-summary` and `GET /api/strategy/public-signals?limit=10` read persisted data. The intentional eight-hour public delay can leave the public list empty until an eligible signal ages in.
+
+For a live acceptance observation, watch BTCUSDT, ETHUSDT, and SOLUSDT through a 5m close and an available higher-timeframe close. Each completed evaluation must use `bar_time = closedAt - timeframe duration`, end as `succeeded` even when it produces zero signals, persist a signal before inbox/delivery matching, and remain idempotent if its close event is replayed. Do not fabricate a production signal when the strategy produces none.
+
+## 6. Manual Browser QA
 
 Verify these pages on desktop and mobile width:
 
@@ -80,7 +100,7 @@ Expected:
 - Non-admin users cannot enter admin data.
 - Orders can only be read or paid by their owner or an admin.
 
-## 6. Payment Gate
+## 7. Payment Gate
 
 Before production:
 
@@ -90,7 +110,7 @@ Before production:
 - Manual mock payment endpoint must not be relied on in production.
 - A real provider test order must activate the correct VIP/SVIP subscription.
 
-## 7. Rollback
+## 8. Rollback
 
 Before release, record:
 

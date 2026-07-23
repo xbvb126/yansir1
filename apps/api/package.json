@@ -20,6 +20,7 @@
     "test:formal-signal-queue": "node tests/formal-signal-queue.test.mjs",
     "test:formal-signal-reconciler": "node tests/formal-signal-reconciler.test.mjs",
     "test:formal-delivery-retry": "node tests/formal-delivery-retry.test.mjs",
+    "test:app-module-startup": "npm run build && node tests/app-module-startup.test.mjs",
     "test:e2e:plans": "node tests/plan-e2e.test.mjs"
   },
   "dependencies": {
