@@ -28,6 +28,7 @@ type CloseEvaluations = {
   getLatestPersistedCloseAt(): Promise<Date | null>;
   getEarliestIncompleteCloseAt(): Promise<Date | null>;
   findCompletedKeys(keys: string[]): Promise<Set<string>>;
+  purgeFinishedBefore?(cutoff: Date): Promise<number>;
 };
 
 export type FormalSignalReconcilerOptions = {
@@ -114,6 +115,9 @@ export class FormalSignalReconciler {
         else if (outcome === "duplicate") duplicates += 1;
         else pressure += 1;
       }
+      await this.options.closeEvaluations.purgeFinishedBefore?.(
+        new Date(startedAt.getTime() - this.lookbackMinutes * 60_000)
+      );
       const finishedAt = this.now();
       this.status = {
         ...this.status,

@@ -174,6 +174,8 @@ create table if not exists signal_events (
   bar_time timestamptz,
   payload jsonb not null default '{}'::jsonb,
   dedupe_key varchar(255) unique,
+  strategy_version varchar(120) not null default 'legacy-v0',
+  is_formal boolean not null default false,
   emitted_at timestamptz not null default now(),
   detected_at timestamptz not null default now()
 );
@@ -341,6 +343,8 @@ alter table signal_events add column if not exists reason text;
 alter table signal_events add column if not exists engine varchar(120);
 alter table signal_events add column if not exists bar_time timestamptz;
 alter table signal_events add column if not exists detected_at timestamptz not null default now();
+alter table signal_events add column if not exists strategy_version varchar(120) not null default 'legacy-v0';
+alter table signal_events add column if not exists is_formal boolean not null default false;
 
 alter table alert_deliveries add column if not exists signal_event_id uuid;
 alter table alert_deliveries add column if not exists timeframe varchar(16);
@@ -374,6 +378,7 @@ alter table signal_performance add column if not exists updated_at timestamptz n
 
 create index if not exists idx_signal_events_symbol_time on signal_events(symbol, emitted_at desc);
 create index if not exists idx_signal_events_symbol_tf_time on signal_events(symbol, timeframe, emitted_at desc);
+create index if not exists idx_signal_events_formal_time on signal_events(is_formal, timeframe, emitted_at desc);
 create index if not exists idx_user_signal_inbox_user_time on user_signal_inbox(user_id, created_at desc);
 create index if not exists idx_market_snapshots_symbol_time on market_snapshots(symbol, captured_at desc);
 create index if not exists idx_strategy_runs_symbol_time on strategy_runs(symbol, started_at desc);

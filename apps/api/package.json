@@ -18,6 +18,7 @@
     "test:closed-candle-job": "node tests/closed-candle-job.test.mjs",
     "test:close-evaluation-repository": "node tests/close-evaluation-repository.test.mjs",
     "test:formal-signal-queue": "node tests/formal-signal-queue.test.mjs",
+    "test:formal-async-work-queue": "node tests/formal-async-work-queue.test.mjs",
     "test:formal-signal-reconciler": "node tests/formal-signal-reconciler.test.mjs",
     "test:formal-delivery-retry": "node tests/formal-delivery-retry.test.mjs",
     "test:app-module-startup": "npm run build && node tests/app-module-startup.test.mjs",

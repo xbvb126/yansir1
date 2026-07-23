@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -115,6 +115,19 @@ function reserveAndDeliver(deliveries, clock, provider) {
 
 mkdirSync(outDir, { recursive: true });
 try {
+  const retrySource = readFileSync(path.join(apiRoot, "src/modules/strategy/formal-delivery-retry.ts"), "utf8");
+  const strategySource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.service.ts"), "utf8");
+  assert.match(
+    retrySource,
+    /stale_delivery_reservation[\s\S]*where status = 'sending'[\s\S]*channel = 'feishu'[\s\S]*signal_event_id is not null/i,
+    "stale recovery must be scoped to formal Feishu deliveries"
+  );
+  assert.match(
+    strategySource,
+    /when retry_count = 0 then now\(\) \+ interval '1 minute'[\s\S]*when retry_count = 1 then now\(\) \+ interval '2 minutes'[\s\S]*when retry_count = 2 then now\(\) \+ interval '4 minutes'[\s\S]*else null/i,
+    "retry failures must expose 1m/2m/4m backoff before exhaustion"
+  );
+
   execFileSync(esbuildCommand, [
     ...esbuildArgsPrefix,
     "src/modules/strategy/formal-delivery-retry.ts",

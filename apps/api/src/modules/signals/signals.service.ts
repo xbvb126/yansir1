@@ -12,11 +12,7 @@ export class SignalsService {
 
   async listSignals() {
     const persisted = await this.signalsRepository.findLatest();
-    if (persisted.length) {
-      return { signals: persisted, source: "database" };
-    }
-
-    return { signals: await this.deriveSignalsFromMarket(), source: "binance-derived" };
+    return { signals: persisted, source: "public_delayed_formal_ledger" };
   }
 
   async saveStrategySignals(signals: StrategySignalToPersist[], options: { strict?: boolean } = {}) {

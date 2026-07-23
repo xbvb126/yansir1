@@ -18,6 +18,20 @@ const serviceSource = readFileSync(path.join(apiRoot, "src/modules/strategy/stra
 const controllerSource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.controller.ts"), "utf8");
 const appModuleSource = readFileSync(path.join(apiRoot, "src/modules/app.module.ts"), "utf8");
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise; });
+  return { promise, resolve };
+}
+
+async function waitFor(predicate, message = "condition was not met") {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(message);
+}
+
 assert.match(serviceSource, /function normalizeSignalPayload/);
 assert.match(serviceSource, /function signalActionFromPayload/);
 assert.match(serviceSource, /action:\s*signalActionFromPayload\(payload\)/);
@@ -162,7 +176,7 @@ function createService(result = strategyResult, overrides = {}) {
       return typeof result === "function" ? result(payload) : result;
     }
   };
-  const marketService = {
+  const marketService = overrides.marketService ?? {
     getKlines: async (symbol, timeframe) => ({
       symbol: String(symbol || "BTCUSDT").toUpperCase(),
       timeframe: timeframe || "5m",
@@ -423,6 +437,8 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
           price: String(signal.price),
           score: signal.score,
           emitted_at: signal.emittedAt,
+          bar_time: signal.barTime,
+          strategy_version: signal.strategyVersion,
           payload: signal.payload
         };
         signalEvents.set(signal.dedupeKey, event);
@@ -602,7 +618,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
   return { alertCalls, alertsService, cooldowns, database, deliveries, inbox, signalEvents, signalsService };
 }
 
-async function testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys() {
+async function testRunStrategyReturnsDiagnosticsWithoutPersistingProvisionalResults() {
   const { service, savedSignals } = createService();
   const response = await service.runStrategy({
     symbol: "BTCUSDT",
@@ -612,28 +628,8 @@ async function testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKe
 
   assert.equal(response.result, strategyResult, "runStrategy must return the strategy result object unchanged");
   assert.equal(response.result.diagnostics, diagnostics, "diagnostics must pass through on the returned result");
-  assert.equal(savedSignals.length, 3);
-
-  const [reduceLong, freshLong, reduceShort] = savedSignals;
-  assert.deepEqual(reduceLong.dedupeKey.split(":").slice(-2), ["long", "reduce_long"]);
-  assert.deepEqual(freshLong.dedupeKey.split(":").slice(-2), ["long", "long"]);
-  assert.equal(new Set(savedSignals.map((signal) => signal.dedupeKey)).size, savedSignals.length);
-
-  assert.deepEqual(reduceLong.payload, {
-    engine: "pine_v6",
-    action: "reduce_long",
-    reducePct: 0.35,
-    marketState: "long_trend_no_reversal",
-    diagnostics,
-    metrics: strategyResult.metrics,
-    stopPrice: 63100,
-    takeProfitPrice: 65100
-  });
-  assert.equal(freshLong.payload.action, null);
-  assert.equal(freshLong.payload.reducePct, null);
-  assert.equal(reduceShort.payload.action, "reduce_short");
-  assert.equal(reduceShort.payload.reducePct, 0.2);
-  assert.equal(reduceShort.payload.diagnostics, diagnostics);
+  assert.equal(savedSignals.length, 0, "request/fixture/open-candle strategy runs must never enter the formal ledger");
+  assert.deepEqual(response.persistence, { persisted: false, count: 0 });
 }
 
 async function testAlertCandidatesExposeActionAndReduceReasonBranches() {
@@ -959,9 +955,13 @@ async function testGlobalScanRejectsIncompleteStrictEventLookup() {
     timeframes: ["5m"]
   });
 
-  assert.equal(result.matchedSignals, 0);
-  assert.equal(result.failedSymbols, 1);
-  assert.match(result.errors[0], /signal_event_lookup_incomplete/);
+  assert.equal(result.matchedSignals, 1, "formal persistence completes before asynchronous matching");
+  assert.equal(result.failedSymbols, 0);
+  await waitFor(() => service.getRealtimeStatus().formalPipeline.matchQueue.failed === 1);
+  assert.match(
+    service.getRealtimeStatus().formalPipeline.matchQueue.latestFailure.error,
+    /signal_event_lookup_incomplete/
+  );
   assert.equal(fixture.signalEvents.size, 1, "persistence completed before the lookup health failure");
   assert.equal(fixture.inbox.size, 0);
   assert.equal(fixture.deliveries.length, 0);
@@ -1001,14 +1001,181 @@ async function testRealtimeFormalExecutorUsesOnlyTheClosedCandleAndDeliversOnce(
   const job = realtimeJob("BTCUSDT", "5m", "2026-07-23T03:50:00.000Z");
 
   const outcome = await service["executeFormalSignalJob"](job);
+  await waitFor(() => evaluations.completed.length === 1, "formal matching should complete the evaluation");
 
   assert.equal(outcome.status, "completed");
   assert.equal(marketCalls[0].endTime, job.closedAt.getTime() - 1);
   assert.equal(strategyCalls[0].candles.at(-1).open_time, job.klineOpenTime);
   assert.equal(fixture.signalEvents.size, 1);
+  const [formalEvent] = fixture.signalEvents.values();
+  assert.equal(
+    new Date(formalEvent.emitted_at).toISOString(),
+    job.closedAt.toISOString(),
+    "formal emission time is the confirmed close boundary"
+  );
+  assert.equal(
+    new Date(formalEvent.bar_time).getTime(),
+    job.klineOpenTime,
+    "formal bar identity remains the candle open time"
+  );
+  assert.match(formalEvent.strategy_version, /^pine-v6-/);
+  assert.equal(formalEvent.payload.formal, true);
+  assert.equal(formalEvent.payload.strategyVersion, formalEvent.strategy_version);
   assert.equal(fixture.inbox.size, 1);
   assert.equal(fixture.deliveries.filter(({ status }) => status === "sent").length, 1);
   assert.deepEqual(evaluations.completed.map(({ signalCount }) => signalCount), [1]);
+}
+
+async function testFormalPersistenceReleasesBeforeSlowInitialDelivery() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const sendStarted = deferred();
+  const releaseSend = deferred();
+  const alertsService = {
+    sendFeishu: async () => {
+      sendStarted.resolve();
+      await releaseSend.promise;
+      return { sent: true };
+    }
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, alertsService, closeEvaluations: evaluations.repository }
+  );
+  const job = realtimeJob();
+  const execution = service["executeFormalSignalJob"](job);
+
+  await sendStarted.promise;
+  const released = await Promise.race([
+    execution.then(() => true),
+    new Promise((resolve) => setImmediate(() => resolve(false)))
+  ]);
+
+  assert.equal(released, true, "a slow Feishu send must not hold a formal persistence worker");
+  await waitFor(() => evaluations.completed.length === 1, "strict matching must complete before the send finishes");
+  assert.equal(service.getRealtimeStatus().formalPipeline.deliveryQueue.activeWorkers, 1);
+  releaseSend.resolve();
+  await execution;
+  await waitFor(() => service.getRealtimeStatus().formalPipeline.deliveryQueue.completed === 1);
+}
+
+async function testFormalMatchingUsesStrictDatabasePropagation() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const compatibleStrict = fixture.database.queryStrict.bind(fixture.database);
+  fixture.database.query = async (sql, values = []) => {
+    const normalized = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalized.includes("from watchlists") && normalized.includes("min_score <=")) return [];
+    return fixture.database.queryStrict(sql, values);
+  };
+  fixture.database.queryStrict = async (sql, values = []) => {
+    const normalized = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalized.includes("from watchlists") && normalized.includes("min_score <=")) {
+      throw new Error("strict_watchlist_lookup_failed");
+    }
+    return compatibleStrict(sql, values);
+  };
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository }
+  );
+
+  const outcome = await service["executeFormalSignalJob"](realtimeJob());
+
+  assert.equal(outcome.status, "completed", "persistence can finish before asynchronous matching");
+  await waitFor(() => evaluations.failed.length === 1, "strict matching failure must fail the evaluation ledger");
+  assert.deepEqual(evaluations.completed, []);
+  assert.match(evaluations.failed[0].error, /strict_watchlist_lookup_failed/);
+  assert.equal(service.getRealtimeStatus().formalPipeline.matchQueue.failed, 1);
+}
+
+async function testDowngradedTimeframeIsRejectedAtFormalMatchBoundary() {
+  const fixture = createLifecycleFixture();
+  const evaluations = closeEvaluationFixture();
+  const downgradedUsersService = usersService({
+    ...svipEntitlements,
+    plan: "Free",
+    allowedTimeframes: ["5m"],
+    feishuAlerts: false,
+    maxPushPerDay: 0
+  });
+  const { service } = createService(
+    ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
+    { ...fixture, closeEvaluations: evaluations.repository, usersService: downgradedUsersService }
+  );
+
+  const outcome = await service["executeFormalSignalJob"](realtimeJob("BTCUSDT", "15m", "2026-07-23T04:00:00.000Z"));
+
+  assert.equal(outcome.status, "completed");
+  await waitFor(() => evaluations.completed.length === 1);
+  assert.equal(fixture.inbox.size, 0, "a stale 15m watchlist cannot match after downgrade to Free");
+  assert.equal(fixture.deliveries.length, 0);
+}
+
+async function testPerformanceBackfillUsesStrictDatabaseReads() {
+  const database = {
+    enabled: true,
+    query: async () => [],
+    queryStrict: async () => { throw new Error("strict_performance_lookup_failed"); }
+  };
+  const { service } = createService(strategyResult, { database });
+
+  await assert.rejects(
+    service.runPerformanceBackfill({ limit: 1 }),
+    /strict_performance_lookup_failed/
+  );
+  assert.equal(service.getPerformanceStatus().performance.running, false);
+  assert.match(service.getPerformanceStatus().performance.lastError, /strict_performance_lookup_failed/);
+}
+
+async function testPerformanceWindowsStartAtConfirmedCloseTime() {
+  const emittedAt = new Date(Math.floor(Date.now() / 300_000) * 300_000 - 10 * 60_000);
+  const barTime = new Date(emittedAt.getTime() - 60 * 60_000);
+  const event = {
+    id: "00000000-0000-0000-0000-000000000555",
+    symbol: "BTCUSDT",
+    timeframe: "1h",
+    direction: "long",
+    price: "64000",
+    emitted_at: emittedAt,
+    bar_time: barTime
+  };
+  let strictCalls = 0;
+  const database = {
+    enabled: true,
+    queryStrict: async () => {
+      strictCalls += 1;
+      return strictCalls === 1 ? [event] : [];
+    }
+  };
+  const marketCalls = [];
+  const marketService = {
+    getKlinesBetween: async (symbol, timeframe, startTime, endTime) => {
+      marketCalls.push({ symbol, timeframe, startTime, endTime });
+      return {
+        source: "binance",
+        candles: [{
+          open_time: emittedAt.getTime(),
+          close_time: emittedAt.getTime() + 300_000,
+          open: 64000,
+          high: 64100,
+          low: 63900,
+          close: 64050,
+          volume: 1
+        }]
+      };
+    }
+  };
+  const { service } = createService(strategyResult, { database, marketService });
+
+  await service.runPerformanceBackfill({ limit: 1 });
+
+  assert.equal(marketCalls.length, 1);
+  assert.equal(
+    marketCalls[0].startTime,
+    emittedAt.getTime() - 5 * 60_000,
+    "performance windows must start from the confirmed close/emission, not the candle open"
+  );
 }
 
 async function testRealtimeFormalExecutorRejectsTheNewlyOpenedBar() {
@@ -1066,6 +1233,7 @@ async function testRealtimeFormalExecutorCompletesZeroSignalEvaluation() {
 
   assert.equal(outcome.status, "completed");
   assert.equal(outcome.signalCount, 0);
+  await waitFor(() => evaluations.completed.length === 1);
   assert.deepEqual(evaluations.completed.map(({ signalCount }) => signalCount), [0]);
   assert.equal(fixture.inbox.size, 0);
 }
@@ -1100,6 +1268,7 @@ async function testReconciledSignalsCreateInboxButSkipPushesOlderThanFiveMinutes
   try {
     const outcome = await service["executeFormalSignalJob"](job);
     assert.equal(outcome.status, "completed");
+    await waitFor(() => evaluations.completed.length === 1);
   } finally {
     Date.now = originalDateNow;
   }
@@ -1125,6 +1294,8 @@ async function testRecentReconciledSignalsRemainEligibleForPush() {
   try {
     const outcome = await service["executeFormalSignalJob"](job);
     assert.equal(outcome.status, "completed");
+    await waitFor(() => evaluations.completed.length === 1);
+    await waitFor(() => service.getRealtimeStatus().formalPipeline.deliveryQueue.completed === 1);
   } finally {
     Date.now = originalDateNow;
   }
@@ -1155,6 +1326,25 @@ async function testRealtimeStatusExposesFormalPipelineTelemetry() {
   assert.match(formalPipeline.latestSuccessfulCalculationAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(formalPipeline.latestPersistenceAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(formalPipeline.latestFailure, null);
+}
+
+function testFormalRecentCountersUseFifteenMinuteWindow() {
+  const { service } = createService();
+  service["formalPipeline"] = {
+    ...service["formalPipeline"],
+    recentFailures: 1,
+    recentTimedOut: 1
+  };
+  service["formalOutcomeHistory"] = [{
+    at: Date.now() - 16 * 60_000,
+    outcome: "failed",
+    source: "realtime",
+    timedOut: true
+  }];
+
+  const formalPipeline = service.getRealtimeStatus().formalPipeline;
+  assert.equal(formalPipeline.recentSuccesses, 0);
+  assert.equal(formalPipeline.recentFailures, 0);
 }
 
 async function testFormalPipelineRecordsReserveRejection() {
@@ -1425,6 +1615,40 @@ async function testFormalDeliveryRetryRechecksCurrentEntitlements() {
   );
 }
 
+async function testFormalDeliveryRetryRechecksCurrentTimeframeEntitlement() {
+  const fixture = createLifecycleFixture();
+  const downgradedUsersService = usersService();
+  downgradedUsersService.getCurrentEntitlements = async () => ({
+    entitlements: { ...svipEntitlements, allowedTimeframes: ["5m"] }
+  });
+  const { service } = createService(strategyResult, { ...fixture, usersService: downgradedUsersService });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000309", { timeframe: "15m" });
+  fixture.deliveries.push({
+    user_id: USER_ID,
+    signal_event_id: event.id,
+    channel: "feishu",
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    direction: event.direction,
+    signal_type: event.signal_type,
+    status: "failed",
+    reason: "provider_failed"
+  });
+
+  const outcome = await service["retryFormalDelivery"]({
+    deliveryId: "delivery-3",
+    userId: USER_ID,
+    signalEventId: event.id,
+    event,
+    watchlist: { ...deliveryWatchlist(), timeframes: ["5m", "15m"] }
+  });
+
+  assert.equal(outcome?.skipped, true);
+  assert.equal(fixture.alertCalls.length, 0);
+  assert.equal(fixture.deliveries[0].status, "skipped");
+  assert.equal(fixture.deliveries[0].reason, "plan_timeframe_not_allowed");
+}
+
 async function testFormalDeliveryRetryRechecksDisabledPushSetting() {
   const fixture = createLifecycleFixture({ pushEnabled: false });
   const { service } = createService(strategyResult, fixture);
@@ -1544,15 +1768,18 @@ async function testGlobalScanPersistsAndDeliversEachMatchOnce() {
     ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
     { ...fixture, marketSymbols: ["BTCUSDT"] }
   );
+  const closedAt = new Date(Math.floor(Date.now() / 300_000) * 300_000);
   const slot = {
-    key: "2026-07-21T14:05:00.000Z",
-    closedAt: new Date("2026-07-21T14:05:00.000Z"),
-    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    key: closedAt.toISOString(),
+    closedAt,
+    runAt: new Date(closedAt.getTime() + 5_000),
     timeframes: ["5m"]
   };
 
   await service["runGlobalScanSlot"](slot);
   await service["runGlobalScanSlot"](slot);
+  await waitFor(() => fixture.inbox.size === 1);
+  await waitFor(() => service.getRealtimeStatus().formalPipeline.deliveryQueue.completed === 1);
 
   assert.equal(fixture.signalEvents.size, 1);
   assert.equal(fixture.inbox.size, 1);
@@ -1574,16 +1801,19 @@ async function testGlobalScanPersistsBlockedUserMatchWithoutSending() {
     { ...fixture, marketSymbols: ["BTCUSDT"], usersService: blockedUsersService }
   );
 
+  const closedAt = new Date(Math.floor(Date.now() / 300_000) * 300_000);
   const result = await service["runGlobalScanSlot"]({
-    key: "2026-07-21T14:05:00.000Z",
-    closedAt: new Date("2026-07-21T14:05:00.000Z"),
-    runAt: new Date("2026-07-21T14:05:05.000Z"),
+    key: closedAt.toISOString(),
+    closedAt,
+    runAt: new Date(closedAt.getTime() + 5_000),
     timeframes: ["5m"]
   });
 
   assert.equal(result.matchedSignals, 1);
   assert.equal(strategyCalls.length, 1, "system execution must bypass the user's API entitlement and quota");
   assert.equal(fixture.signalEvents.size, 1);
+  await waitFor(() => fixture.inbox.size === 1);
+  await waitFor(() => fixture.deliveries.length === 1);
   assert.equal(fixture.inbox.size, 1);
   assert.equal(fixture.deliveries.filter((delivery) => delivery.status === "sent").length, 0);
   assert.deepEqual(
@@ -1945,6 +2175,36 @@ function testRealtimeWebSocketFallsBackToWsPackage() {
   }
 }
 
+async function testConfiguredFormalSymbolsAvoidExternalDiscovery() {
+  const previous = process.env.STRATEGY_FORMAL_SYMBOLS;
+  process.env.STRATEGY_FORMAL_SYMBOLS = "btcusdt, ETHUSDT,btc";
+  let discoveryCalls = 0;
+  const { service } = createService(strategyResult, {
+    marketSymbols: async () => {
+      discoveryCalls += 1;
+      throw new Error("external discovery must not run");
+    }
+  });
+  try {
+    assert.deepEqual(await service["resolveGlobalScanSymbols"](), ["BTCUSDT", "ETHUSDT"]);
+    assert.deepEqual(
+      await service["resolveRealtimeSymbols"]({}, {
+        symbols: ["SOLUSDT"],
+        timeframe: "5m",
+        minScore: 65,
+        directions: ["long", "short"],
+        cooldownMinutes: 15,
+        intervalSeconds: 300
+      }),
+      ["BTCUSDT", "ETHUSDT"]
+    );
+    assert.equal(discoveryCalls, 0);
+  } finally {
+    if (previous === undefined) delete process.env.STRATEGY_FORMAL_SYMBOLS;
+    else process.env.STRATEGY_FORMAL_SYMBOLS = previous;
+  }
+}
+
 async function testGlobalScanRetriesOneTransientTransportFailure() {
   let attempts = 0;
   const { service } = createService(async ({ symbol, timeframe, candles }) => {
@@ -2006,8 +2266,9 @@ function testRealtimeSymbolsAndStreamUrlAreBinanceCompatible() {
 const tests = [
   testEntitlementProjectionKeepsPersistedFormalSignalUnchanged,
   testRealtimeWebSocketFallsBackToWsPackage,
+  testConfiguredFormalSymbolsAvoidExternalDiscovery,
   testRealtimeSymbolsAndStreamUrlAreBinanceCompatible,
-  testRunStrategyPersistsActionReduceDiagnosticsAndDistinctDedupeKeys,
+  testRunStrategyReturnsDiagnosticsWithoutPersistingProvisionalResults,
   testAlertCandidatesExposeActionAndReduceReasonBranches,
   testGlobalScanRunsTheFullMarketWithBoundedPartialFailure,
   testGlobalScanIsIndependentOfUserScanEntitlements,
@@ -2025,6 +2286,11 @@ const tests = [
   testGlobalScanRejectsIncompleteStrictEventLookup,
   testGlobalScanFuturesFailureCreatesNoFormalLifecycle,
   testRealtimeFormalExecutorUsesOnlyTheClosedCandleAndDeliversOnce,
+  testFormalPersistenceReleasesBeforeSlowInitialDelivery,
+  testFormalMatchingUsesStrictDatabasePropagation,
+  testDowngradedTimeframeIsRejectedAtFormalMatchBoundary,
+  testPerformanceBackfillUsesStrictDatabaseReads,
+  testPerformanceWindowsStartAtConfirmedCloseTime,
   testRealtimeFormalExecutorRejectsTheNewlyOpenedBar,
   testRealtimeFormalExecutorDoesNotDeliverUnpersistedSignals,
   testRealtimeFormalExecutorCompletesZeroSignalEvaluation,
@@ -2032,6 +2298,7 @@ const tests = [
   testReconciledSignalsCreateInboxButSkipPushesOlderThanFiveMinutes,
   testRecentReconciledSignalsRemainEligibleForPush,
   testRealtimeStatusExposesFormalPipelineTelemetry,
+  testFormalRecentCountersUseFifteenMinuteWindow,
   testFormalPipelineRecordsReserveRejection,
   testFormalPipelineRecordsFailureWhenLedgerFailWriteRejects,
   testConcurrentSameUserDeliveriesReserveDailyLimit,
@@ -2041,6 +2308,7 @@ const tests = [
   testConcurrentSameSignalEventIsReservedOnceAcrossInstances,
   testStalledFeishuTimesOutAfterReservationTransactionReleases,
   testFormalDeliveryRetryRechecksCurrentEntitlements,
+  testFormalDeliveryRetryRechecksCurrentTimeframeEntitlement,
   testFormalDeliveryRetryRechecksDisabledPushSetting,
   testPreclaimedRetryExcludesItselfFromDailyLimit,
   testPreclaimedRetryStillCountsOtherDailyDeliveries,

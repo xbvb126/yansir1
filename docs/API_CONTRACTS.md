@@ -38,10 +38,10 @@ Current implementation notes:
 - `/api/health` reports whether the API is using mock mode or a live Postgres connection.
 - `/api/health/readiness` reports production blockers such as missing Postgres and default auth token secrets.
 - `/api/me/entitlements` returns current plan limits for scan count, signal quota, Feishu alerts, API access, and allowed timeframes.
-- `/api/me`, `/api/admin/users`, `/api/billing/plans`, and `/api/signals` read through repository classes.
+- `/api/me`, `/api/admin/users`, `/api/billing/plans`, and `/api/signals` read through repository classes. The unauthenticated `/api/signals` view is restricted to the same delayed 5m/7-day formal ledger window as Guest/Free proof access.
 - `/api/billing/webhook` accepts subscription events from a payment provider and updates user plan, status, expiry, quota, and audit logs. If `BILLING_WEBHOOK_SECRET` is configured, callers must send `x-billing-webhook-secret`.
 - `/api/market/ticker` and `/api/market/klines` read Binance USDⓈ-M Futures data when available and fall back to fixture data during local/offline development.
-- `/api/strategy/run` calls the Python strategy service and attempts to persist returned signals into `signals` and `signal_events`.
+- `/api/strategy/run` calls the Python strategy service for an authorized diagnostic/API calculation. Its request, fixture, or possibly open-candle result is provisional and never writes the formal ledger.
 - If `/api/strategy/run` receives no `candles`, the API fetches K lines first and then sends the enriched payload to the strategy service.
 - `/api/strategy/scan` runs the same strategy over a batch of symbols. It is the manual trigger that will later become a scheduled scan job.
 - `/api/strategy/scan/latest` returns the last in-memory scan snapshot for local UI integration.
@@ -51,7 +51,8 @@ Current implementation notes:
 - `/api/strategy/scan/schedule/stop` stops the recurring scan task.
 - `/api/strategy/scan/global/status` reports the automatic system-level global scanner. It is UTC-aligned and runs 5 seconds after each closed-candle boundary; it is not controlled by the user schedule start/stop endpoints.
 - Formal signals are emitted only from a confirmed, closed K-line. A still-forming candle is never evaluated or published as a formal signal.
-- Formal signal persistence is a strict boundary: a signal cannot enter inbox matching or push delivery unless the signal event has been durably persisted and then read back from the configured database.
+- Formal signal persistence is a strict boundary: only the shared close-confirmed executor writes `is_formal = true` events with an immutable `strategy_version`, bar-open identity, and confirmed-close emission time. Existing ambiguous legacy events remain quarantined as non-formal.
+- Strict inbox matching runs in a bounded post-persistence queue. A close evaluation becomes `succeeded` only after matching completes; initial Feishu delivery runs in a separate bounded queue and cannot hold the formal calculation worker.
 - The close-event reconciler runs every 15 minutes to fill missed close jobs. Reconciled events always create eligible inbox records, but Feishu push is skipped when the close is more than five minutes old.
 - Mock database mode is degraded, non-delivering local behavior. It is never formal-signal ready and must not be treated as a production signal source.
 - Scan and alert endpoints enforce current user entitlements. Free/VIP/SVIP limits affect symbol count, remaining quota, allowed timeframe, Feishu delivery, and minimum alert score.
@@ -84,7 +85,7 @@ Returns the production-readiness diagnostics for the close-confirmed formal-sign
 }
 ```
 
-`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or has no open socket, reconciliation or delivery retry is stopped or reports an error, the oldest queued job is older than 60 seconds, or the most recent persistence failure is newer than the most recent persistence success. `reason` is the first active machine-readable blocker.
+`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or has no open socket, reconciliation or delivery retry is stopped or reports an error, calculation/matching work exceeds the 60-second age target, matching has a newer failure than success, delivery admission is under pressure, or the most recent persistence failure is newer than the most recent persistence success. `reason` is the first active machine-readable blocker.
 
 `GET /api/health` remains a liveness endpoint and includes this object as `formalSignals`; `GET /api/health/readiness` also treats a non-ready formal pipeline as a launch blocker.
 

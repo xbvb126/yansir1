@@ -114,6 +114,13 @@ try {
   assert.match(schema, /job_key varchar\(255\) not null unique/i);
   assert.match(schema, /idx_close_evaluations_status_time/i);
   assert.match(schema, /idx_close_evaluations_symbol_time/i);
+  assert.match(schema, /strategy_version varchar\(120\) not null/i);
+  assert.match(schema, /is_formal boolean not null default false/i);
+  assert.doesNotMatch(
+    schema,
+    /update signal_events[\s\S]*set is_formal = true/i,
+    "ambiguous legacy rows must stay quarantined because old manual and formal events cannot be distinguished safely"
+  );
 
   execFileSync(esbuildCommand, [
     ...esbuildArgsPrefix,

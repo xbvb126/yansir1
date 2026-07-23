@@ -10,10 +10,17 @@ import { UsersService } from "../users/users.service";
 import { AlertDirection, AlertRuleDto } from "./dto/alert-rule.dto";
 import { AlignedGlobalScanner } from "./aligned-global-scanner";
 import { CloseEvaluationRepository, type CloseEvaluationReservation } from "./close-evaluation.repository";
-import { FormalSignalJob, formalSignalJobFromClosedKline } from "./closed-candle-job";
+import { FormalSignalJob, formalSignalJobFromClosedKline, formalSignalJobKey } from "./closed-candle-job";
 import { FormalSignalQueue } from "./formal-signal-queue";
 import { FormalSignalReconciler } from "./formal-signal-reconciler";
 import { FormalDeliveryRetry, type FormalDeliveryRetryCandidate } from "./formal-delivery-retry";
+import { FormalAsyncWorkQueue } from "./formal-async-work-queue";
+import {
+  FORMAL_STRATEGY_VERSION,
+  PUBLIC_FORMAL_SIGNAL_DELAY_HOURS,
+  PUBLIC_FORMAL_SIGNAL_HISTORY_DAYS,
+  PUBLIC_FORMAL_SIGNAL_TIMEFRAMES
+} from "./formal-signal-policy";
 import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
@@ -108,12 +115,20 @@ export type FormalSignalExecution = {
 type FormalPipelineState = {
   latestSuccessfulCalculationAt: string | null;
   latestPersistenceAt: string | null;
+  latestMatchedAt: string | null;
   latestPersistenceFailureAt: string | null;
   recentSuccesses: number;
   recentFailures: number;
   recentTimedOut: number;
   recentReconciled: number;
   latestFailure: { at: string; key: string; error: string } | null;
+};
+
+type FormalOutcome = {
+  at: number;
+  outcome: "succeeded" | "failed";
+  source: FormalSignalJob["source"];
+  timedOut: boolean;
 };
 
 type BinanceKlineEvent = {
@@ -188,6 +203,9 @@ type SignalEventRow = {
   engine: string | null;
   price: string;
   score: number;
+  bar_time?: Date | string | null;
+  strategy_version?: string;
+  is_formal?: boolean;
   emitted_at: Date | string;
   payload: Record<string, unknown> | string | null;
   performance_entry_price: string | null;
@@ -310,11 +328,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private readonly openRealtimeSockets = new Set<RuntimeWebSocket>();
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private formalSignalQueue: FormalSignalQueue;
+  private readonly formalMatchQueue: FormalAsyncWorkQueue;
+  private readonly formalDeliveryQueue: FormalAsyncWorkQueue;
   private readonly formalSignalReconciler: FormalSignalReconciler;
   private readonly formalDeliveryRetry: FormalDeliveryRetry;
   private formalPipeline: FormalPipelineState = {
     latestSuccessfulCalculationAt: null,
     latestPersistenceAt: null,
+    latestMatchedAt: null,
     latestPersistenceFailureAt: null,
     recentSuccesses: 0,
     recentFailures: 0,
@@ -322,6 +343,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     recentReconciled: 0,
     latestFailure: null
   };
+  private formalOutcomeHistory: FormalOutcome[] = [];
   private readonly userDeliveryTails = new Map<string, Promise<void>>();
   private destroyed = false;
   private realtime: RealtimeState = {
@@ -378,6 +400,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       executeSlot: (slot) => this.runGlobalScanSlot(slot)
     });
     this.formalSignalQueue = this.createFormalSignalQueue();
+    this.formalMatchQueue = new FormalAsyncWorkQueue({
+      capacity: process.env.STRATEGY_FORMAL_MATCH_QUEUE_CAPACITY,
+      concurrency: process.env.STRATEGY_FORMAL_MATCH_CONCURRENCY
+    });
+    this.formalDeliveryQueue = new FormalAsyncWorkQueue({
+      capacity: process.env.STRATEGY_FORMAL_DELIVERY_QUEUE_CAPACITY,
+      concurrency: process.env.STRATEGY_FORMAL_DELIVERY_CONCURRENCY
+    });
     this.formalSignalReconciler = new FormalSignalReconciler({
       targets: async () => ({
         symbols: await this.resolveGlobalScanSymbols(),
@@ -443,6 +473,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     this.globalScanner.stop();
     this.formalSignalReconciler.stop();
     this.formalSignalQueue.stop();
+    this.formalMatchQueue.stop();
+    this.formalDeliveryQueue.stop();
     this.formalDeliveryRetry.stop();
   }
 
@@ -458,49 +490,35 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const symbols = await this.resolveGlobalScanSymbols();
     const marketDataCaches = new Map<string, Map<string, Promise<MarketKlinesResult>>>();
     const remainingJobsBySymbol = new Map(symbols.map((symbol) => [symbol, slot.timeframes.length]));
-    const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => ({ symbol, timeframe })));
-    const outcomes = await mapWithConcurrency(jobs, globalScanJobConcurrency(slot.timeframes.length), async ({ symbol, timeframe }) => {
+    const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => {
+      const klineOpenTime = slot.closedAt.getTime() - timeframeDurationMs(timeframe);
+      return {
+        key: formalSignalJobKey(symbol, timeframe as FormalSignalJob["timeframe"], klineOpenTime),
+        symbol,
+        timeframe: timeframe as FormalSignalJob["timeframe"],
+        klineOpenTime,
+        closedAt: slot.closedAt,
+        enqueuedAt: slot.runAt,
+        source: "reconciliation" as const
+      } satisfies FormalSignalJob;
+    }));
+    const outcomes = await mapWithConcurrency(jobs, globalScanJobConcurrency(slot.timeframes.length), async (job) => {
+      const { symbol, timeframe } = job;
       let marketDataCache = marketDataCaches.get(symbol);
       if (!marketDataCache) {
         marketDataCache = new Map<string, Promise<MarketKlinesResult>>();
         marketDataCaches.set(symbol, marketDataCache);
       }
       try {
-        let run;
-        try {
-          run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
-            strictClosedAt: slot.closedAt,
-            cache: marketDataCache,
-            expectedFormalJob: {
-              symbol,
-              timeframe,
-              klineOpenTime: slot.closedAt.getTime() - timeframeDurationMs(timeframe)
-            },
-            formalErrorCode: "unexpected_global_scan_bar_time"
-          });
-        } catch (error) {
-          if (!isTransientGlobalScanTransportError(error)) throw error;
-          marketDataCache.clear();
-          run = await this.executeStrategy({ symbol, timeframe, limit: 180 }, {
-            strictClosedAt: slot.closedAt,
-            cache: marketDataCache,
-            expectedFormalJob: {
-              symbol,
-              timeframe,
-              klineOpenTime: slot.closedAt.getTime() - timeframeDurationMs(timeframe)
-            },
-            formalErrorCode: "unexpected_global_scan_bar_time"
-          });
-        }
-        if (run.result.signals.length) {
-          if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
-          if (run.persistence.count !== run.result.signals.length) {
-            throw new Error(`signal_persistence_incomplete:expected=${run.result.signals.length}:actual=${run.persistence.count}`);
-          }
-          const events = await this.loadSignalEventsForResult(run.result, true);
-          await this.matchSignalEventsToUsers(events, { source: "realtime", closedAt: slot.closedAt });
-        }
-        return { ok: true, matchedSignals: run.result.signals.length } as const;
+        const execution = await this.executeFormalSignalJob(
+          job,
+          () => undefined,
+          marketDataCache,
+          "unexpected_global_scan_bar_time",
+          true
+        );
+        if (execution.status === "failed") throw new Error(execution.error ?? "formal_global_scan_failed");
+        return { ok: true, matchedSignals: execution.signalCount } as const;
       } catch (error) {
         return { ok: false, error: `${symbol}:${timeframe}: ${(error as Error).message}` } as const;
       } finally {
@@ -559,9 +577,6 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       );
     }
     onCalculationComplete?.();
-    const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result), {
-      strict: Boolean(marketDataOptions?.strictClosedAt)
-    });
 
     return {
       result,
@@ -569,13 +584,19 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         source: enrichedPayload.market_data_source ?? "request",
         candles: enrichedPayload.candles?.length ?? 0
       },
-      persistence
+      persistence: {
+        persisted: false,
+        count: 0
+      }
     };
   }
 
   private async executeFormalSignalJob(
     job: FormalSignalJob,
-    reportPersistence: (completedAt: Date) => void = () => undefined
+    reportPersistence: (completedAt: Date) => void = () => undefined,
+    marketDataCache = new Map<string, Promise<MarketKlinesResult>>(),
+    formalErrorCode = "unexpected_formal_bar_time",
+    retryTransientTransport = false
   ): Promise<FormalSignalExecution> {
     let reservation: CloseEvaluationReservation | null = null;
     let calculationCompleted = false;
@@ -584,27 +605,43 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     try {
       reservation = await this.closeEvaluations.reserve(job);
       if (!reservation) return { status: "duplicate", job, signalCount: 0 };
-      const run = await withPromiseTimeout(
+      const onCalculationComplete = () => {
+        calculationCompleted = true;
+        this.formalPipeline = {
+          ...this.formalPipeline,
+          latestSuccessfulCalculationAt: new Date().toISOString()
+        };
+      };
+      const calculate = () => withPromiseTimeout(
         this.executeStrategy(
           { symbol: job.symbol, timeframe: job.timeframe, limit: 180 },
-          { strictClosedAt: job.closedAt, cache: new Map(), expectedFormalJob: job },
-          () => {
-            calculationCompleted = true;
-            this.formalPipeline = {
-              ...this.formalPipeline,
-              latestSuccessfulCalculationAt: new Date().toISOString()
-            };
-          }
+          {
+            strictClosedAt: job.closedAt,
+            cache: marketDataCache,
+            expectedFormalJob: job,
+            formalErrorCode
+          },
+          onCalculationComplete
         ),
         formalStrategyTimeoutMs(),
         `formal_strategy_timeout:${job.key}`
       );
-      assertExpectedFormalBarTime(run.result, job);
-      if (run.result.signals.length) {
-        if (!run.persistence.persisted) throw new Error("signal_persistence_unavailable");
-        if (run.persistence.count !== run.result.signals.length) {
+      let run;
+      try {
+        run = await calculate();
+      } catch (error) {
+        if (!retryTransientTransport || !isTransientGlobalScanTransportError(error)) throw error;
+        marketDataCache.clear();
+        run = await calculate();
+      }
+      assertExpectedFormalBarTime(run.result, job, formalErrorCode);
+      const formalSignals = mapFormalStrategySignals(run.result, job);
+      if (formalSignals.length) {
+        const persistence = await this.signalsService.saveStrategySignals(formalSignals, { strict: true });
+        if (!persistence.persisted) throw new Error("signal_persistence_unavailable");
+        if (persistence.count !== formalSignals.length) {
           throw new Error(
-            `signal_persistence_incomplete:expected=${run.result.signals.length}:actual=${run.persistence.count}`
+            `signal_persistence_incomplete:expected=${formalSignals.length}:actual=${persistence.count}`
           );
         }
       }
@@ -616,14 +653,17 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       };
       persistenceCompleted = true;
 
-      const events = await this.loadSignalEventsForResult(run.result, true);
-      await this.matchSignalEventsToUsers(events, {
-        source: job.source,
-        closedAt: job.closedAt
+      const dedupeKeys = formalSignals.map((signal) => signal.dedupeKey);
+      const matchOutcome = this.formalMatchQueue.enqueue({
+        key: job.key,
+        closedAt: job.closedAt,
+        enqueuedAt: new Date(),
+        execute: () => this.finishFormalMatching(job, reservation!.id, dedupeKeys)
       });
-      await this.closeEvaluations.complete(reservation.id, events.length, new Date());
-      this.recordFormalSuccess(job, events.length);
-      return { status: "completed", job, signalCount: events.length };
+      if (matchOutcome === "pressure") {
+        throw new Error(`formal_match_queue_${matchOutcome}:${job.key}`);
+      }
+      return { status: "completed", job, signalCount: formalSignals.length };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (reservation) {
@@ -638,7 +678,43 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async finishFormalMatching(
+    job: FormalSignalJob,
+    reservationId: string,
+    dedupeKeys: string[]
+  ) {
+    try {
+      const events = await this.loadSignalEventsForKeys(dedupeKeys, true);
+      await this.matchSignalEventsToUsers(events, {
+        source: job.source,
+        closedAt: job.closedAt
+      });
+      const matchedAt = new Date();
+      await this.closeEvaluations.complete(reservationId, events.length, matchedAt);
+      this.formalPipeline = {
+        ...this.formalPipeline,
+        latestMatchedAt: matchedAt.toISOString()
+      };
+      this.recordFormalSuccess(job, events.length);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await this.closeEvaluations.fail(reservationId, message, new Date());
+      } catch {
+        // The match queue exposes the original failure; stale running rows remain reconcilable.
+      }
+      this.recordFormalFailure(job, message);
+      throw error;
+    }
+  }
+
   private recordFormalSuccess(job: FormalSignalJob, signalCount: number) {
+    this.formalOutcomeHistory.push({
+      at: Date.now(),
+      outcome: "succeeded",
+      source: job.source,
+      timedOut: false
+    });
     this.formalPipeline = {
       ...this.formalPipeline,
       recentSuccesses: Math.min(1_000, this.formalPipeline.recentSuccesses + 1),
@@ -656,6 +732,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private recordFormalFailure(job: FormalSignalJob, error: string, persistenceFailure = false) {
     const at = new Date().toISOString();
+    this.formalOutcomeHistory.push({
+      at: Date.now(),
+      outcome: "failed",
+      source: job.source,
+      timedOut: error.startsWith("formal_strategy_timeout:")
+    });
     this.formalPipeline = {
       ...this.formalPipeline,
       recentFailures: Math.min(1_000, this.formalPipeline.recentFailures + 1),
@@ -933,7 +1015,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
 
     const params: Array<string | string[] | AlertDirection[] | number | Date> = [currentUserId];
-    const where = ["inbox.user_id = $1::uuid"];
+    const where = ["inbox.user_id = $1::uuid", "se.is_formal = true"];
     params.push(entitlements.allowedTimeframes);
     where.push(`se.timeframe = any($${params.length}::varchar[])`);
     if (entitlements.formalSignalAccess === "delayed" && entitlements.formalSignalDelayHours > 0) {
@@ -1062,7 +1144,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       };
     }
 
-    const where: string[] = [];
+    const where: string[] = ["se.is_formal = true"];
     const params: Array<string[] | AlertDirection[] | number | Date> = [];
     if (entitlements.allowedTimeframes.length) {
       params.push(entitlements.allowedTimeframes);
@@ -1164,8 +1246,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getPublicDelayedSignals(query: PublicSignalsQuery = {}) {
-    const delayHours = 8;
-    const historyDays = 7;
+    const delayHours = PUBLIC_FORMAL_SIGNAL_DELAY_HOURS;
+    const historyDays = PUBLIC_FORMAL_SIGNAL_HISTORY_DAYS;
     const filters = normalizePublicSignalsQuery(query);
     if (!this.database.enabled) {
       return {
@@ -1192,6 +1274,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const where = [
       "se.emitted_at <= now() - interval '8 hours'",
       "se.emitted_at >= now() - interval '7 days'",
+      `se.timeframe = '${PUBLIC_FORMAL_SIGNAL_TIMEFRAMES[0]}'`,
+      "se.is_formal = true",
       ...PUBLIC_LEDGER_ELIGIBILITY
     ];
     const params: Array<string[] | AlertDirection[] | number | Date> = [];
@@ -1313,6 +1397,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       left join signal_performance sp on sp.signal_event_id = se.id
       where se.emitted_at <= now() - interval '8 hours'
         and se.emitted_at >= now() - interval '7 days'
+        and se.timeframe = '${PUBLIC_FORMAL_SIGNAL_TIMEFRAMES[0]}'
+        and se.is_formal = true
         and ${PUBLIC_LEDGER_ELIGIBILITY.join("\n        and ")}
     `);
     return {
@@ -1342,10 +1428,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       lastError: null
     };
     this.performanceTimer = setInterval(() => {
-      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) });
+      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) }).catch(() => undefined);
     }, intervalSeconds * 1000);
     if (payload.runImmediately !== false) {
-      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) });
+      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) }).catch(() => undefined);
     }
     return this.getPerformanceStatus();
   }
@@ -1389,32 +1475,44 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.performance = { ...this.performance, running: true, lastError: null };
-    const events = await this.loadPerformanceBackfillEvents(limit);
-    const summary: PerformanceRunSummary = { startedAt, finishedAt: startedAt, requestedLimit: limit, picked: events.length, updated: 0, skipped: 0, failed: 0, errors: [] };
-    for (const event of events) {
-      try {
-        const result = await this.updateSignalPerformance(event);
-        if (result.updated) summary.updated += 1;
-        else summary.skipped += 1;
-      } catch (error) {
-        summary.failed += 1;
-        if (summary.errors.length < 8) summary.errors.push(`${event.symbol} ${event.timeframe}: ${(error as Error).message}`);
+    try {
+      const events = await this.loadPerformanceBackfillEvents(limit);
+      const summary: PerformanceRunSummary = { startedAt, finishedAt: startedAt, requestedLimit: limit, picked: events.length, updated: 0, skipped: 0, failed: 0, errors: [] };
+      for (const event of events) {
+        try {
+          const result = await this.updateSignalPerformance(event);
+          if (result.updated) summary.updated += 1;
+          else summary.skipped += 1;
+        } catch (error) {
+          summary.failed += 1;
+          if (summary.errors.length < 8) summary.errors.push(`${event.symbol} ${event.timeframe}: ${(error as Error).message}`);
+        }
       }
+      summary.finishedAt = new Date().toISOString();
+      this.performance = {
+        ...this.performance,
+        running: false,
+        lastRunAt: summary.finishedAt,
+        nextRunAt: this.performance.enabled ? nextRunAt(this.performance.intervalSeconds) : null,
+        lastResult: summary,
+        lastError: summary.failed ? summary.errors[0] ?? "performance_backfill_failed" : null
+      };
+      return summary;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.performance = {
+        ...this.performance,
+        running: false,
+        lastRunAt: new Date().toISOString(),
+        nextRunAt: this.performance.enabled ? nextRunAt(this.performance.intervalSeconds) : null,
+        lastError: message
+      };
+      throw error;
     }
-    summary.finishedAt = new Date().toISOString();
-    this.performance = {
-      ...this.performance,
-      running: false,
-      lastRunAt: summary.finishedAt,
-      nextRunAt: this.performance.enabled ? nextRunAt(this.performance.intervalSeconds) : null,
-      lastResult: summary,
-      lastError: summary.failed ? summary.errors[0] ?? "performance_backfill_failed" : null
-    };
-    return summary;
   }
 
   private async loadPerformanceBackfillEvents(limit: number) {
-    return this.database.query<PerformanceEventRow>(
+    return this.database.queryStrict<PerformanceEventRow>(
       `
         select
           se.id::text,
@@ -1426,7 +1524,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           se.bar_time
         from signal_events se
         left join signal_performance sp on sp.signal_event_id = se.id
-        where se.emitted_at <= now() - interval '5 minutes'
+        where se.is_formal = true
+          and se.emitted_at <= now() - interval '5 minutes'
           and (
             sp.signal_event_id is null
             or sp.outcome_status in ('pending', 'partial')
@@ -1443,7 +1542,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private async updateSignalPerformance(event: PerformanceEventRow) {
     const entryPrice = Number(event.price);
-    const signalTime = event.bar_time ? new Date(event.bar_time).getTime() : new Date(event.emitted_at).getTime();
+    const signalTime = new Date(event.emitted_at).getTime();
     if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(signalTime)) return { updated: false };
     const now = Date.now();
     const startTime = Math.max(0, signalTime - 5 * 60 * 1000);
@@ -1453,7 +1552,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const candles = klines.candles.filter((candle) => (candle.close_time ?? candle.open_time) >= signalTime).sort((left, right) => left.open_time - right.open_time);
     if (!candles.length || klines.source === "fixture") return { updated: false };
     const metrics = calculateSignalPerformance(event, entryPrice, signalTime, candles, now);
-    await this.database.query(
+    await this.database.queryStrict(
       `
         insert into signal_performance (
           signal_event_id,
@@ -1662,6 +1761,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   getRealtimeStatus() {
+    const recent = this.recentFormalOutcomes();
     return {
       realtime: {
         ...this.realtime,
@@ -1670,10 +1770,13 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       },
       formalPipeline: {
         queue: this.formalSignalQueue.getStatus(),
+        matchQueue: this.formalMatchQueue.getStatus(),
+        deliveryQueue: this.formalDeliveryQueue.getStatus(),
         latestSuccessfulCalculationAt: this.formalPipeline.latestSuccessfulCalculationAt,
         latestPersistenceAt: this.formalPipeline.latestPersistenceAt,
-        recentSuccesses: this.formalPipeline.recentSuccesses,
-        recentFailures: this.formalPipeline.recentFailures,
+        latestMatchedAt: this.formalPipeline.latestMatchedAt,
+        recentSuccesses: recent.succeeded,
+        recentFailures: recent.failed,
         latestFailure: this.formalPipeline.latestFailure ? { ...this.formalPipeline.latestFailure } : null
       }
     };
@@ -1747,6 +1850,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   async getFormalSignalStatus() {
     const database = await this.database.health();
     const queue = this.formalSignalQueue.getStatus();
+    const matchQueue = this.formalMatchQueue.getStatus();
+    const deliveryQueue = this.formalDeliveryQueue.getStatus();
     const reconciliation = this.formalSignalReconciler.getStatus();
     const deliveryRetry = this.formalDeliveryRetry.getStatus();
     const realtime = {
@@ -1754,6 +1859,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       connected: this.hasOpenRealtimeSocket(),
       lastClosedEventAt: this.realtime.lastEventAt
     };
+    const recent = this.recentFormalOutcomes();
     const reasons = [
       database.mode === "mock" || !database.connected ? "database_unavailable" : null,
       !realtime.enabled ? "realtime_disabled" : null,
@@ -1763,6 +1869,12 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       !deliveryRetry.enabled ? "delivery_retry_disabled" : null,
       deliveryRetry.lastError ? "delivery_retry_error" : null,
       queue.oldestQueuedAt && Date.now() - new Date(queue.oldestQueuedAt).getTime() > 60_000 ? "queue_latency_exceeded" : null,
+      matchQueue.oldestQueuedAt && Date.now() - new Date(matchQueue.oldestQueuedAt).getTime() > 60_000 ? "match_queue_latency_exceeded" : null,
+      matchQueue.latestFailure && (
+        !matchQueue.latestCompletedAt
+        || new Date(matchQueue.latestFailure.at).getTime() > new Date(matchQueue.latestCompletedAt).getTime()
+      ) ? "matching_failed" : null,
+      deliveryQueue.pressureRejected > 0 ? "delivery_queue_pressure" : null,
       this.hasNewerPersistenceFailure() ? "persistence_failed" : null
     ].filter((reason): reason is string => Boolean(reason));
 
@@ -1771,16 +1883,32 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       reason: reasons[0] ?? null,
       realtime,
       queue,
+      matchQueue,
+      deliveryQueue,
       reconciliation,
       latestCalculationAt: this.formalPipeline.latestSuccessfulCalculationAt,
       latestPersistenceAt: this.formalPipeline.latestPersistenceAt,
+      latestMatchedAt: this.formalPipeline.latestMatchedAt,
       recent: {
-        succeeded: this.formalPipeline.recentSuccesses,
-        failed: this.formalPipeline.recentFailures,
-        timedOut: this.formalPipeline.recentTimedOut,
-        reconciled: this.formalPipeline.recentReconciled
+        succeeded: recent.succeeded,
+        failed: recent.failed,
+        timedOut: recent.timedOut,
+        reconciled: recent.reconciled
       },
       deliveryRetry
+    };
+  }
+
+  private recentFormalOutcomes() {
+    const cutoff = Date.now() - 15 * 60_000;
+    this.formalOutcomeHistory = this.formalOutcomeHistory.filter((outcome) => outcome.at >= cutoff);
+    return {
+      succeeded: this.formalOutcomeHistory.filter((outcome) => outcome.outcome === "succeeded").length,
+      failed: this.formalOutcomeHistory.filter((outcome) => outcome.outcome === "failed").length,
+      timedOut: this.formalOutcomeHistory.filter((outcome) => outcome.timedOut).length,
+      reconciled: this.formalOutcomeHistory.filter(
+        (outcome) => outcome.outcome === "succeeded" && outcome.source === "reconciliation"
+      ).length
     };
   }
 
@@ -1866,6 +1994,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async resolveGlobalScanSymbols() {
+    const configured = configuredFormalSymbols();
+    if (configured.length) return configured;
     let discovered: string[];
     try {
       discovered = await this.marketService.getStrictRealtimeKlineTriggerSymbols();
@@ -1881,6 +2011,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private async resolveRealtimeSymbols(payload: StrategyRealtimePayload, rule: Required<AlertRuleDto>) {
     if (payload.symbols?.length) return normalizeScanSymbols(payload.symbols).slice(0, MAX_SCAN_SYMBOLS);
+    const configured = configuredFormalSymbols();
+    if (configured.length) return configured;
     try {
       const binanceSymbols = await this.marketService.getRealtimeKlineTriggerSymbols();
       if (binanceSymbols.length) return normalizeScanSymbols(binanceSymbols).slice(0, MAX_SCAN_SYMBOLS);
@@ -1897,13 +2029,13 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return normalizeScanSymbols(rule.symbols?.length ? rule.symbols : DEFAULT_SCAN_SYMBOLS).slice(0, MAX_SCAN_SYMBOLS);
   }
 
-  private async loadSignalEventsForResult(result: StrategyRunResult, strict = false) {
-    if (!result.signals.length) return [];
+  private async loadSignalEventsForKeys(rawDedupeKeys: string[], strict = false) {
+    if (!rawDedupeKeys.length) return [];
     if (!this.database.enabled) {
       if (strict) throw new Error("signal_event_lookup_incomplete:database_unavailable");
       return [];
     }
-    const dedupeKeys = Array.from(new Set(mapStrategySignals(result).map((signal) => signal.dedupeKey)));
+    const dedupeKeys = Array.from(new Set(rawDedupeKeys));
     if (!dedupeKeys.length) return [];
     const sql = `
         select
@@ -1918,10 +2050,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           engine,
           price::text,
           score,
+          bar_time,
+          strategy_version,
+          is_formal,
           emitted_at,
           payload
         from signal_events
         where dedupe_key = any($1::varchar[])
+          and is_formal = true
         order by emitted_at desc
       `;
     const rows = strict
@@ -1944,8 +2080,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     context: Pick<FormalSignalJob, "source" | "closedAt">
   ) {
     if (!this.database.enabled || !events.length) return;
+    const entitlementsByUser = new Map<string, UserEntitlements>();
     for (const event of events) {
-      const watchlists = await this.database.query<WatchlistRow>(
+      const watchlists = await this.database.queryStrict<WatchlistRow>(
         `
           select
             id::text,
@@ -1968,7 +2105,14 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         [event.symbol, event.timeframe, Number(event.score)]
       );
       for (const watchlist of watchlists.filter((item) => signalScopeMatches(item.signal_scope, event.signal_type))) {
-        const inserted = await this.database.query<{ id: string }>(
+        let entitlements = entitlementsByUser.get(watchlist.user_id);
+        if (!entitlements) {
+          entitlements = (await this.usersService.getCurrentEntitlements(watchlist.user_id)).entitlements;
+          entitlementsByUser.set(watchlist.user_id, entitlements);
+        }
+        if (!entitlements.allowedTimeframes.includes(event.timeframe)) continue;
+
+        await this.database.queryStrict<{ id: string }>(
           `
             insert into user_signal_inbox (user_id, signal_event_id, symbol, timeframe, side, score, matched_rule)
             values ($1, $2, $3, $4, $5, $6, $7::jsonb)
@@ -1991,14 +2135,68 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
             })
           ]
         );
-        if (!inserted.length) continue;
         if (context.source === "reconciliation" && Date.now() - context.closedAt.getTime() > reconciliationPushMaxAgeMs()) {
           await this.recordSkippedDelivery(event, watchlist.user_id, "reconciliation_too_old");
           continue;
         }
-        await this.deliverInboxSignal(event, watchlist);
+        await this.enqueueInitialDelivery(event, watchlist, context.closedAt);
       }
     }
+  }
+
+  private async enqueueInitialDelivery(event: SignalEventRow, watchlist: WatchlistRow, closedAt: Date) {
+    const key = `${watchlist.user_id}:${event.id}:feishu`;
+    const outcome = this.formalDeliveryQueue.enqueue({
+      key,
+      closedAt,
+      enqueuedAt: new Date(),
+      execute: async () => {
+        try {
+          await this.deliverInboxSignal(event, watchlist);
+        } catch (error) {
+          await this.recordFailedDelivery(
+            event,
+            watchlist.user_id,
+            `initial_delivery_failed:${error instanceof Error ? error.message : String(error)}`
+          );
+          throw error;
+        }
+      }
+    });
+    if (outcome === "pressure") {
+      await this.recordFailedDelivery(event, watchlist.user_id, "initial_delivery_queue_pressure");
+    }
+  }
+
+  private async recordFailedDelivery(event: SignalEventRow, userId: string, reason: string) {
+    await this.database.queryStrict(
+      `
+        insert into alert_deliveries (
+          user_id, signal_event_id, channel, symbol, timeframe, direction,
+          signal_type, score, title, status, reason, payload, next_retry_at
+        )
+        values (
+          $1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar,
+          $6::varchar, $7::integer, $8::varchar, 'failed', $9::text, $10::jsonb, now()
+        )
+        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
+          status = case when alert_deliveries.status = 'sent' then alert_deliveries.status else 'failed' end,
+          reason = case when alert_deliveries.status = 'sent' then alert_deliveries.reason else excluded.reason end,
+          next_retry_at = case when alert_deliveries.status = 'sent' then null else now() end
+      `,
+      [
+        userId,
+        event.id,
+        event.symbol,
+        event.timeframe,
+        event.direction,
+        event.signal_type,
+        Number(event.score),
+        event.title,
+        reason,
+        JSON.stringify(event.payload ?? {})
+      ]
+    );
   }
 
   private async retryFormalDelivery(candidate: FormalDeliveryRetryCandidate) {
@@ -2121,6 +2319,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     }
 
     const { entitlements, pushSetting, rule, dailyLimit, cooldownMinutes, candidate } = preparation;
+    if (!entitlements.allowedTimeframes.includes(event.timeframe)) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "plan_timeframe_not_allowed", transaction);
+      return false;
+    }
     if (!entitlements.feishuAlerts) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "plan_or_feishu_disabled", transaction);
       return false;
@@ -2223,7 +2425,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       `;
     const params = [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, reason, JSON.stringify(event.payload ?? {})];
     if (transaction) await transaction.query(sql, params);
-    else await this.database.query(sql, params);
+    else await this.database.queryStrict(sql, params);
   }
 
   private async finalizeReservedDelivery(
@@ -2246,9 +2448,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
               last_attempt_at = now(),
               next_retry_at = case
                 when $4::varchar = 'sent' then null
-                when retry_count <= 1 then now() + interval '1 minute'
-                when retry_count = 2 then now() + interval '2 minutes'
-                else now() + interval '4 minutes'
+                when retry_count = 0 then now() + interval '1 minute'
+                when retry_count = 1 then now() + interval '2 minutes'
+                when retry_count = 2 then now() + interval '4 minutes'
+                else null
               end
           where user_id = $1::uuid
             and signal_event_id = $2::uuid
@@ -2279,7 +2482,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       } satisfies UserPushSettingRow;
     }
 
-    const rows = await this.database.query<UserPushSettingRow>(
+    const rows = await this.database.queryStrict<UserPushSettingRow>(
       `
         select
           coalesce(ups.enabled, false) as enabled,
@@ -3027,6 +3230,12 @@ function assertExpectedFormalBarTime(
   }
 }
 
+function configuredFormalSymbols() {
+  const configured = process.env.STRATEGY_FORMAL_SYMBOLS;
+  if (!configured?.trim()) return [];
+  return normalizeScanSymbols(configured.split(",")).slice(0, MAX_SCAN_SYMBOLS);
+}
+
 function timeframeDurationMs(timeframe: string) {
   const match = /^(\d+)(m|h)$/.exec(String(timeframe).trim().toLowerCase());
   if (!match) throw new Error(`unsupported_timeframe:${timeframe}`);
@@ -3097,9 +3306,9 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker:
   return results;
 }
 
-function mapStrategySignals(result: StrategyRunResult) {
-  const emittedAt = result.bar_time ? new Date(result.bar_time) : new Date();
-
+function mapFormalStrategySignals(result: StrategyRunResult, job: FormalSignalJob) {
+  const barTime = new Date(Number(result.bar_time));
+  const emittedAt = new Date(job.closedAt);
   return result.signals.map((signal) => {
     const reducePct = signal.reduce_pct ?? (signal as { reducePct?: number | null }).reducePct ?? null;
 
@@ -3116,13 +3325,21 @@ function mapStrategySignals(result: StrategyRunResult) {
       dedupeKey: [
         result.symbol,
         result.timeframe,
-        result.bar_time ?? emittedAt.getTime(),
+        result.bar_time,
+        FORMAL_STRATEGY_VERSION,
         signal.type,
         signal.side,
         signal.action ?? signal.side
       ].join(":"),
+      barTime,
       emittedAt,
+      strategyVersion: FORMAL_STRATEGY_VERSION,
+      formal: true as const,
       payload: {
+        formal: true,
+        strategyVersion: FORMAL_STRATEGY_VERSION,
+        barTime: barTime.toISOString(),
+        closedAt: emittedAt.toISOString(),
         engine: signal.engine,
         action: signal.action ?? null,
         reducePct,

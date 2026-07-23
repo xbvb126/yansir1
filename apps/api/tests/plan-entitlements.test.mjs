@@ -515,6 +515,8 @@ async function testPublicSignalsAreDelayedAndPreviewOnly() {
   const countQuery = db.queries.find((query) => query.sql.includes('from signal_events se where'));
   assert.ok(countQuery.sql.includes("se.emitted_at <= now() - interval '8 hours'"));
   assert.ok(countQuery.sql.includes("se.emitted_at >= now() - interval '7 days'"));
+  assert.ok(countQuery.sql.includes("se.timeframe = '5m'"), 'Guest/Free delayed visibility is fixed to 5m');
+  assert.ok(countQuery.sql.includes('se.is_formal = true'), 'public reads must exclude provisional and legacy-unverified events');
 }
 
 async function testFeishuConfigPlanGuardsAndClamping() {

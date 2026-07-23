@@ -211,6 +211,8 @@ export class FormalDeliveryRetry {
             reason = 'stale_delivery_reservation',
             next_retry_at = now()
         where status = 'sending'
+          and channel = 'feishu'
+          and signal_event_id is not null
           and coalesce(last_attempt_at, created_at) <= $1::timestamptz - ($2::integer * interval '1 second')
       `,
       [now.toISOString(), this.staleSendingSeconds]
@@ -241,6 +243,7 @@ export class FormalDeliveryRetry {
                   or (w.signal_scope = 'reversal_only' and coalesce(se.signal_type, '') like '%reversal%')
                 )
               where se.id = ad.signal_event_id
+                and se.is_formal = true
             )
           order by ad.next_retry_at nulls first, ad.created_at
           limit $2::integer
@@ -287,6 +290,7 @@ export class FormalDeliveryRetry {
         from claimed c
         join alert_deliveries ad on ad.id = c.id
         join signal_events se on se.id = c.signal_event_id
+          and se.is_formal = true
         join lateral (
           select w.*
           from watchlists w
@@ -314,6 +318,7 @@ export class FormalDeliveryRetry {
         select count(*)::text as exhausted
         from alert_deliveries
         where channel = 'feishu'
+          and signal_event_id is not null
           and status = 'failed'
           and retry_count >= $1::integer
       `,
@@ -331,6 +336,7 @@ export class FormalDeliveryRetry {
             skip_reason = 'watchlist_no_longer_matches',
             next_retry_at = null
         where ad.channel = 'feishu'
+          and ad.signal_event_id is not null
           and ad.status = 'failed'
           and not exists (
             select 1
@@ -346,6 +352,7 @@ export class FormalDeliveryRetry {
                 or (w.signal_scope = 'reversal_only' and coalesce(se.signal_type, '') like '%reversal%')
               )
             where se.id = ad.signal_event_id
+              and se.is_formal = true
           )
       `
     );

@@ -72,7 +72,7 @@ flowchart TB
       FastAPI["Uvicorn/FastAPI :8000"]
     end
     subgraph Docker["Docker Compose"]
-      PG["Postgres host :5434 -> 5432"]
+      PG["Postgres host :5432 -> 5432"]
       Redis["Redis host :6380 -> 6379"]
     end
 
@@ -83,15 +83,15 @@ flowchart TB
     Proto -. "独立原型" .-> SPA
 ```
 
-注意：`infra/README.md` 和部分默认连接串仍写 `5432/6379`，但 Compose 映射实际为 `5434/6380`，这是本地配置漂移风险。
+PostgreSQL 的 Compose 主机端口与默认连接串统一使用 `5432`；Redis 仍映射为主机 `6380` 到容器 `6379`。
 
 ## 4. 模块关系
 
 ## Formal close-confirmed signal pipeline
 
-Binance closed-candle WebSocket events create ordered formal jobs. Each job loads strict authoritative candles ending at the specified close, evaluates the strategy, persists every resulting event before user matching, and only then creates inbox and Feishu delivery records. The pipeline therefore never publishes an intrabar signal or a signal that failed strict persistence.
+Binance closed-candle WebSocket events create ordered formal jobs. Each job loads strict authoritative candles ending at the specified close, evaluates the strategy, and append-safely persists a versioned formal event before any user work. Strict inbox matching runs in its own bounded queue and must finish before the close evaluation is marked successful. Initial Feishu sends run in a second bounded queue, so a slow provider cannot hold calculation workers. The pipeline therefore never publishes an intrabar signal or a signal that failed strict persistence.
 
-The bounded queue reports p50/p95 close-to-persistence latency and treats an oldest queued job beyond 60 seconds as not ready. A reconciler runs every 15 minutes to recover missed close events. A recovered signal can still appear in the inbox, while its push is withheld once its close is over five minutes old. Mock or disconnected database mode is deliberately degraded and non-delivering for formal signals.
+The calculation and matching queues report separate p50/p95 close latency, queue age, pressure, and failures; stale matching work is a readiness blocker. A reconciler runs every 15 minutes to recover missed close events and prunes completed evaluation state outside its recovery window. A recovered signal can still appear in the inbox, while its push is withheld once its close is over five minutes old. Mock or disconnected database mode is deliberately degraded and non-delivering for formal signals.
 
 Commercial access is enforced after the globally identical formal signal is persisted: Free receives 5m signals after 8 hours with five symbols and seven days of history; VIP receives realtime 5m/15m signals for 50 symbols, 30 days, Feishu, and 300 daily signals; SVIP receives realtime all supported timeframes for 200 symbols, 180 days, Feishu, 2,000 daily signals, and API access.
 
@@ -137,7 +137,7 @@ flowchart TD
 | users | `UsersService/Repository`、`resolveEntitlements` | 用户资料、当前身份、套餐权益、管理员更新；DB 不可用时使用共享 mock |
 | billing | `BillingService/Repository`、`PaymentProviders` | 套餐、订单、mock 支付激活、webhook 入口、提供者就绪检查 |
 | market | `MarketService`、`MarketStreamService` | Binance REST 行情、fixture 降级、K 线 SSE 代理、市场概览与指标因子 |
-| signals | `SignalsService/Repository` | 列表信号、从策略结果保存 `signals`/`signal_events`、内存降级 |
+| signals | `SignalsService/Repository` | 延迟正式信号列表、仅接受共享正式执行器的严格版本化持久化 |
 | alerts | `AlertsService` | 飞书配置、测试/发送、套餐门槛、每日额度、投递历史和 DB 记录 |
 | claw | `ClawService` | 组合市场/信号上下文，规则化意图识别，调用 OpenAI-compatible chat completions，失败时模板降级 |
 | strategy | `StrategyClient/Service` | 注入行情、调用 Python、扫描、调度、实时 WS、信号分发、自选、公开延迟、绩效回填 |
@@ -281,7 +281,7 @@ erDiagram
 | `alert_rules` | symbols、timeframe、方向、阈值、冷却、扫描间隔；user + name 唯一 |
 | `watchlists` | 用户、币种、市场、周期、分数、scope、push 开关；组合唯一 |
 | `signals` | 策略信号定义/摘要 |
-| `signal_events` | 具体事件，价格、bar/emitted/detected 时间、payload；`dedupe_key` 唯一 |
+| `signal_events` | 具体事件，价格、bar/emitted/detected 时间、payload、`strategy_version`、`is_formal`；版本化 `dedupe_key` 唯一，冲突不改写历史 |
 | `user_signal_inbox` | 事件匹配用户后的收件箱；user + event 唯一 |
 | `signal_performance` | 15m/1h/4h/24h 价格收益、MFE/MAE、状态；事件唯一索引 |
 | `user_push_settings` | 渠道开关、目标、最低分、冷却；user + channel 唯一 |
