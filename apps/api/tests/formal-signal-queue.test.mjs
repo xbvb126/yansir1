@@ -61,14 +61,14 @@ try {
     const queue = new FormalSignalQueue({
       capacity: 5,
       concurrency: 2,
-      now: () => new Date(1_700_001_000_000),
-      execute: async (job) => {
+      execute: async (job, reportPersistence) => {
         starts.push({ symbol: job.symbol, klineOpenTime: job.klineOpenTime });
         active += 1;
         maxActive = Math.max(maxActive, active);
         const completion = deferred();
         completions.set(job.key, completion);
         await completion.promise;
+        reportPersistence(new Date(1_700_001_000_000));
         active -= 1;
         return { status: "completed", job, signalCount: 0 };
       }
@@ -157,6 +157,33 @@ try {
   }
 
   {
+    const persisted = deferred();
+    const postPersistence = deferred();
+    const job = formalJob("BTCUSDT", "5m", 1_700_000_000_000);
+    const persistenceCompletedAt = new Date(job.closedAt.getTime() + 1_500);
+    const queue = new FormalSignalQueue({
+      execute: async (queuedJob, reportPersistence) => {
+        reportPersistence(persistenceCompletedAt);
+        persisted.resolve();
+        await postPersistence.promise;
+        return { status: "completed", job: queuedJob, signalCount: 0 };
+      }
+    });
+
+    assert.equal(queue.enqueue(job), "accepted");
+    await persisted.promise;
+    assert.deepEqual(
+      queue.getStatus().latencyMs,
+      { p50: 1_500, p95: 1_500 },
+      "persistence telemetry must not wait for later matching or ledger work"
+    );
+    assert.equal(queue.getStatus().completed, 0, "post-persistence work is still in flight");
+    postPersistence.resolve();
+    await waitFor(() => queue.getStatus().completed === 1);
+    assert.deepEqual(queue.getStatus().latencyMs, { p50: 1_500, p95: 1_500 });
+  }
+
+  {
     const failures = [];
     const queue = new FormalSignalQueue({
       execute: async () => { throw new Error("executor unavailable"); },
@@ -167,6 +194,7 @@ try {
     assert.equal(queue.enqueue(job), "accepted");
     await waitFor(() => queue.getStatus().failed === 1);
     assert.deepEqual(failures, [{ key: job.key, error: "executor unavailable" }]);
+    assert.deepEqual(queue.getStatus().latencyMs, { p50: null, p95: null });
   }
 
   console.log("formal signal queue tests passed");

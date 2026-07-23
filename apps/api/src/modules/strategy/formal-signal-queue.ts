@@ -23,19 +23,17 @@ export type FormalQueueStatus = {
 };
 
 export type FormalSignalQueueOptions = {
-  execute: (job: FormalSignalJob) => Promise<FormalSignalExecution>;
+  execute: (job: FormalSignalJob, reportPersistence: (completedAt: Date) => void) => Promise<FormalSignalExecution>;
   onPressure?: (job: FormalSignalJob) => void;
   onFailure?: (job: FormalSignalJob, error: Error) => void;
   capacity?: number;
   concurrency?: number;
-  now?: () => Date;
 };
 
 export class FormalSignalQueue {
-  private readonly execute: (job: FormalSignalJob) => Promise<FormalSignalExecution>;
+  private readonly execute: (job: FormalSignalJob, reportPersistence: (completedAt: Date) => void) => Promise<FormalSignalExecution>;
   private readonly onPressure?: (job: FormalSignalJob) => void;
   private readonly onFailure?: (job: FormalSignalJob, error: Error) => void;
-  private readonly now: () => Date;
   private readonly pendingKeys = new Set<string>();
   private readonly activeLanes = new Set<string>();
   private readonly queue: FormalSignalJob[] = [];
@@ -54,7 +52,6 @@ export class FormalSignalQueue {
     this.execute = options.execute;
     this.onPressure = options.onPressure;
     this.onFailure = options.onFailure;
-    this.now = options.now ?? (() => new Date());
     this.capacity = normalizePositiveInteger(options.capacity ?? process.env.STRATEGY_FORMAL_QUEUE_CAPACITY, DEFAULT_CAPACITY);
     this.concurrency = normalizePositiveInteger(options.concurrency ?? process.env.STRATEGY_REALTIME_CONCURRENCY, DEFAULT_CONCURRENCY);
   }
@@ -119,11 +116,17 @@ export class FormalSignalQueue {
   }
 
   private async run(job: FormalSignalJob) {
+    let settled = false;
+    let persistenceReported = false;
+    const reportPersistence = (completedAt: Date) => {
+      if (settled || persistenceReported) return;
+      persistenceReported = true;
+      this.recordLatency(job, completedAt);
+    };
     try {
-      const execution = await this.execute(job);
+      const execution = await this.execute(job, reportPersistence);
       if (execution.status === "completed") {
         this.completed += 1;
-        this.recordLatency(job);
       } else if (execution.status === "failed") {
         this.failed += 1;
       }
@@ -135,6 +138,7 @@ export class FormalSignalQueue {
         // Failure observers must not break queue cleanup.
       }
     } finally {
+      settled = true;
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
       this.activeLanes.delete(laneKey(job));
       this.pendingKeys.delete(job.key);
@@ -142,8 +146,8 @@ export class FormalSignalQueue {
     }
   }
 
-  private recordLatency(job: FormalSignalJob) {
-    const duration = Math.max(0, this.now().getTime() - job.closedAt.getTime());
+  private recordLatency(job: FormalSignalJob, completedAt: Date) {
+    const duration = Math.max(0, completedAt.getTime() - job.closedAt.getTime());
     this.latencySamples.push(duration);
     if (this.latencySamples.length > MAX_LATENCY_SAMPLES) this.latencySamples.shift();
   }

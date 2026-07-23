@@ -535,7 +535,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private async executeFormalSignalJob(job: FormalSignalJob): Promise<FormalSignalExecution> {
+  private async executeFormalSignalJob(
+    job: FormalSignalJob,
+    reportPersistence: (completedAt: Date) => void = () => undefined
+  ): Promise<FormalSignalExecution> {
     let reservation: CloseEvaluationReservation | null = null;
 
     try {
@@ -564,9 +567,11 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           );
         }
       }
+      const persistenceCompletedAt = new Date();
+      reportPersistence(persistenceCompletedAt);
       this.formalPipeline = {
         ...this.formalPipeline,
-        latestPersistenceAt: new Date().toISOString()
+        latestPersistenceAt: persistenceCompletedAt.toISOString()
       };
 
       const events = await this.loadSignalEventsForResult(run.result, true);
@@ -616,7 +621,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private createFormalSignalQueue() {
     return new FormalSignalQueue({
-      execute: (job) => this.executeFormalSignalJob(job),
+      execute: (job, reportPersistence) => this.executeFormalSignalJob(job, reportPersistence),
       onPressure: (job) => this.recordFormalFailure(job, "formal_queue_pressure"),
       onFailure: (job, error) => this.recordFormalFailure(job, error.message)
     });
