@@ -111,6 +111,32 @@ try {
     "a BTC close with no ledger row must be reconciled even when ETH reached the same or later global close"
   );
 
+  let deploymentLedgerClose = null;
+  const deploymentJobs = [];
+  const deploymentReconciler = new FormalSignalReconciler({
+    targets: async () => ({ symbols: ["BTCUSDT"], timeframes: ["5m"] }),
+    closeEvaluations: {
+      getLatestPersistedCloseAt: async () => deploymentLedgerClose,
+      getEarliestIncompleteCloseAt: async () => null,
+      findCompletedKeys: async () => new Set()
+    },
+    enqueue: (job) => {
+      deploymentJobs.push(job);
+      return "accepted";
+    },
+    lookbackMinutes: 1440
+  });
+  const deploymentStartedAt = new Date("2026-07-23T04:00:00.000Z");
+  await deploymentReconciler.runOnce(deploymentStartedAt);
+  assert.equal(deploymentJobs.length, 0, "an empty ledger establishes the deployment baseline without backfilling history");
+  deploymentLedgerClose = new Date("2026-07-23T04:05:00.000Z");
+  await deploymentReconciler.runOnce(new Date("2026-07-23T04:10:00.000Z"));
+  assert.ok(deploymentJobs.length > 0);
+  assert.ok(
+    deploymentJobs.every((job) => job.closedAt.getTime() > deploymentStartedAt.getTime()),
+    "the first realtime success must not unlock pre-deployment reconciliation candidates"
+  );
+
   console.log("formal signal reconciler tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

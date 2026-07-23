@@ -145,6 +145,7 @@ export class FormalSignalReconciler {
 
   private resolveWindowStart(latestPersistedCloseAt: Date | null, earliestIncompleteCloseAt: Date | null, now: Date): Date {
     const lookbackFloor = new Date(now.getTime() - this.lookbackMinutes * 60_000);
+    if (this.initialBaseline) return new Date(Math.max(this.initialBaseline.getTime(), lookbackFloor.getTime()));
     if (latestPersistedCloseAt || earliestIncompleteCloseAt) return lookbackFloor;
     if (!this.initialBaseline) this.initialBaseline = new Date(now);
     return new Date(Math.max(this.initialBaseline.getTime(), lookbackFloor.getTime()));
