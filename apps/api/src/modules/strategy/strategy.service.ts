@@ -295,6 +295,10 @@ type PerformanceState = {
 
 type DeliveryPreparation = {
   candidate: ReturnType<typeof eventToAlertCandidate>;
+  providerTarget: {
+    userId: string;
+    webhookUrl: string;
+  };
   entitlements: UserEntitlements;
   pushSetting: UserPushSettingRow;
   rule: Required<AlertRuleDto>;
@@ -2289,10 +2293,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       let result: { sent?: boolean; failed?: boolean; skipped?: boolean; status?: number; reason?: string };
       try {
         result = await withPromiseTimeout(
-          this.alertsService.sendFeishu(preparation.candidate, watchlist.user_id, {
-            timeoutMs,
-            persistDelivery: false
-          }),
+          this.alertsService.sendFormalFeishu(preparation.candidate, preparation.providerTarget, { timeoutMs }),
           timeoutMs,
           `feishu_delivery_timeout:${timeoutMs}ms`
         );
@@ -2319,6 +2320,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     const rule = await this.currentFormalAlertRule(userId);
     return {
       candidate: eventToAlertCandidate(event),
+      providerTarget: {
+        userId,
+        webhookUrl: pushSetting.target_encrypted || pushSetting.binding_webhook_url || ""
+      },
       entitlements,
       pushSetting,
       rule,

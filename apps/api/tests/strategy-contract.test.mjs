@@ -11,6 +11,7 @@ const outDir = path.join(testDir, ".tmp-strategy-contract");
 mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, "strategy.service.mjs");
 const entitlementsOutFile = path.join(outDir, "entitlements.mjs");
+const alertsOutFile = path.join(outDir, "alerts.service.mjs");
 const esbuildBin = path.join(repoRoot, "node_modules", "esbuild", "bin", "esbuild");
 const esbuildCommand = process.platform === "win32" ? process.execPath : esbuildBin;
 const esbuildArgsPrefix = process.platform === "win32" ? [esbuildBin] : [];
@@ -65,6 +66,16 @@ execFileSync(esbuildCommand, [
   `--outfile=${entitlementsOutFile}`
 ], { cwd: apiRoot, stdio: "inherit" });
 
+execFileSync(esbuildCommand, [
+  ...esbuildArgsPrefix,
+  "src/modules/alerts/alerts.service.ts",
+  "--bundle",
+  "--platform=node",
+  "--format=esm",
+  "--packages=external",
+  `--outfile=${alertsOutFile}`
+], { cwd: apiRoot, stdio: "inherit" });
+
 const {
   StrategyService,
   buildRealtimeStreamUrl,
@@ -72,9 +83,12 @@ const {
   resolveRuntimeWebSocketCtor
 } = await import(pathToFileURL(outFile));
 const { buildEntitlements } = await import(pathToFileURL(entitlementsOutFile));
+const { AlertsService } = await import(pathToFileURL(alertsOutFile));
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
 const USER_TWO_ID = "00000000-0000-0000-0000-000000000002";
+const USER_BEYOND_FIFTY_ID = "00000000-0000-0000-0000-000000000051";
+const WRONG_FIRST_USER_ID = "00000000-0000-0000-0000-000000000050";
 
 const svipEntitlements = {
   plan: "SVIP",
@@ -225,7 +239,8 @@ function createService(result = strategyResult, overrides = {}) {
     }
   };
   const alertsService = overrides.alertsService ?? {
-    sendFeishu: async () => ({ sent: true })
+    sendFeishu: async () => ({ sent: true }),
+    sendFormalFeishu: async () => ({ sent: true })
   };
   const database = overrides.database ?? {
     enabled: false,
@@ -413,7 +428,11 @@ function timeframeDurationMs(timeframe) {
   return Number(match[1]) * (match[2] === "h" ? 60 : 1) * 60_000;
 }
 
-function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}) {
+function createLifecycleFixture({
+  cooldownMinutes = 0,
+  pushEnabled = true,
+  targetWebhook = "https://example.test/webhook"
+} = {}) {
   const signalEvents = new Map();
   const inbox = new Map();
   const deliveries = [];
@@ -487,7 +506,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
           enabled: pushEnabled,
           min_score: 0,
           cooldown_minutes: cooldownMinutes,
-          target_encrypted: "https://example.test/webhook",
+          target_encrypted: targetWebhook,
           target_masked: "https://example.test/***",
           binding_webhook_url: null
         }];
@@ -631,11 +650,13 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
     }
   };
 
-  const alertsService = {
-    sendFeishu: async (candidate, userId, options) => {
+  const sendFeishu = async (candidate, userId, options) => {
       alertCalls.push({ candidate, userId, options, advisoryActive: database.advisoryActive });
       return { sent: true };
-    }
+  };
+  const alertsService = {
+    sendFeishu,
+    sendFormalFeishu: (candidate, target, options) => sendFeishu(candidate, target.userId, options)
   };
 
   return { alertCalls, alertsService, cooldowns, database, deliveries, inbox, operations, signalEvents, signalsService };
@@ -1054,12 +1075,14 @@ async function testFormalPersistenceReleasesBeforeSlowInitialDelivery() {
   const evaluations = closeEvaluationFixture();
   const sendStarted = deferred();
   const releaseSend = deferred();
-  const alertsService = {
-    sendFeishu: async () => {
+  const sendFeishu = async () => {
       sendStarted.resolve();
       await releaseSend.promise;
       return { sent: true };
-    }
+  };
+  const alertsService = {
+    sendFeishu,
+    sendFormalFeishu: sendFeishu
   };
   const { service } = createService(
     ({ symbol, timeframe, candles }) => globalStrategyResult(symbol, timeframe, true, candles.at(-1).open_time),
@@ -1139,6 +1162,143 @@ async function testFormalDeliveryUsesStrictExactAlertRule() {
     /strict_formal_rule_lookup_failed/
   );
   assert.equal(fixture.alertCalls.length, 0);
+}
+
+async function testFormalProviderUsesOnlyPreparedExactUserBoundary() {
+  const targetWebhook = "https://target-51.example/webhook";
+  const wrongWebhook = "https://wrong-first.example/webhook";
+  const fixture = createLifecycleFixture({ targetWebhook });
+  const originalQuery = fixture.database.query.bind(fixture.database);
+  fixture.database.query = async (sql, values = []) => {
+    const normalized = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalized.includes("from user_push_settings") && normalized.includes("where user_id")) {
+      return [{
+        enabled: true,
+        target_encrypted: wrongWebhook,
+        target_masked: "wrong-first",
+        min_score: 0,
+        cooldown_minutes: 0
+      }];
+    }
+    return originalQuery(sql, values);
+  };
+
+  const exactReads = [];
+  const exactUsersService = {
+    getFormalEntitlementsById: async (userId) => {
+      exactReads.push(userId);
+      return {
+        userId,
+        entitlements: { ...svipEntitlements, maxPushPerDay: 1 }
+      };
+    }
+  };
+  const legacyReads = [];
+  const legacyUsersService = {
+    getCurrentUser: async (userId) => {
+      legacyReads.push(["user", userId]);
+      return { user: { id: WRONG_FIRST_USER_ID, plan: "SVIP" } };
+    },
+    getCurrentEntitlements: async (userId) => {
+      legacyReads.push(["entitlements", userId]);
+      return {
+        entitlements: { ...svipEntitlements, maxPushPerDay: 100 }
+      };
+    }
+  };
+  const realAlertsService = new AlertsService(fixture.database, legacyUsersService);
+  const { service } = createService(strategyResult, {
+    ...fixture,
+    alertsService: realAlertsService,
+    usersService: exactUsersService
+  });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000560");
+  const watchlist = deliveryWatchlist({ user_id: USER_BEYOND_FIFTY_ID });
+  const fetches = [];
+  const originalFetch = globalThis.fetch;
+  const previousWebhook = process.env.FEISHU_WEBHOOK_URL;
+  delete process.env.FEISHU_WEBHOOK_URL;
+
+  try {
+    globalThis.fetch = async (url) => {
+      fetches.push(String(url));
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    const result = await service["deliverInboxSignal"](event, watchlist);
+
+    assert.equal(result.sent, true);
+    assert.deepEqual(exactReads, [USER_BEYOND_FIFTY_ID]);
+    assert.deepEqual(fetches, [targetWebhook], "the provider must receive only the exact strict user's prepared webhook");
+    assert.deepEqual(legacyReads, [], "formal provider delivery must not re-resolve a first/fallback user");
+    assert.equal(fixture.deliveries[0].user_id, USER_BEYOND_FIFTY_ID);
+    assert.equal(fixture.deliveries[0].status, "sent");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousWebhook === undefined) delete process.env.FEISHU_WEBHOOK_URL;
+    else process.env.FEISHU_WEBHOOK_URL = previousWebhook;
+  }
+}
+
+async function testStrictFormalProviderLookupFailureBecomesDurableRetry() {
+  const fixture = createLifecycleFixture({ targetWebhook: "https://target-51.example/webhook" });
+  const originalQueryStrict = fixture.database.queryStrict.bind(fixture.database);
+  fixture.database.queryStrict = async (sql, values = []) => {
+    const normalized = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+    if (normalized.includes("left join user_push_settings")) {
+      throw new Error("strict_formal_provider_target_lookup_failed");
+    }
+    return originalQueryStrict(sql, values);
+  };
+  const exactUsersService = {
+    getFormalEntitlementsById: async (userId) => ({
+      userId,
+      entitlements: { ...svipEntitlements, maxPushPerDay: 1 }
+    })
+  };
+  let legacyReads = 0;
+  const realAlertsService = new AlertsService(fixture.database, {
+    getCurrentUser: async () => {
+      legacyReads += 1;
+      return { user: { id: WRONG_FIRST_USER_ID, plan: "SVIP" } };
+    },
+    getCurrentEntitlements: async () => {
+      legacyReads += 1;
+      return { entitlements: svipEntitlements };
+    }
+  });
+  const { service } = createService(strategyResult, {
+    ...fixture,
+    alertsService: realAlertsService,
+    usersService: exactUsersService
+  });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000561");
+  const watchlist = deliveryWatchlist({ user_id: USER_BEYOND_FIFTY_ID });
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+
+  try {
+    globalThis.fetch = async () => {
+      fetches += 1;
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+    await service["enqueueInitialDelivery"](event, watchlist, new Date(event.emitted_at));
+    await waitFor(
+      () => fixture.deliveries.some(({ signal_event_id, status }) => signal_event_id === event.id && status === "failed"),
+      "a strict provider target lookup failure must become a durable failed delivery"
+    );
+
+    const delivery = fixture.deliveries.find(({ signal_event_id }) => signal_event_id === event.id);
+    assert.equal(fetches, 0);
+    assert.equal(legacyReads, 0);
+    assert.equal(delivery?.user_id, USER_BEYOND_FIFTY_ID);
+    assert.match(delivery?.reason ?? "", /strict_formal_provider_target_lookup_failed/);
+    assert.ok(
+      fixture.operations.some((sql) => sql.includes("next_retry_at = now()")),
+      "the durable failure must be immediately visible to the retry worker"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 async function testFormalMatchingUsesStrictDatabasePropagation() {
@@ -1501,7 +1661,7 @@ function deliveryEvent(id, overrides = {}) {
   };
 }
 
-function deliveryWatchlist() {
+function deliveryWatchlist(overrides = {}) {
   return {
     id: "00000000-0000-0000-0000-000000000010",
     user_id: USER_ID,
@@ -1513,7 +1673,8 @@ function deliveryWatchlist() {
     push_enabled: true,
     created_at: new Date("2026-07-21T00:00:00.000Z"),
     updated_at: new Date("2026-07-21T00:00:00.000Z"),
-    disabled_at: null
+    disabled_at: null,
+    ...overrides
   };
 }
 
@@ -1573,15 +1734,17 @@ async function testConcurrentDistinctUsersDoNotBlockEachOther() {
   const fixture = createLifecycleFixture();
   let activeSends = 0;
   let maxActiveSends = 0;
-  const alertsService = {
-    sendFeishu: async () => {
+  const sendFeishu = async () => {
       assert.equal(fixture.database.advisoryActive, 0, "external sends run after reservation transactions release");
       activeSends += 1;
       maxActiveSends = Math.max(maxActiveSends, activeSends);
       await new Promise((resolve) => setImmediate(resolve));
       activeSends -= 1;
       return { sent: true };
-    }
+  };
+  const alertsService = {
+    sendFeishu,
+    sendFormalFeishu: sendFeishu
   };
   const serviceA = createService(strategyResult, { ...fixture, alertsService }).service;
   const serviceB = createService(strategyResult, { ...fixture, alertsService }).service;
@@ -1605,12 +1768,14 @@ async function testConcurrentDistinctUsersDoNotBlockEachOther() {
 async function testConcurrentSameSignalEventIsReservedOnceAcrossInstances() {
   const fixture = createLifecycleFixture();
   let sendCalls = 0;
-  const alertsService = {
-    sendFeishu: async () => {
+  const sendFeishu = async () => {
       sendCalls += 1;
       await new Promise((resolve) => setImmediate(resolve));
       return { sent: true };
-    }
+  };
+  const alertsService = {
+    sendFeishu,
+    sendFormalFeishu: sendFeishu
   };
   const serviceA = createService(strategyResult, { ...fixture, alertsService }).service;
   const serviceB = createService(strategyResult, { ...fixture, alertsService }).service;
@@ -1632,11 +1797,13 @@ async function testStalledFeishuTimesOutAfterReservationTransactionReleases() {
   try {
     const fixture = createLifecycleFixture();
     let advisoryActiveWhenSendStarted = null;
-    const alertsService = {
-      sendFeishu: async () => {
+    const sendFeishu = async () => {
         advisoryActiveWhenSendStarted = fixture.database.advisoryActive;
         return new Promise(() => {});
-      }
+    };
+    const alertsService = {
+      sendFeishu,
+      sendFormalFeishu: sendFeishu
     };
     const { service } = createService(strategyResult, { ...fixture, alertsService });
     const event = deliveryEvent("00000000-0000-0000-0000-000000000305");
@@ -2458,6 +2625,8 @@ const tests = [
   testFormalMatchingUsesStrictDatabasePropagation,
   testFormalMatchingUsesStrictExactUserEntitlements,
   testFormalDeliveryUsesStrictExactAlertRule,
+  testFormalProviderUsesOnlyPreparedExactUserBoundary,
+  testStrictFormalProviderLookupFailureBecomesDurableRetry,
   testDowngradedTimeframeIsRejectedAtFormalMatchBoundary,
   testPerformanceBackfillUsesStrictDatabaseReads,
   testPerformanceWindowsStartAtConfirmedCloseTime,

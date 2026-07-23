@@ -24,6 +24,11 @@ type FeishuSendOptions = {
   persistDelivery?: boolean;
 };
 
+export type FormalFeishuTarget = {
+  userId: string;
+  webhookUrl: string;
+};
+
 type AlertHistoryRecord = {
   id: string;
   channel: "feishu";
@@ -268,6 +273,43 @@ export class AlertsService {
       return result;
     }
 
+    return this.sendResolvedFeishu(signal, currentUserId, webhookUrl, options);
+  }
+
+  async sendFormalFeishu(
+    signal: FeishuAlertDto,
+    target: FormalFeishuTarget,
+    options: Pick<FeishuSendOptions, "timeoutMs"> = {}
+  ) {
+    const exactUserId = String(target.userId || "").trim();
+    if (!exactUserId) throw new Error("formal_feishu_user_id_required");
+    const webhookUrl = String(target.webhookUrl || "").trim();
+    if (!webhookUrl) {
+      const payload = buildFeishuPayload(signal);
+      const result = {
+        sent: false,
+        failed: true,
+        reason: "formal_feishu_webhook_missing",
+        signal,
+        payload
+      };
+      await this.recordResolvedHistory(signal, result, payload, exactUserId, false);
+      return result;
+    }
+
+    return this.sendResolvedFeishu(signal, exactUserId, webhookUrl, {
+      timeoutMs: options.timeoutMs,
+      persistDelivery: false
+    });
+  }
+
+  private async sendResolvedFeishu(
+    signal: FeishuAlertDto,
+    exactUserId: string,
+    webhookUrl: string,
+    options: FeishuSendOptions
+  ) {
+    const payload = buildFeishuPayload(signal);
     let response: Response;
     let responseText: string;
     const timeoutMs = normalizeFeishuTimeoutMs(options.timeoutMs);
@@ -293,7 +335,7 @@ export class AlertsService {
         signal,
         payload
       };
-      await this.recordHistory(signal, result, payload, userId, persistDelivery);
+      await this.recordResolvedHistory(signal, result, payload, exactUserId, options.persistDelivery !== false);
       return result;
     } finally {
       if (timeout) clearTimeout(timeout);
@@ -308,7 +350,7 @@ export class AlertsService {
         signal,
         payload
       };
-      await this.recordHistory(signal, result, payload, userId, persistDelivery);
+      await this.recordResolvedHistory(signal, result, payload, exactUserId, options.persistDelivery !== false);
       return result;
     }
 
@@ -318,7 +360,7 @@ export class AlertsService {
       signal,
       payload
     };
-    await this.recordHistory(signal, result, payload, userId, persistDelivery);
+    await this.recordResolvedHistory(signal, result, payload, exactUserId, options.persistDelivery !== false);
     return result;
   }
 
@@ -440,8 +482,18 @@ export class AlertsService {
   }
 
   private async recordHistory(signal: FeishuAlertDto, result: AlertResult, payload: FeishuTextPayload, requestUserId?: string, persistDelivery = true) {
-    const status = result.sent ? "sent" : result.failed ? "failed" : "skipped";
     const currentUserId = await this.currentUserId(requestUserId);
+    return this.recordResolvedHistory(signal, result, payload, currentUserId, persistDelivery);
+  }
+
+  private async recordResolvedHistory(
+    signal: FeishuAlertDto,
+    result: AlertResult,
+    payload: FeishuTextPayload,
+    exactUserId: string,
+    persistDelivery = true
+  ) {
+    const status = result.sent ? "sent" : result.failed ? "failed" : "skipped";
     const record: AlertHistoryRecord = {
       id: `alert_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
       channel: "feishu",
@@ -458,8 +510,8 @@ export class AlertsService {
     };
 
     this.history = [record, ...this.history].slice(0, 50);
-    const userHistory = this.historyByUserId.get(currentUserId) ?? [];
-    this.historyByUserId.set(currentUserId, [record, ...userHistory].slice(0, 50));
+    const userHistory = this.historyByUserId.get(exactUserId) ?? [];
+    this.historyByUserId.set(exactUserId, [record, ...userHistory].slice(0, 50));
 
     if (persistDelivery && this.database.enabled) {
       await this.database.query(
@@ -490,7 +542,7 @@ export class AlertsService {
             sent_at = case when excluded.status = 'sent' then now() else alert_deliveries.sent_at end
         `,
         [
-          currentUserId,
+          exactUserId,
           signal.signalEventId ?? null,
           signal.symbol,
           signal.timeframe ?? null,
