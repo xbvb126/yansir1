@@ -63,12 +63,19 @@ function retryStore(deliveries, clock) {
       return [];
     }
     if (normalized.startsWith("with due as") && normalized.includes("update alert_deliveries")) {
+      const acceptsPending = normalized.includes("'pending'");
       return deliveries
-        .filter((row) => row.status === "failed" && row.matches_watchlist !== false && row.retry_count < 3 && (!row.next_retry_at || new Date(row.next_retry_at) <= clock.now()))
+        .filter((row) =>
+          (row.status === "failed" || (acceptsPending && row.status === "pending"))
+          && row.matches_watchlist !== false
+          && row.retry_count < 3
+          && (!row.next_retry_at || new Date(row.next_retry_at) <= clock.now())
+        )
         .slice(0, 50)
         .map((row) => {
+          const previousStatus = row.status;
           row.status = "sending";
-          row.retry_count += 1;
+          if (previousStatus === "failed") row.retry_count += 1;
           row.last_attempt_at = clock.now().toISOString();
           row.next_retry_at = null;
           return { delivery_id: row.id, user_id: row.user_id, signal_event_id: row.signal_event_id };
@@ -117,6 +124,7 @@ mkdirSync(outDir, { recursive: true });
 try {
   const retrySource = readFileSync(path.join(apiRoot, "src/modules/strategy/formal-delivery-retry.ts"), "utf8");
   const strategySource = readFileSync(path.join(apiRoot, "src/modules/strategy/strategy.service.ts"), "utf8");
+  const schemaSource = readFileSync(path.join(repoRoot, "infra/schema.sql"), "utf8");
   assert.match(
     retrySource,
     /stale_delivery_reservation[\s\S]*where status = 'sending'[\s\S]*channel = 'feishu'[\s\S]*signal_event_id is not null/i,
@@ -126,6 +134,16 @@ try {
     strategySource,
     /when retry_count = 0 then now\(\) \+ interval '1 minute'[\s\S]*when retry_count = 1 then now\(\) \+ interval '2 minutes'[\s\S]*when retry_count = 2 then now\(\) \+ interval '4 minutes'[\s\S]*else null/i,
     "retry failures must expose 1m/2m/4m backoff before exhaustion"
+  );
+  assert.match(
+    retrySource,
+    /status in \('pending', 'failed'\)/i,
+    "the retry worker must recover durable rows that crashed before in-memory admission"
+  );
+  assert.match(
+    schemaSource,
+    /where status in \('pending', 'failed', 'sending'\)/i,
+    "the retry index must cover the durable pre-admission state"
   );
 
   execFileSync(esbuildCommand, [
@@ -172,6 +190,27 @@ try {
   const second = await retry.runOnce();
   assert.equal(second.sent, 1);
   assert.equal(deliveries[0].status, "sent");
+
+  const crashBeforeAdmission = [delivery("7", {
+    status: "pending",
+    reason: "initial_delivery_pending",
+    next_retry_at: clock.now().toISOString()
+  })];
+  let crashRecoveryAttempts = 0;
+  const crashRecoveryRetry = new FormalDeliveryRetry({
+    database: retryStore(crashBeforeAdmission, clock),
+    retryDelivery: async () => {
+      crashRecoveryAttempts += 1;
+      crashBeforeAdmission[0].status = "sent";
+      return { sent: true };
+    },
+    now: clock.now
+  });
+  const crashRecovery = await crashRecoveryRetry.runOnce();
+  assert.equal(crashRecovery.picked, 1, "a durable pre-admission row must be visible after process restart");
+  assert.equal(crashRecovery.sent, 1);
+  assert.equal(crashRecoveryAttempts, 1);
+  assert.equal(crashBeforeAdmission[0].retry_count, 0, "the first provider attempt after a crash is not a consumed retry");
 
   const exhausted = [delivery("2", { retry_count: 3 })];
   let exhaustedAttempts = 0;

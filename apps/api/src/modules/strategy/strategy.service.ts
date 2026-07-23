@@ -39,6 +39,7 @@ const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 300;
 const MIN_SCHEDULE_INTERVAL_SECONDS = 30;
 const MAX_SCHEDULE_INTERVAL_SECONDS = 86400;
 const DEFAULT_REALTIME_STREAM_URL = "wss://data-stream.binance.vision/stream";
+const PERFORMANCE_CANDLE_MS = 5 * 60_000;
 const PUBLIC_LEDGER_ELIGIBILITY = [
   "se.direction in ('long', 'short')",
   "coalesce(se.signal_type, '') <> 'market_observation'"
@@ -1868,13 +1869,16 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       reconciliation.lastError ? "reconciliation_error" : null,
       !deliveryRetry.enabled ? "delivery_retry_disabled" : null,
       deliveryRetry.lastError ? "delivery_retry_error" : null,
-      queue.oldestQueuedAt && Date.now() - new Date(queue.oldestQueuedAt).getTime() > 60_000 ? "queue_latency_exceeded" : null,
-      matchQueue.oldestQueuedAt && Date.now() - new Date(matchQueue.oldestQueuedAt).getTime() > 60_000 ? "match_queue_latency_exceeded" : null,
+      queue.oldestInFlightAt && Date.now() - new Date(queue.oldestInFlightAt).getTime() > 60_000 ? "queue_latency_exceeded" : null,
+      queue.pressureActive ? "queue_pressure" : null,
+      matchQueue.oldestInFlightAt && Date.now() - new Date(matchQueue.oldestInFlightAt).getTime() > 60_000 ? "match_queue_latency_exceeded" : null,
+      matchQueue.pressureActive ? "match_queue_pressure" : null,
       matchQueue.latestFailure && (
         !matchQueue.latestCompletedAt
         || new Date(matchQueue.latestFailure.at).getTime() > new Date(matchQueue.latestCompletedAt).getTime()
       ) ? "matching_failed" : null,
-      deliveryQueue.pressureRejected > 0 ? "delivery_queue_pressure" : null,
+      deliveryQueue.oldestInFlightAt && Date.now() - new Date(deliveryQueue.oldestInFlightAt).getTime() > 60_000 ? "delivery_queue_latency_exceeded" : null,
+      deliveryQueue.pressureActive ? "delivery_queue_pressure" : null,
       this.hasNewerPersistenceFailure() ? "persistence_failed" : null
     ].filter((reason): reason is string => Boolean(reason));
 
@@ -2107,7 +2111,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       for (const watchlist of watchlists.filter((item) => signalScopeMatches(item.signal_scope, event.signal_type))) {
         let entitlements = entitlementsByUser.get(watchlist.user_id);
         if (!entitlements) {
-          entitlements = (await this.usersService.getCurrentEntitlements(watchlist.user_id)).entitlements;
+          entitlements = (await this.usersService.getFormalEntitlementsById(watchlist.user_id)).entitlements;
           entitlementsByUser.set(watchlist.user_id, entitlements);
         }
         if (!entitlements.allowedTimeframes.includes(event.timeframe)) continue;
@@ -2145,6 +2149,8 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async enqueueInitialDelivery(event: SignalEventRow, watchlist: WatchlistRow, closedAt: Date) {
+    const pending = await this.ensurePendingDelivery(event, watchlist.user_id);
+    if (!pending) return;
     const key = `${watchlist.user_id}:${event.id}:feishu`;
     const outcome = this.formalDeliveryQueue.enqueue({
       key,
@@ -2163,9 +2169,39 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
         }
       }
     });
-    if (outcome === "pressure") {
-      await this.recordFailedDelivery(event, watchlist.user_id, "initial_delivery_queue_pressure");
-    }
+    // A pressure-rejected job remains durable as pending so the retry worker can claim it.
+    if (outcome === "pressure") return;
+  }
+
+  private async ensurePendingDelivery(event: SignalEventRow, userId: string) {
+    const rows = await this.database.queryStrict<{ id: string; status: string }>(
+      `
+        insert into alert_deliveries (
+          user_id, signal_event_id, channel, symbol, timeframe, direction,
+          signal_type, score, title, status, payload
+        )
+        values (
+          $1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar,
+          $6::varchar, $7::integer, $8::varchar, 'pending', $9::jsonb
+        )
+        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
+          status = alert_deliveries.status
+        where alert_deliveries.status = 'pending'
+        returning id::text, status
+      `,
+      [
+        userId,
+        event.id,
+        event.symbol,
+        event.timeframe,
+        event.direction,
+        event.signal_type,
+        Number(event.score),
+        event.title,
+        JSON.stringify(event.payload ?? {})
+      ]
+    );
+    return rows[0]?.status === "pending";
   }
 
   private async recordFailedDelivery(event: SignalEventRow, userId: string, reason: string) {
@@ -2180,9 +2216,10 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
           $6::varchar, $7::integer, $8::varchar, 'failed', $9::text, $10::jsonb, now()
         )
         on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
-          status = case when alert_deliveries.status = 'sent' then alert_deliveries.status else 'failed' end,
-          reason = case when alert_deliveries.status = 'sent' then alert_deliveries.reason else excluded.reason end,
-          next_retry_at = case when alert_deliveries.status = 'sent' then null else now() end
+          status = 'failed',
+          reason = excluded.reason,
+          next_retry_at = now()
+        where alert_deliveries.status = 'pending'
       `,
       [
         userId,
@@ -2218,7 +2255,13 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
       performance_evaluated_until: null,
       performance_updated_at: null
     };
-    return (await this.deliverInboxSignal(event, candidate.watchlist, true, true, candidate.deliveryId)) ?? { skipped: true };
+    try {
+      return (await this.deliverInboxSignal(event, candidate.watchlist, true, true, candidate.deliveryId)) ?? { skipped: true };
+    } catch (error) {
+      const reason = `retry_preparation_failed:${error instanceof Error ? error.message : String(error)}`;
+      await this.finalizeReservedDelivery(event, candidate.userId, { sent: false, reason });
+      return { failed: true, reason };
+    }
   }
 
   private async deliverInboxSignal(
@@ -2228,6 +2271,7 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     preclaimedRetry = false,
     preclaimedDeliveryId?: string
   ) {
+    if (!retry && this.database.enabled && !(await this.ensurePendingDelivery(event, watchlist.user_id))) return;
     return this.withUserDeliveryLock(watchlist.user_id, async () => {
       const preparation = await this.prepareDelivery(event, watchlist.user_id);
       if (!this.database.enabled) {
@@ -2270,9 +2314,9 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
   private async prepareDelivery(event: SignalEventRow, userId: string): Promise<DeliveryPreparation> {
     const channel = "feishu";
-    const entitlements = (await this.usersService.getCurrentEntitlements(userId)).entitlements;
+    const entitlements = (await this.usersService.getFormalEntitlementsById(userId)).entitlements;
     const pushSetting = await this.loadUserPushSetting(userId, channel);
-    const rule = await this.currentAlertRule(userId);
+    const rule = await this.currentFormalAlertRule(userId);
     return {
       candidate: eventToAlertCandidate(event),
       entitlements,
@@ -2293,21 +2337,6 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     preclaimedDeliveryId?: string
   ) {
     const channel = "feishu";
-    if (!retry) {
-      const existing = await transaction.query<{ status: string }>(
-        `
-          select status
-          from alert_deliveries
-          where user_id = $1::uuid
-            and signal_event_id = $2::uuid
-            and channel = $3::varchar
-          limit 1
-        `,
-        [watchlist.user_id, event.id, channel]
-      );
-      if (existing.length) return false;
-    }
-
     if (!watchlist.enabled) {
       await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_disabled", transaction);
       return false;
@@ -2369,30 +2398,26 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
 
     if (preclaimedRetry) return true;
 
-    const conflictAction = retry
-      ? `
-          on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
-            status = 'sending',
-            retry_count = alert_deliveries.retry_count + 1,
+    const claimed = await transaction.query<{ id: string }>(
+      `
+        update alert_deliveries
+        set status = 'sending',
+            retry_count = retry_count + case when $4::boolean then 1 else 0 end,
             last_attempt_at = now(),
             next_retry_at = null,
             reason = null,
             skip_reason = null
-          where alert_deliveries.status = 'failed'
-            and alert_deliveries.retry_count < 3
-            and coalesce(alert_deliveries.next_retry_at, now()) <= now()
-        `
-      : "on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do nothing";
-    const inserted = await transaction.query<{ id: string }>(
-      `
-        insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, payload, last_attempt_at)
-        values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'sending', $9::jsonb, now())
-        ${conflictAction}
+        where user_id = $1::uuid
+          and signal_event_id = $2::uuid
+          and channel = $3::varchar
+          and status = case when $4::boolean then 'failed' else 'pending' end
+          and (not $4::boolean or retry_count < 3)
+          and (not $4::boolean or coalesce(next_retry_at, now()) <= now())
         returning id::text
       `,
-      [watchlist.user_id, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, JSON.stringify(event.payload ?? {})]
+      [watchlist.user_id, event.id, channel, retry]
     );
-    return inserted.length === 1;
+    return claimed.length === 1;
   }
 
   private async withUserDeliveryLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
@@ -2738,6 +2763,34 @@ export class StrategyService implements OnModuleInit, OnModuleDestroy {
     return this.alertRuleByUserId.get(currentUserId) ?? DEFAULT_ALERT_RULE;
   }
 
+  private async currentFormalAlertRule(userId: string) {
+    const rows = await this.database.queryStrict<AlertRuleRow>(
+      `
+        select
+          symbols,
+          timeframe,
+          min_score,
+          directions,
+          cooldown_minutes,
+          interval_seconds
+        from alert_rules
+        where user_id::text = $1 and name = 'default' and status = 'active'
+        limit 1
+      `,
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) throw new Error(`formal_alert_rule_not_found:${userId}`);
+    return normalizeAlertRule({
+      symbols: row.symbols,
+      timeframe: row.timeframe,
+      minScore: Number(row.min_score),
+      directions: row.directions,
+      cooldownMinutes: Number(row.cooldown_minutes),
+      intervalSeconds: Number(row.interval_seconds)
+    });
+  }
+
   private async currentUserId(userId?: string) {
     const response = await this.usersService.getCurrentUser(userId);
     if (response.user.id) return response.user.id;
@@ -2881,7 +2934,12 @@ function calculateSignalPerformance(event: PerformanceEventRow, entryPrice: numb
 }
 
 function candleAtOrAfter(candles: Candle[], targetTime: number) {
-  return candles.find((candle) => (candle.close_time ?? candle.open_time) >= targetTime) ?? null;
+  return candles.find((candle) => {
+    const closeExclusive = candle.close_time !== undefined
+      ? candle.close_time + 1
+      : candle.open_time + PERFORMANCE_CANDLE_MS;
+    return closeExclusive >= targetTime;
+  }) ?? null;
 }
 
 function normalizePublicSignalsQuery(query: PublicSignalsQuery): NormalizedPublicSignalsQuery {

@@ -42,7 +42,12 @@ try {
   const { FormalAsyncWorkQueue } = await import(pathToFileURL(outFile));
   const blocked = deferred();
   const enqueuedAt = new Date("2026-07-23T12:00:00.000Z");
-  const queue = new FormalAsyncWorkQueue({ capacity: 1, concurrency: 1 });
+  let currentTime = new Date("2026-07-23T12:00:01.000Z");
+  const queue = new FormalAsyncWorkQueue({
+    capacity: 1,
+    concurrency: 1,
+    now: () => new Date(currentTime)
+  });
 
   assert.equal(queue.enqueue({
     key: "BTCUSDT:5m:formal-match",
@@ -52,14 +57,27 @@ try {
   }), "accepted");
   await waitFor(() => queue.getStatus().activeWorkers === 1);
   assert.equal(
-    queue.getStatus().oldestQueuedAt,
+    queue.getStatus().oldestActiveAt,
     enqueuedAt.toISOString(),
     "an active blocked task must remain visible to readiness age checks"
   );
+  assert.equal(queue.getStatus().oldestInFlightAt, enqueuedAt.toISOString());
+  assert.equal(queue.enqueue({
+    key: "ETHUSDT:5m:formal-match",
+    closedAt: new Date("2026-07-23T11:55:00.000Z"),
+    enqueuedAt: currentTime,
+    execute: async () => {}
+  }), "pressure");
+  assert.equal(queue.getStatus().latestPressureAt, currentTime.toISOString());
+  assert.equal(queue.getStatus().pressureActive, true);
 
   blocked.resolve();
   await waitFor(() => queue.getStatus().completed === 1);
-  assert.equal(queue.getStatus().oldestQueuedAt, null);
+  assert.equal(queue.getStatus().oldestActiveAt, null);
+  assert.equal(queue.getStatus().oldestInFlightAt, null);
+  currentTime = new Date(currentTime.getTime() + 60_001);
+  assert.equal(queue.getStatus().pressureRejected, 1);
+  assert.equal(queue.getStatus().pressureActive, false);
 
   console.log("formal async work queue tests passed");
 } finally {

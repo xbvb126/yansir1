@@ -137,6 +137,28 @@ try {
     "the first realtime success must not unlock pre-deployment reconciliation candidates"
   );
 
+  let retentionCutoff = null;
+  const retentionReconciler = new FormalSignalReconciler({
+    targets: async () => ({ symbols: [], timeframes: [] }),
+    closeEvaluations: {
+      getLatestPersistedCloseAt: async () => null,
+      getEarliestIncompleteCloseAt: async () => null,
+      findCompletedKeys: async () => new Set(),
+      purgeFinishedBefore: async (cutoff) => {
+        retentionCutoff = cutoff;
+        return 0;
+      }
+    },
+    enqueue: () => "accepted",
+    lookbackMinutes: 1440
+  });
+  await retentionReconciler.runOnce(now);
+  assert.equal(
+    retentionCutoff?.toISOString(),
+    "2026-07-16T04:00:00.000Z",
+    "evaluation retention must remain seven days independently of the 24-hour recovery lookback"
+  );
+
   console.log("formal signal reconciler tests passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });

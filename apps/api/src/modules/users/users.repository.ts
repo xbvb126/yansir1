@@ -48,6 +48,40 @@ export class UsersRepository {
     return users.find((user) => user.id === userId) ?? users[0] ?? null;
   }
 
+  async findByIdStrict(userId: string): Promise<UserRecord | null> {
+    const rows = await this.database.queryStrict<UserRow>(
+      `
+        select
+          u.id::text,
+          u.name,
+          u.phone,
+          u.role,
+          u.status,
+          coalesce(p.name, 'Free') as plan,
+          s.expires_at,
+          uq.used_count,
+          uq.quota_limit,
+          exists (
+            select 1 from feishu_bindings fb
+            where fb.user_id = u.id and fb.status = 'active'
+          ) as feishu_enabled,
+          (
+            select count(*)::int from team_members tm
+            where tm.owner_user_id = u.id and tm.status = 'active'
+          ) as team_members,
+          case when coalesce(p.supports_team, false) then 5 else 0 end as team_limit
+        from users u
+        left join subscriptions s on s.user_id = u.id and s.status = 'active'
+        left join plans p on p.id = s.plan_id
+        left join usage_quotas uq on uq.user_id = u.id and uq.quota_key = 'daily_signals'
+        where u.id::text = $1
+        limit 1
+      `,
+      [userId]
+    );
+    return rows[0] ? mapUserRow(rows[0]) : null;
+  }
+
   async findByPhone(phone: string): Promise<AuthUserRecord | null> {
     const normalizedPhone = normalizePhone(phone);
     const rows = await this.database.query<UserRow>(
@@ -250,6 +284,46 @@ export class UsersRepository {
     };
   }
 
+  async getPlanEntitlementsStrict(userId: string): Promise<PlanEntitlementRecord | null> {
+    const rows = await this.database.queryStrict<{
+      plan: string | null;
+      daily_signal_quota: number | null;
+      supports_feishu: boolean | null;
+      supports_api: boolean | null;
+      supports_team: boolean | null;
+      max_watchlist_symbols: number | null;
+      allowed_timeframes: string[] | null;
+      realtime_delay_hours: number | null;
+      history_days: number | null;
+      min_alert_score: number | null;
+      max_push_per_day: number | null;
+      supports_signal_outcomes: boolean | null;
+    }>(
+      `
+        select
+          coalesce(p.name, 'Free') as plan,
+          p.daily_signal_quota,
+          p.supports_feishu,
+          p.supports_api,
+          p.supports_team,
+          p.max_watchlist_symbols,
+          p.allowed_timeframes,
+          p.realtime_delay_hours,
+          p.history_days,
+          p.min_alert_score,
+          p.max_push_per_day,
+          p.supports_signal_outcomes
+        from users u
+        left join subscriptions s on s.user_id = u.id and s.status = 'active'
+        left join plans p on p.id = s.plan_id
+        where u.id::text = $1
+        limit 1
+      `,
+      [userId]
+    );
+    return rows[0] ? mapPlanEntitlements(rows[0]) : null;
+  }
+
   async getDailyPushUsage(userId: string): Promise<DailyPushUsage> {
     const rows = await this.database.query<{
       sent: number | null;
@@ -284,6 +358,34 @@ export class UsersRepository {
       periodStart: row?.period_start ? new Date(row.period_start).toISOString() : new Date().toISOString(),
       periodEnd: row?.period_end ? new Date(row.period_end).toISOString() : new Date().toISOString()
     };
+  }
+
+  async getDailyPushUsageStrict(userId: string): Promise<DailyPushUsage> {
+    const rows = await this.database.queryStrict<{
+      sent: number | null;
+      skipped: number | null;
+      failed: number | null;
+      total: number | null;
+      period_start: Date | string;
+      period_end: Date | string;
+    }>(
+      `
+        select
+          count(*) filter (where status = 'sent')::int as sent,
+          count(*) filter (where status = 'skipped')::int as skipped,
+          count(*) filter (where status = 'failed')::int as failed,
+          count(*)::int as total,
+          date_trunc('day', now()) as period_start,
+          date_trunc('day', now()) + interval '1 day' as period_end
+        from alert_deliveries
+        where user_id::text = $1
+          and channel = 'feishu'
+          and created_at >= date_trunc('day', now())
+          and created_at < date_trunc('day', now()) + interval '1 day'
+      `,
+      [userId]
+    );
+    return mapDailyPushUsage(rows[0]);
   }
 
   async updatePassword(userId: string, passwordHash: string) {
@@ -433,6 +535,54 @@ function mapUserRow(row: UserRow): UserRecord {
     signalQuota: Number(row.quota_limit ?? quotaForPlan(row.plan ?? "Free")),
     feishuEnabled: Boolean(row.feishu_enabled),
     teamSeats: `${Number(row.team_members ?? 0)}/${Number(row.team_limit ?? 0)}`
+  };
+}
+
+function mapPlanEntitlements(row: {
+  plan: string | null;
+  daily_signal_quota: number | null;
+  supports_feishu: boolean | null;
+  supports_api: boolean | null;
+  supports_team: boolean | null;
+  max_watchlist_symbols: number | null;
+  allowed_timeframes: string[] | null;
+  realtime_delay_hours: number | null;
+  history_days: number | null;
+  min_alert_score: number | null;
+  max_push_per_day: number | null;
+  supports_signal_outcomes: boolean | null;
+}): PlanEntitlementRecord {
+  return {
+    plan: row.plan,
+    dailySignalQuota: row.daily_signal_quota,
+    supportsFeishu: row.supports_feishu,
+    supportsApi: row.supports_api,
+    supportsTeam: row.supports_team,
+    maxWatchlistSymbols: row.max_watchlist_symbols,
+    allowedTimeframes: row.allowed_timeframes,
+    realtimeDelayHours: row.realtime_delay_hours,
+    historyDays: row.history_days,
+    minAlertScore: row.min_alert_score,
+    maxPushPerDay: row.max_push_per_day,
+    supportsSignalOutcomes: row.supports_signal_outcomes
+  };
+}
+
+function mapDailyPushUsage(row?: {
+  sent: number | null;
+  skipped: number | null;
+  failed: number | null;
+  total: number | null;
+  period_start: Date | string;
+  period_end: Date | string;
+}): DailyPushUsage {
+  return {
+    sent: Number(row?.sent ?? 0),
+    skipped: Number(row?.skipped ?? 0),
+    failed: Number(row?.failed ?? 0),
+    total: Number(row?.total ?? 0),
+    periodStart: row?.period_start ? new Date(row.period_start).toISOString() : new Date().toISOString(),
+    periodEnd: row?.period_end ? new Date(row.period_end).toISOString() : new Date().toISOString()
   };
 }
 

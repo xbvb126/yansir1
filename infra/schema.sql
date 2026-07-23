@@ -384,9 +384,10 @@ create index if not exists idx_market_snapshots_symbol_time on market_snapshots(
 create index if not exists idx_strategy_runs_symbol_time on strategy_runs(symbol, started_at desc);
 create index if not exists idx_alert_deliveries_user_time on alert_deliveries(user_id, created_at desc);
 create unique index if not exists idx_alert_deliveries_user_signal_channel on alert_deliveries(user_id, signal_event_id, channel) where signal_event_id is not null;
-create index if not exists idx_alert_deliveries_retry
+drop index if exists idx_alert_deliveries_retry;
+create index idx_alert_deliveries_retry
   on alert_deliveries(status, next_retry_at)
-  where status in ('failed', 'sending');
+  where status in ('pending', 'failed', 'sending');
 create index if not exists idx_billing_orders_user_time on billing_orders(user_id, created_at desc);
 
 

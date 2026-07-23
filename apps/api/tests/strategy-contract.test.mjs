@@ -160,10 +160,15 @@ const strategyResult = {
 };
 
 function usersService(entitlements = svipEntitlements) {
-  return {
+  const service = {
     getCurrentUser: async () => ({ user: { id: USER_ID, plan: entitlements.plan } }),
-    getCurrentEntitlements: async () => ({ entitlements })
+    getCurrentEntitlements: async () => ({ entitlements }),
+    getFormalEntitlementsById: async (userId) => {
+      const response = await service.getCurrentEntitlements(userId);
+      return { userId, ...response };
+    }
   };
+  return service;
 }
 
 function createService(result = strategyResult, overrides = {}) {
@@ -414,6 +419,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
   const deliveries = [];
   const cooldowns = new Set();
   const alertCalls = [];
+  const operations = [];
   let nextEventId = 1;
 
   const signalsService = {
@@ -450,6 +456,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
 
   async function executeQuery(sql, values = []) {
       const normalizedSql = String(sql).replace(/\s+/g, " ").trim().toLowerCase();
+      operations.push(normalizedSql);
       if (normalizedSql.includes("from signal_events") && normalizedSql.includes("dedupe_key = any")) {
         return values[0].flatMap((key) => signalEvents.has(key) ? [signalEvents.get(key)] : []);
       }
@@ -530,6 +537,8 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
       if (normalizedSql.startsWith("insert into alert_deliveries")) {
         const skipped = normalizedSql.includes("'skipped'");
         const sending = normalizedSql.includes("'sending'");
+        const pending = normalizedSql.includes("$8::varchar, 'pending', $9::jsonb");
+        const failed = normalizedSql.includes("$8::varchar, 'failed', $9::text");
         const delivery = {
           user_id: values[0],
           signal_event_id: values[1],
@@ -538,8 +547,8 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
           timeframe: values[3],
           direction: values[4],
           signal_type: values[5],
-          status: skipped ? "skipped" : sending ? "sending" : "sent",
-          reason: skipped ? values[8] : null
+          status: skipped ? "skipped" : pending ? "pending" : failed ? "failed" : sending ? "sending" : "sent",
+          reason: skipped || failed ? values[8] : null
         };
         const existing = deliveries.find((item) =>
           item.user_id === delivery.user_id
@@ -548,12 +557,26 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
         );
         if (!existing) {
           deliveries.push(delivery);
-          return sending ? [{ id: `delivery-${deliveries.length}` }] : [];
+          return sending || pending ? [{ id: `delivery-${deliveries.length}`, status: delivery.status }] : [];
         }
+        if (pending && existing.status === "pending") return [{ id: `delivery-${deliveries.indexOf(existing) + 1}`, status: "pending" }];
+        if (failed && existing.status !== "pending") return [];
         if (existing.status !== "sent" || !skipped) Object.assign(existing, delivery);
         return [];
       }
       if (normalizedSql.startsWith("update alert_deliveries")) {
+        if (normalizedSql.includes("set status = 'sending'")) {
+          const expectedStatus = values[3] ? "failed" : "pending";
+          const existing = deliveries.find((delivery) =>
+            delivery.user_id === values[0]
+            && delivery.signal_event_id === values[1]
+            && delivery.channel === values[2]
+            && delivery.status === expectedStatus
+          );
+          if (!existing) return [];
+          existing.status = "sending";
+          return [{ id: `delivery-${deliveries.indexOf(existing) + 1}` }];
+        }
         const existing = deliveries.find((delivery) =>
           delivery.user_id === values[0]
           && delivery.signal_event_id === values[1]
@@ -615,7 +638,7 @@ function createLifecycleFixture({ cooldownMinutes = 0, pushEnabled = true } = {}
     }
   };
 
-  return { alertCalls, alertsService, cooldowns, database, deliveries, inbox, signalEvents, signalsService };
+  return { alertCalls, alertsService, cooldowns, database, deliveries, inbox, operations, signalEvents, signalsService };
 }
 
 async function testRunStrategyReturnsDiagnosticsWithoutPersistingProvisionalResults() {
@@ -1059,6 +1082,65 @@ async function testFormalPersistenceReleasesBeforeSlowInitialDelivery() {
   await waitFor(() => service.getRealtimeStatus().formalPipeline.deliveryQueue.completed === 1);
 }
 
+async function testInitialDeliveryPersistsOutboxBeforeQueueAdmission() {
+  const fixture = createLifecycleFixture();
+  const { service } = createService(strategyResult, fixture);
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000556");
+  let admissions = 0;
+  service["formalDeliveryQueue"].enqueue = () => {
+    admissions += 1;
+    const delivery = fixture.deliveries.find(({ signal_event_id }) => signal_event_id === event.id);
+    assert.equal(delivery?.status, "pending", "outbox state must be durable before in-memory admission");
+    return "pressure";
+  };
+
+  await service["enqueueInitialDelivery"](event, deliveryWatchlist(), new Date(event.emitted_at));
+
+  assert.equal(admissions, 1);
+  assert.equal(fixture.deliveries.length, 1);
+  assert.equal(fixture.deliveries[0].status, "pending", "queue pressure leaves a retry-visible durable row");
+}
+
+async function testFormalMatchingUsesStrictExactUserEntitlements() {
+  const fixture = createLifecycleFixture();
+  const exactReads = [];
+  const authoritativeUsersService = usersService({ ...svipEntitlements, allowedTimeframes: [] });
+  authoritativeUsersService.getFormalEntitlementsById = async (userId) => {
+    exactReads.push(userId);
+    return { userId, entitlements: svipEntitlements };
+  };
+  const { service } = createService(strategyResult, { ...fixture, usersService: authoritativeUsersService });
+  service["enqueueInitialDelivery"] = async () => {};
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000557");
+
+  await service["matchSignalEventsToUsers"]([event], {
+    source: "realtime",
+    closedAt: new Date(event.emitted_at)
+  });
+
+  assert.deepEqual(exactReads, [USER_ID]);
+  assert.equal(fixture.inbox.size, 1, "formal matching must use the exact strict user rather than a fallback user");
+}
+
+async function testFormalDeliveryUsesStrictExactAlertRule() {
+  const fixture = createLifecycleFixture();
+  const queryStrict = fixture.database.queryStrict.bind(fixture.database);
+  fixture.database.queryStrict = async (sql, values = []) => {
+    if (String(sql).includes("from alert_rules")) throw new Error("strict_formal_rule_lookup_failed");
+    return queryStrict(sql, values);
+  };
+  const { service } = createService(strategyResult, fixture);
+
+  await assert.rejects(
+    service["deliverInboxSignal"](
+      deliveryEvent("00000000-0000-0000-0000-000000000558"),
+      deliveryWatchlist()
+    ),
+    /strict_formal_rule_lookup_failed/
+  );
+  assert.equal(fixture.alertCalls.length, 0);
+}
+
 async function testFormalMatchingUsesStrictDatabasePropagation() {
   const fixture = createLifecycleFixture();
   const evaluations = closeEvaluationFixture();
@@ -1129,7 +1211,7 @@ async function testPerformanceBackfillUsesStrictDatabaseReads() {
 }
 
 async function testPerformanceWindowsStartAtConfirmedCloseTime() {
-  const emittedAt = new Date(Math.floor(Date.now() / 300_000) * 300_000 - 10 * 60_000);
+  const emittedAt = new Date(Math.floor(Date.now() / 300_000) * 300_000 - 30 * 60_000);
   const barTime = new Date(emittedAt.getTime() - 60 * 60_000);
   const event = {
     id: "00000000-0000-0000-0000-000000000555",
@@ -1141,11 +1223,14 @@ async function testPerformanceWindowsStartAtConfirmedCloseTime() {
     bar_time: barTime
   };
   let strictCalls = 0;
+  let performanceParams = null;
   const database = {
     enabled: true,
-    queryStrict: async () => {
+    queryStrict: async (_sql, params = []) => {
       strictCalls += 1;
-      return strictCalls === 1 ? [event] : [];
+      if (strictCalls === 1) return [event];
+      performanceParams = params;
+      return [];
     }
   };
   const marketCalls = [];
@@ -1154,15 +1239,15 @@ async function testPerformanceWindowsStartAtConfirmedCloseTime() {
       marketCalls.push({ symbol, timeframe, startTime, endTime });
       return {
         source: "binance",
-        candles: [{
-          open_time: emittedAt.getTime(),
-          close_time: emittedAt.getTime() + 300_000,
-          open: 64000,
-          high: 64100,
-          low: 63900,
-          close: 64050,
+        candles: [0, 1, 2, 3].map((index) => ({
+          open_time: emittedAt.getTime() + index * 300_000,
+          close_time: emittedAt.getTime() + (index + 1) * 300_000 - 1,
+          open: 64000 + index * 100,
+          high: 64100 + index * 100,
+          low: 63900 + index * 100,
+          close: 64100 + index * 100,
           volume: 1
-        }]
+        }))
       };
     }
   };
@@ -1175,6 +1260,11 @@ async function testPerformanceWindowsStartAtConfirmedCloseTime() {
     marketCalls[0].startTime,
     emittedAt.getTime() - 5 * 60_000,
     "performance windows must start from the confirmed close/emission, not the candle open"
+  );
+  assert.equal(
+    performanceParams?.[2],
+    64300,
+    "a Binance candle closing at the 15m boundary minus 1ms is the 15m outcome candle"
   );
 }
 
@@ -1679,6 +1769,36 @@ async function testFormalDeliveryRetryRechecksDisabledPushSetting() {
   assert.equal(fixture.deliveries[0].reason, "push_setting_disabled");
 }
 
+async function testPreclaimedRetryPreparationFailureReturnsToFailed() {
+  const fixture = createLifecycleFixture();
+  const strictUsersService = usersService();
+  strictUsersService.getCurrentEntitlements = async () => { throw new Error("strict_formal_user_lookup_failed"); };
+  strictUsersService.getFormalEntitlementsById = strictUsersService.getCurrentEntitlements;
+  const { service } = createService(strategyResult, { ...fixture, usersService: strictUsersService });
+  const event = deliveryEvent("00000000-0000-0000-0000-000000000559");
+  fixture.deliveries.push({
+    id: "delivery-preparation-failure",
+    user_id: USER_ID,
+    signal_event_id: event.id,
+    channel: "feishu",
+    symbol: event.symbol,
+    timeframe: event.timeframe,
+    direction: event.direction,
+    signal_type: event.signal_type,
+    status: "sending",
+    retry_count: 1,
+    reason: null
+  });
+
+  const outcome = await service["retryFormalDelivery"](
+    preclaimedRetryCandidate(event, "delivery-preparation-failure")
+  );
+
+  assert.equal(outcome.failed, true);
+  assert.equal(fixture.deliveries[0].status, "failed");
+  assert.match(fixture.deliveries[0].reason, /strict_formal_user_lookup_failed/);
+}
+
 async function testPreclaimedRetryExcludesItselfFromDailyLimit() {
   const fixture = createLifecycleFixture();
   const onePushUsersService = usersService();
@@ -2050,6 +2170,53 @@ async function testFormalReadinessRequiresHealthyWorkerDependencies() {
   }
 }
 
+async function testFormalReadinessTracksAllInFlightAgeAndRecentPressure() {
+  const { service } = createHealthyFormalReadinessService();
+  try {
+    await startHealthyFormalWorkers(service);
+    const calculationBase = service["formalSignalQueue"].getStatus();
+    const matchBase = service["formalMatchQueue"].getStatus();
+    const deliveryBase = service["formalDeliveryQueue"].getStatus();
+    const healthyCalculation = { ...calculationBase, oldestInFlightAt: null, pressureActive: false };
+    const healthyMatch = { ...matchBase, oldestInFlightAt: null, pressureActive: false };
+    const healthyDelivery = { ...deliveryBase, oldestInFlightAt: null, pressureActive: false };
+
+    service["formalSignalQueue"].getStatus = () => ({
+      ...healthyCalculation,
+      oldestInFlightAt: new Date(Date.now() - 60_001).toISOString()
+    });
+    assert.equal((await service.getFormalSignalStatus()).reason, "queue_latency_exceeded");
+
+    service["formalSignalQueue"].getStatus = () => ({ ...healthyCalculation, pressureActive: true });
+    assert.equal((await service.getFormalSignalStatus()).reason, "queue_pressure");
+
+    service["formalSignalQueue"].getStatus = () => healthyCalculation;
+    service["formalMatchQueue"].getStatus = () => ({ ...healthyMatch, pressureActive: true });
+    assert.equal((await service.getFormalSignalStatus()).reason, "match_queue_pressure");
+
+    service["formalMatchQueue"].getStatus = () => healthyMatch;
+    service["formalDeliveryQueue"].getStatus = () => ({
+      ...healthyDelivery,
+      oldestInFlightAt: new Date(Date.now() - 60_001).toISOString()
+    });
+    assert.equal((await service.getFormalSignalStatus()).reason, "delivery_queue_latency_exceeded");
+
+    service["formalDeliveryQueue"].getStatus = () => ({
+      ...healthyDelivery,
+      pressureRejected: 9,
+      pressureActive: false
+    });
+    assert.equal(
+      (await service.getFormalSignalStatus()).ready,
+      true,
+      "lifetime delivery pressure must not keep readiness false after the recent pressure window clears"
+    );
+  } finally {
+    service["closeRealtimeSocket"](false);
+    service.onModuleDestroy();
+  }
+}
+
 async function testFormalReadinessUsesActualOpenSocketsAcrossChunks() {
   const originalWebSocket = globalThis.WebSocket;
   const sockets = [];
@@ -2287,7 +2454,10 @@ const tests = [
   testGlobalScanFuturesFailureCreatesNoFormalLifecycle,
   testRealtimeFormalExecutorUsesOnlyTheClosedCandleAndDeliversOnce,
   testFormalPersistenceReleasesBeforeSlowInitialDelivery,
+  testInitialDeliveryPersistsOutboxBeforeQueueAdmission,
   testFormalMatchingUsesStrictDatabasePropagation,
+  testFormalMatchingUsesStrictExactUserEntitlements,
+  testFormalDeliveryUsesStrictExactAlertRule,
   testDowngradedTimeframeIsRejectedAtFormalMatchBoundary,
   testPerformanceBackfillUsesStrictDatabaseReads,
   testPerformanceWindowsStartAtConfirmedCloseTime,
@@ -2310,6 +2480,7 @@ const tests = [
   testFormalDeliveryRetryRechecksCurrentEntitlements,
   testFormalDeliveryRetryRechecksCurrentTimeframeEntitlement,
   testFormalDeliveryRetryRechecksDisabledPushSetting,
+  testPreclaimedRetryPreparationFailureReturnsToFailed,
   testPreclaimedRetryExcludesItselfFromDailyLimit,
   testPreclaimedRetryStillCountsOtherDailyDeliveries,
   testPreclaimedRetryExcludesItselfFromCooldown,
@@ -2320,6 +2491,7 @@ const tests = [
   testGlobalScanStatusContract,
   testFormalReadinessReportsDatabaseAndRuntimeState,
   testFormalReadinessRequiresHealthyWorkerDependencies,
+  testFormalReadinessTracksAllInFlightAgeAndRecentPressure,
   testFormalReadinessUsesActualOpenSocketsAcrossChunks,
   testFormalSignalDestroyClosesSocketsAndStopsWorkers
 ];

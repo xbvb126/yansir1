@@ -3,6 +3,7 @@ import { closedCandleOpenTimesBetween, formalSignalJobKey, type FormalSignalJob 
 const DEFAULT_INTERVAL_SECONDS = 900;
 const DEFAULT_LOOKBACK_MINUTES = 1_440;
 const DEFAULT_BATCH_SIZE = 300;
+const DEFAULT_RETENTION_DAYS = 7;
 const COMPLETED_KEY_CHUNK_SIZE = 1_000;
 
 export type ReconciliationStatus = {
@@ -37,6 +38,7 @@ export type FormalSignalReconcilerOptions = {
   enqueue: (job: FormalSignalJob) => "accepted" | "duplicate" | "pressure";
   intervalSeconds?: number;
   lookbackMinutes?: number;
+  retentionDays?: number;
   batchSize?: number;
   now?: () => Date;
   setInterval?: (callback: () => void, delayMs: number) => ReturnType<typeof setInterval>;
@@ -47,6 +49,7 @@ export class FormalSignalReconciler {
   private readonly intervalSeconds: number;
   private readonly lookbackMinutes: number;
   private readonly batchSize: number;
+  private readonly retentionDays: number;
   private readonly now: () => Date;
   private readonly setIntervalFn: (callback: () => void, delayMs: number) => ReturnType<typeof setInterval>;
   private readonly clearIntervalFn: (timer: ReturnType<typeof setInterval>) => void;
@@ -58,6 +61,7 @@ export class FormalSignalReconciler {
     this.intervalSeconds = positiveInteger(options.intervalSeconds, DEFAULT_INTERVAL_SECONDS);
     this.lookbackMinutes = positiveInteger(options.lookbackMinutes, DEFAULT_LOOKBACK_MINUTES);
     this.batchSize = positiveInteger(options.batchSize, DEFAULT_BATCH_SIZE);
+    this.retentionDays = positiveInteger(options.retentionDays, DEFAULT_RETENTION_DAYS);
     this.now = options.now ?? (() => new Date());
     this.setIntervalFn = options.setInterval ?? ((callback, delayMs) => setInterval(callback, delayMs));
     this.clearIntervalFn = options.clearInterval ?? ((timer) => clearInterval(timer));
@@ -116,7 +120,7 @@ export class FormalSignalReconciler {
         else pressure += 1;
       }
       await this.options.closeEvaluations.purgeFinishedBefore?.(
-        new Date(startedAt.getTime() - this.lookbackMinutes * 60_000)
+        new Date(startedAt.getTime() - this.retentionDays * 24 * 60 * 60_000)
       );
       const finishedAt = this.now();
       this.status = {

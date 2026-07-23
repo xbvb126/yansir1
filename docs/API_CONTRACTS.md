@@ -76,7 +76,15 @@ Returns the production-readiness diagnostics for the close-confirmed formal-sign
     "connected": true,
     "lastClosedEventAt": "2026-07-23T04:00:00.000Z"
   },
-  "queue": { "capacity": 10000, "depth": 0, "latencyMs": { "p95": 1200 } },
+  "queue": {
+    "capacity": 10000,
+    "depth": 0,
+    "oldestActiveAt": null,
+    "oldestInFlightAt": null,
+    "latestPressureAt": null,
+    "pressureActive": false,
+    "latencyMs": { "p95": 1200 }
+  },
   "reconciliation": { "enabled": true, "intervalSeconds": 900 },
   "latestCalculationAt": "2026-07-23T04:00:01.000Z",
   "latestPersistenceAt": "2026-07-23T04:00:01.200Z",
@@ -85,7 +93,7 @@ Returns the production-readiness diagnostics for the close-confirmed formal-sign
 }
 ```
 
-`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or has no open socket, reconciliation or delivery retry is stopped or reports an error, calculation/matching work exceeds the 60-second age target, matching has a newer failure than success, delivery admission is under pressure, or the most recent persistence failure is newer than the most recent persistence success. `reason` is the first active machine-readable blocker.
+`ready` is false when Postgres is unavailable or mock mode is active, realtime tracking is disabled or has no open socket, reconciliation or delivery retry is stopped or reports an error, calculation/matching/delivery work exceeds the 60-second in-flight age target, any of those queues has current or recent admission pressure, matching has a newer failure than success, or the most recent persistence failure is newer than the most recent persistence success. `pressureRejected` is cumulative telemetry; `pressureActive` clears 60 seconds after the last rejection once capacity has recovered. `reason` is the first active machine-readable blocker.
 
 `GET /api/health` remains a liveness endpoint and includes this object as `formalSignals`; `GET /api/health/readiness` also treats a non-ready formal pipeline as a launch blocker.
 

@@ -133,9 +133,11 @@ try {
   {
     const blocked = deferred();
     const pressureJobs = [];
+    let currentTime = new Date("2026-07-23T04:00:00.000Z");
     const queue = new FormalSignalQueue({
       capacity: 1,
       concurrency: 1,
+      now: () => new Date(currentTime),
       execute: async (job) => {
         await blocked.promise;
         return { status: "completed", job, signalCount: 0 };
@@ -147,11 +149,18 @@ try {
 
     assert.equal(queue.enqueue(btc5m), "accepted");
     await waitFor(() => queue.getStatus().activeWorkers === 1);
+    assert.equal(queue.getStatus().oldestActiveAt, btc5m.enqueuedAt.toISOString());
+    assert.equal(queue.getStatus().oldestInFlightAt, btc5m.enqueuedAt.toISOString());
     assert.equal(queue.enqueue(eth5m), "pressure");
     assert.equal(queue.getStatus().pressureRejected, 1);
+    assert.equal(queue.getStatus().latestPressureAt, currentTime.toISOString());
+    assert.equal(queue.getStatus().pressureActive, true);
     assert.deepEqual(pressureJobs, [eth5m.key]);
     blocked.resolve();
     await waitFor(() => queue.getStatus().completed === 1);
+    currentTime = new Date(currentTime.getTime() + 60_001);
+    assert.equal(queue.getStatus().pressureRejected, 1, "cumulative pressure remains observable");
+    assert.equal(queue.getStatus().pressureActive, false, "readiness pressure clears after recovery");
     queue.stop();
     assert.equal(queue.enqueue(eth5m), "pressure", "a stopped queue must reject new formal jobs");
   }

@@ -4,6 +4,7 @@ import type { FormalSignalExecution } from "./strategy.service";
 const DEFAULT_CAPACITY = 10_000;
 const DEFAULT_CONCURRENCY = 16;
 const MAX_LATENCY_SAMPLES = 1_000;
+const PRESSURE_ACTIVE_MS = 60_000;
 
 export type FormalQueueStatus = {
   capacity: number;
@@ -11,6 +12,10 @@ export type FormalQueueStatus = {
   depth: number;
   activeWorkers: number;
   oldestQueuedAt: string | null;
+  oldestActiveAt: string | null;
+  oldestInFlightAt: string | null;
+  latestPressureAt: string | null;
+  pressureActive: boolean;
   accepted: number;
   duplicates: number;
   pressureRejected: number;
@@ -28,13 +33,15 @@ export type FormalSignalQueueOptions = {
   onFailure?: (job: FormalSignalJob, error: Error) => void;
   capacity?: number;
   concurrency?: number;
+  now?: () => Date;
 };
 
 export class FormalSignalQueue {
   private readonly execute: (job: FormalSignalJob, reportPersistence: (completedAt: Date) => void) => Promise<FormalSignalExecution>;
   private readonly onPressure?: (job: FormalSignalJob) => void;
   private readonly onFailure?: (job: FormalSignalJob, error: Error) => void;
-  private readonly pendingKeys = new Set<string>();
+  private readonly pendingJobs = new Map<string, FormalSignalJob>();
+  private readonly activeJobs = new Map<string, FormalSignalJob>();
   private readonly activeLanes = new Set<string>();
   private readonly queue: FormalSignalJob[] = [];
   private readonly latencySamples: number[] = [];
@@ -42,11 +49,13 @@ export class FormalSignalQueue {
   private accepted = 0;
   private duplicates = 0;
   private pressureRejected = 0;
+  private latestPressureAt: string | null = null;
   private completed = 0;
   private failed = 0;
   private stopped = false;
   private readonly capacity: number;
   private readonly concurrency: number;
+  private readonly now: () => Date;
 
   constructor(options: FormalSignalQueueOptions) {
     this.execute = options.execute;
@@ -54,15 +63,17 @@ export class FormalSignalQueue {
     this.onFailure = options.onFailure;
     this.capacity = normalizePositiveInteger(options.capacity ?? process.env.STRATEGY_FORMAL_QUEUE_CAPACITY, DEFAULT_CAPACITY);
     this.concurrency = normalizePositiveInteger(options.concurrency ?? process.env.STRATEGY_REALTIME_CONCURRENCY, DEFAULT_CONCURRENCY);
+    this.now = options.now ?? (() => new Date());
   }
 
   enqueue(job: FormalSignalJob): "accepted" | "duplicate" | "pressure" {
-    if (this.pendingKeys.has(job.key)) {
+    if (this.pendingJobs.has(job.key)) {
       this.duplicates += 1;
       return "duplicate";
     }
-    if (this.stopped || this.pendingKeys.size >= this.capacity) {
+    if (this.stopped || this.pendingJobs.size >= this.capacity) {
       this.pressureRejected += 1;
+      this.latestPressureAt = this.now().toISOString();
       try {
         this.onPressure?.(job);
       } catch {
@@ -71,7 +82,7 @@ export class FormalSignalQueue {
       return "pressure";
     }
 
-    this.pendingKeys.add(job.key);
+    this.pendingJobs.set(job.key, job);
     this.queue.push(job);
     this.accepted += 1;
     this.drain();
@@ -80,12 +91,19 @@ export class FormalSignalQueue {
 
   getStatus(): FormalQueueStatus {
     const sortedLatencies = [...this.latencySamples].sort((left, right) => left - right);
+    const oldestQueued = oldestJobAt(this.queue);
+    const oldestActive = oldestJobAt(this.activeJobs.values());
+    const oldestInFlight = oldestJobAt(this.pendingJobs.values());
     return {
       capacity: this.capacity,
       concurrency: this.concurrency,
       depth: this.queue.length,
       activeWorkers: this.activeWorkers,
-      oldestQueuedAt: oldestQueuedAt(this.queue),
+      oldestQueuedAt: oldestQueued,
+      oldestActiveAt: oldestActive,
+      oldestInFlightAt: oldestInFlight,
+      latestPressureAt: this.latestPressureAt,
+      pressureActive: this.pendingJobs.size >= this.capacity || isRecent(this.latestPressureAt, this.now(), PRESSURE_ACTIVE_MS),
       accepted: this.accepted,
       duplicates: this.duplicates,
       pressureRejected: this.pressureRejected,
@@ -100,7 +118,7 @@ export class FormalSignalQueue {
 
   stop(): void {
     this.stopped = true;
-    for (const job of this.queue) this.pendingKeys.delete(job.key);
+    for (const job of this.queue) this.pendingJobs.delete(job.key);
     this.queue.length = 0;
   }
 
@@ -110,6 +128,7 @@ export class FormalSignalQueue {
       if (nextIndex < 0) return;
       const [job] = this.queue.splice(nextIndex, 1);
       this.activeWorkers += 1;
+      this.activeJobs.set(job.key, job);
       this.activeLanes.add(laneKey(job));
       void this.run(job);
     }
@@ -140,8 +159,9 @@ export class FormalSignalQueue {
     } finally {
       settled = true;
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
+      this.activeJobs.delete(job.key);
       this.activeLanes.delete(laneKey(job));
-      this.pendingKeys.delete(job.key);
+      this.pendingJobs.delete(job.key);
       this.drain();
     }
   }
@@ -175,9 +195,16 @@ function compareFormalJobs(left: FormalSignalJob, right: FormalSignalJob) {
     || left.key.localeCompare(right.key);
 }
 
-function oldestQueuedAt(jobs: FormalSignalJob[]) {
-  if (!jobs.length) return null;
-  return new Date(Math.min(...jobs.map((job) => job.enqueuedAt.getTime()))).toISOString();
+function oldestJobAt(jobs: Iterable<FormalSignalJob>) {
+  let oldest = Number.POSITIVE_INFINITY;
+  for (const job of jobs) oldest = Math.min(oldest, job.enqueuedAt.getTime());
+  return Number.isFinite(oldest) ? new Date(oldest).toISOString() : null;
+}
+
+function isRecent(value: string | null, now: Date, durationMs: number) {
+  if (!value) return false;
+  const elapsed = now.getTime() - new Date(value).getTime();
+  return elapsed >= 0 && elapsed <= durationMs;
 }
 
 function toError(error: unknown) {

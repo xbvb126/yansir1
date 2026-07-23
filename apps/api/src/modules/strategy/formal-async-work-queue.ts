@@ -1,6 +1,7 @@
 const DEFAULT_CAPACITY = 10_000;
 const DEFAULT_CONCURRENCY = 16;
 const MAX_LATENCY_SAMPLES = 1_000;
+const PRESSURE_ACTIVE_MS = 60_000;
 
 export type FormalAsyncWork = {
   key: string;
@@ -15,6 +16,10 @@ export type FormalAsyncWorkQueueStatus = {
   depth: number;
   activeWorkers: number;
   oldestQueuedAt: string | null;
+  oldestActiveAt: string | null;
+  oldestInFlightAt: string | null;
+  latestPressureAt: string | null;
+  pressureActive: boolean;
   accepted: number;
   duplicates: number;
   pressureRejected: number;
@@ -31,10 +36,12 @@ export type FormalAsyncWorkQueueStatus = {
 export type FormalAsyncWorkQueueOptions = {
   capacity?: number | string;
   concurrency?: number | string;
+  now?: () => Date;
 };
 
 export class FormalAsyncWorkQueue {
   private readonly pendingWork = new Map<string, FormalAsyncWork>();
+  private readonly activeWork = new Map<string, FormalAsyncWork>();
   private readonly queue: FormalAsyncWork[] = [];
   private readonly latencySamples: number[] = [];
   private readonly capacity: number;
@@ -43,15 +50,18 @@ export class FormalAsyncWorkQueue {
   private accepted = 0;
   private duplicates = 0;
   private pressureRejected = 0;
+  private latestPressureAt: string | null = null;
   private completed = 0;
   private failed = 0;
   private latestCompletedAt: string | null = null;
   private latestFailure: { at: string; key: string; error: string } | null = null;
   private stopped = false;
+  private readonly now: () => Date;
 
   constructor(options: FormalAsyncWorkQueueOptions = {}) {
     this.capacity = positiveInteger(options.capacity, DEFAULT_CAPACITY);
     this.concurrency = positiveInteger(options.concurrency, DEFAULT_CONCURRENCY);
+    this.now = options.now ?? (() => new Date());
   }
 
   enqueue(work: FormalAsyncWork): "accepted" | "duplicate" | "pressure" {
@@ -61,6 +71,7 @@ export class FormalAsyncWorkQueue {
     }
     if (this.stopped || this.pendingWork.size >= this.capacity) {
       this.pressureRejected += 1;
+      this.latestPressureAt = this.now().toISOString();
       return "pressure";
     }
     this.pendingWork.set(work.key, work);
@@ -72,14 +83,19 @@ export class FormalAsyncWorkQueue {
 
   getStatus(): FormalAsyncWorkQueueStatus {
     const sortedLatencies = [...this.latencySamples].sort((left, right) => left - right);
+    const oldestQueued = oldestWorkAt(this.queue);
+    const oldestActive = oldestWorkAt(this.activeWork.values());
+    const oldestInFlight = oldestWorkAt(this.pendingWork.values());
     return {
       capacity: this.capacity,
       concurrency: this.concurrency,
       depth: this.queue.length,
       activeWorkers: this.activeWorkers,
-      oldestQueuedAt: this.pendingWork.size
-        ? new Date(Math.min(...Array.from(this.pendingWork.values(), (work) => work.enqueuedAt.getTime()))).toISOString()
-        : null,
+      oldestQueuedAt: oldestQueued,
+      oldestActiveAt: oldestActive,
+      oldestInFlightAt: oldestInFlight,
+      latestPressureAt: this.latestPressureAt,
+      pressureActive: this.pendingWork.size >= this.capacity || isRecent(this.latestPressureAt, this.now(), PRESSURE_ACTIVE_MS),
       accepted: this.accepted,
       duplicates: this.duplicates,
       pressureRejected: this.pressureRejected,
@@ -105,6 +121,7 @@ export class FormalAsyncWorkQueue {
       const work = this.queue.shift();
       if (!work) return;
       this.activeWorkers += 1;
+      this.activeWork.set(work.key, work);
       void this.run(work);
     }
   }
@@ -112,13 +129,13 @@ export class FormalAsyncWorkQueue {
   private async run(work: FormalAsyncWork) {
     try {
       await work.execute();
-      const completedAt = new Date();
+      const completedAt = this.now();
       this.completed += 1;
       this.latestCompletedAt = completedAt.toISOString();
       this.latencySamples.push(Math.max(0, completedAt.getTime() - work.closedAt.getTime()));
       if (this.latencySamples.length > MAX_LATENCY_SAMPLES) this.latencySamples.shift();
     } catch (error) {
-      const at = new Date().toISOString();
+      const at = this.now().toISOString();
       this.failed += 1;
       this.latestFailure = {
         at,
@@ -127,6 +144,7 @@ export class FormalAsyncWorkQueue {
       };
     } finally {
       this.activeWorkers = Math.max(0, this.activeWorkers - 1);
+      this.activeWork.delete(work.key);
       this.pendingWork.delete(work.key);
       this.drain();
     }
@@ -136,6 +154,18 @@ export class FormalAsyncWorkQueue {
 function positiveInteger(value: number | string | undefined, fallback: number) {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : fallback;
+}
+
+function oldestWorkAt(work: Iterable<FormalAsyncWork>) {
+  let oldest = Number.POSITIVE_INFINITY;
+  for (const item of work) oldest = Math.min(oldest, item.enqueuedAt.getTime());
+  return Number.isFinite(oldest) ? new Date(oldest).toISOString() : null;
+}
+
+function isRecent(value: string | null, now: Date, durationMs: number) {
+  if (!value) return false;
+  const elapsed = now.getTime() - new Date(value).getTime();
+  return elapsed >= 0 && elapsed <= durationMs;
 }
 
 function percentile(sorted: number[], ratio: number) {

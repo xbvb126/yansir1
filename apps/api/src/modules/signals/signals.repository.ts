@@ -54,14 +54,13 @@ export class SignalsRepository {
           se.price::text,
           se.score,
           se.emitted_at,
-          s.title,
-          s.reason,
-          s.signal_type,
+          se.title,
+          se.reason,
+          se.signal_type,
           sp.return_15m::text,
           coalesce(se.payload->>'oiChange', se.payload->>'oi_change') as oi_change,
           coalesce(se.payload->>'funding', se.payload->>'funding_rate') as funding
         from signal_events se
-        left join signals s on s.id = se.signal_id
         left join signal_performance sp on sp.signal_event_id = se.id
         where se.is_formal = true
           and se.timeframe = '${PUBLIC_FORMAL_SIGNAL_TIMEFRAMES[0]}'

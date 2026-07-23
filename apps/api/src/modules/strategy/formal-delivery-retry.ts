@@ -226,8 +226,8 @@ export class FormalDeliveryRetry {
           select ad.id
           from alert_deliveries ad
           where ad.channel = 'feishu'
-            and ad.status = 'failed'
-            and ad.retry_count < $1::integer
+            and ad.status in ('pending', 'failed')
+            and (ad.status = 'pending' or ad.retry_count < $1::integer)
             and coalesce(ad.next_retry_at, now()) <= now()
             and exists (
               select 1
@@ -251,7 +251,7 @@ export class FormalDeliveryRetry {
         ), claimed as (
           update alert_deliveries ad
           set status = 'sending',
-              retry_count = ad.retry_count + 1,
+              retry_count = ad.retry_count + case when ad.status = 'failed' then 1 else 0 end,
               last_attempt_at = now(),
               next_retry_at = null,
               reason = null,
@@ -337,7 +337,7 @@ export class FormalDeliveryRetry {
             next_retry_at = null
         where ad.channel = 'feishu'
           and ad.signal_event_id is not null
-          and ad.status = 'failed'
+          and ad.status in ('pending', 'failed')
           and not exists (
             select 1
             from signal_events se

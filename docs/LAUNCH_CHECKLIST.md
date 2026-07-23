@@ -74,7 +74,7 @@ Required checks:
 
 - `database.mode` is `postgres` and `database.connected` is `true`; mock or disconnected database mode is a launch blocker.
 - `formalSignals.ready` is `true`; investigate the returned `reason` before continuing when it is false.
-- Calculation and matching queue depths are bounded and their oldest queued work is under 60 seconds. Check `formalSignals.queue`, `formalSignals.matchQueue`, and `formalSignals.deliveryQueue`; matching latency is the close-to-inbox-success measure.
+- Calculation, matching, and delivery queue depths are bounded, `oldestInFlightAt` is under 60 seconds, and `pressureActive` is false for all three queues. Check `formalSignals.queue`, `formalSignals.matchQueue`, and `formalSignals.deliveryQueue`; `pressureRejected` is intentionally cumulative, while matching latency is the close-to-inbox-success measure.
 - Reconciliation is enabled, healthy, and fresh; verify its interval and latest reconciliation/persistence timestamps in `formalSignals.reconciliation`.
 - Delivery retry is enabled and has no active error in `formalSignals.deliveryRetry`.
 - `GET /api/strategy/performance/status` reports an enabled, healthy performance updater with a fresh latest run after persisted formal signals exist. Confirm `GET /api/strategy/public-performance-summary` and `GET /api/strategy/public-signals?limit=10` read persisted data. The intentional eight-hour public delay can leave the public list empty until an eligible signal ages in.

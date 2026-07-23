@@ -143,10 +143,30 @@ try {
     const repository = new SignalsRepository({
       query: async (sql) => {
         publicQuery = String(sql);
-        return [];
+        return [{
+          id: "event-immutable",
+          symbol: "BTCUSDT",
+          direction: "long",
+          price: "64000",
+          score: 90,
+          emitted_at: "2026-07-23T04:00:00.000Z",
+          title: publicQuery.includes("se.title") ? "Immutable event title" : "Mutable parent title",
+          reason: publicQuery.includes("se.reason") ? "Immutable event reason" : "Mutable parent reason",
+          signal_type: publicQuery.includes("se.signal_type") ? "versioned_event_type" : "parent_type",
+          return_15m: null,
+          oi_change: null,
+          funding: null
+        }];
       }
     });
-    assert.deepEqual(await repository.findLatest(), []);
+    const [projected] = await repository.findLatest();
+    assert.equal(projected.title, "Immutable event title");
+    assert.equal(projected.reason, "Immutable event reason");
+    assert.ok(projected.tags.includes("versioned_event_type"));
+    assert.doesNotMatch(publicQuery, /left join signals s/i);
+    assert.match(publicQuery, /se\.title/i);
+    assert.match(publicQuery, /se\.reason/i);
+    assert.match(publicQuery, /se\.signal_type/i);
     assert.match(publicQuery, /se\.is_formal = true/i);
     assert.match(publicQuery, /se\.timeframe = '5m'/i);
     assert.match(publicQuery, /se\.emitted_at <= now\(\) - interval '8 hours'/i);

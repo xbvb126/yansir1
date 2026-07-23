@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { StrategyService } from '../dist/modules/strategy/strategy.service.js';
 import { AlertsService } from '../dist/modules/alerts/alerts.service.js';
 import { buildEntitlements } from '../dist/modules/users/entitlements.js';
+import { UsersRepository } from '../dist/modules/users/users.repository.js';
+import { UsersService } from '../dist/modules/users/users.service.js';
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -554,6 +556,85 @@ async function testDailyPushUsageExposesOnlySentAsConsumed() {
   assert.match(repositorySource, /count\(\*\) filter \(where status = 'failed'\)::int as failed/);
 }
 
+async function testFormalEntitlementsUseStrictExactUserReads() {
+  const strictQueries = [];
+  const database = {
+    enabled: true,
+    query: async () => { throw new Error('formal entitlement lookup must not use swallowing query'); },
+    queryStrict: async (sql, params = []) => {
+      const text = String(sql);
+      strictQueries.push({ sql: text, params });
+      if (text.includes('daily_signal_quota')) {
+        return [{
+          plan: 'SVIP',
+          daily_signal_quota: 2000,
+          supports_feishu: true,
+          supports_api: true,
+          supports_team: true,
+          max_watchlist_symbols: 200,
+          allowed_timeframes: ['5m', '15m', '30m', '1h', '4h'],
+          realtime_delay_hours: 0,
+          history_days: 180,
+          min_alert_score: 65,
+          max_push_per_day: 2000,
+          supports_signal_outcomes: true
+        }];
+      }
+      if (text.includes("count(*) filter (where status = 'sent')")) {
+        return [{
+          sent: 2,
+          skipped: 0,
+          failed: 0,
+          total: 2,
+          period_start: '2026-07-23T00:00:00.000Z',
+          period_end: '2026-07-24T00:00:00.000Z'
+        }];
+      }
+      if (text.includes('from users u')) {
+        if (!/where u\.id::text = \$1/i.test(text)) {
+          return [{
+            id: 'wrong-first-user',
+            name: 'Wrong user',
+            phone: '13000000000',
+            role: 'member',
+            status: 'active',
+            plan: 'Free',
+            expires_at: null,
+            used_count: 0,
+            quota_limit: 10,
+            feishu_enabled: false,
+            team_members: 0,
+            team_limit: 0
+          }];
+        }
+        return [{
+          id: USER_ID,
+          name: 'Exact user beyond list limit',
+          phone: '13800000000',
+          role: 'member',
+          status: 'active',
+          plan: 'SVIP',
+          expires_at: '2027-01-01T00:00:00.000Z',
+          used_count: 2,
+          quota_limit: 2000,
+          feishu_enabled: true,
+          team_members: 0,
+          team_limit: 5
+        }];
+      }
+      throw new Error(`Unhandled formal entitlement query: ${text}`);
+    }
+  };
+  const service = new UsersService(new UsersRepository(database));
+  const result = await service.getFormalEntitlementsById(USER_ID);
+
+  assert.equal(result.userId, USER_ID);
+  assert.equal(result.entitlements.plan, 'SVIP');
+  assert.equal(result.entitlements.dailyPushUsed, 2);
+  assert.ok(strictQueries.length >= 3);
+  assert.ok(strictQueries.every(({ params }) => params.includes(USER_ID)));
+}
+
 async function testWatchlistBoundaryUpdatesDoNotConsumeExtraSlots() {
   const existingRows = ['BTC', 'ETH', 'SOL', 'XRP', 'BNB'].map((symbol) => ({
     id: `wl-${symbol}`,
@@ -643,6 +724,7 @@ const tests = [
   testFeishuConfigPlanGuardsAndClamping,
   testFeishuDailyLimitRecordsSkippedDelivery,
   testDailyPushUsageExposesOnlySentAsConsumed,
+  testFormalEntitlementsUseStrictExactUserReads,
   testWatchlistBoundaryUpdatesDoNotConsumeExtraSlots,
   testWatchlistCanDisableLegacyDisallowedTimeframesWhenPlanDowngrades,
   testPublicSignalQueryClampsAndSanitizesBoundaryFilters,

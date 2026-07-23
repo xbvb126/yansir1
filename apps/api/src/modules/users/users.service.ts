@@ -51,6 +51,21 @@ export class UsersService {
     };
   }
 
+  async getFormalEntitlementsById(userId: string) {
+    const exactUserId = String(userId || "").trim();
+    if (!exactUserId) throw new Error("formal_user_id_required");
+    const user = await this.usersRepository.findByIdStrict(exactUserId);
+    if (!user || user.id !== exactUserId) throw new Error(`formal_user_not_found:${exactUserId}`);
+    const planLimits = await this.usersRepository.getPlanEntitlementsStrict(exactUserId);
+    if (!planLimits) throw new Error(`formal_plan_entitlements_not_found:${exactUserId}`);
+    const dailyPushUsage = await this.usersRepository.getDailyPushUsageStrict(exactUserId);
+    return {
+      userId: exactUserId,
+      entitlements: withDailyPushUsage(buildEntitlements(user, planLimits), dailyPushUsage),
+      dailyPushUsage
+    };
+  }
+
   resolveIdentity(identity?: string) {
     return verifyAuthHeader(identity)?.sub ?? identity;
   }
