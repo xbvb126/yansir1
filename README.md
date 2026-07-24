@@ -1,5 +1,7 @@
 # Coin Anomaly Radar
 
+> 开发者接手请先阅读 [README 补充版](docs/README_SUPPLEMENT.md)；完整系统图、模块关系、数据流、数据库、环境变量、外部 API、定时任务和性能风险见 [技术架构文档](docs/ARCHITECTURE.md)。
+
 AI-powered crypto anomaly monitoring product with mobile signal streams, ValueClaw chat analysis, Feishu alerts, user management, subscriptions, and an embedded strategy engine.
 
 ## Target Architecture

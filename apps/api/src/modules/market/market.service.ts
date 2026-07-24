@@ -149,7 +149,7 @@ export class MarketService {
   private readonly spotBaseUrl = process.env.BINANCE_SPOT_BASE_URL || "https://api.binance.com";
   private overviewCache: { expiresAt: number; value: Awaited<ReturnType<MarketService["buildOverview"]>> } | null = null;
   private overviewPromise: Promise<Awaited<ReturnType<MarketService["buildOverview"]>>> | null = null;
-  private tradableUsdtSymbolsCache: { expiresAt: number; value: string[] } | null = null;
+  private tradableUsdtSymbolsCache: { expiresAt: number; value: string[]; fallback: boolean } | null = null;
 
   async getOverview() {
     if (this.overviewCache && this.overviewCache.expiresAt > Date.now()) {
@@ -283,7 +283,18 @@ export class MarketService {
     });
   }
 
-  private async getKlinesWithParams(symbol: string, timeframe: string, params: { limit: number; startTime?: number; endTime?: number }): Promise<MarketKlinesResult> {
+  async getStrictKlinesBefore(symbol: string, timeframe: string, endTime: number, limit = 500): Promise<MarketKlinesResult> {
+    const result = await this.getKlinesWithParams(symbol, timeframe, {
+      endTime,
+      limit: Math.max(1, Math.min(Number(limit) || 500, 1000)),
+      strict: true
+    });
+    const candles = result.candles.filter((candle) => candle.close_time !== undefined && candle.close_time <= endTime);
+    if (!candles.length) throw new Error(`authoritative_market_data_unavailable:${result.symbol}:${timeframe}`);
+    return { ...result, candles };
+  }
+
+  private async getKlinesWithParams(symbol: string, timeframe: string, params: { limit: number; startTime?: number; endTime?: number; strict?: boolean }): Promise<MarketKlinesResult> {
     const normalizedSymbol = normalizeSymbol(symbol);
 
     try {
@@ -293,7 +304,7 @@ export class MarketService {
       url.searchParams.set("limit", String(params.limit));
       if (params.startTime !== undefined) url.searchParams.set("startTime", String(params.startTime));
       if (params.endTime !== undefined) url.searchParams.set("endTime", String(params.endTime));
-      const data = await fetchJson<BinanceKline[]>(url);
+      const data = await fetchBinanceKlines(url);
 
       return {
         symbol: normalizedSymbol,
@@ -301,7 +312,11 @@ export class MarketService {
         source: "binance",
         candles: data.map(mapBinanceKline)
       };
-    } catch {
+    } catch (futuresError) {
+      if (params.strict) {
+        const futuresMessage = futuresError instanceof Error ? futuresError.message : String(futuresError);
+        throw new Error(`authoritative_market_data_unavailable:${normalizedSymbol}:${timeframe}:futures:${futuresMessage}`);
+      }
       try {
         const url = new URL("/api/v3/klines", this.spotBaseUrl);
         url.searchParams.set("symbol", normalizedSymbol);
@@ -309,7 +324,7 @@ export class MarketService {
         url.searchParams.set("limit", String(params.limit));
         if (params.startTime !== undefined) url.searchParams.set("startTime", String(params.startTime));
         if (params.endTime !== undefined) url.searchParams.set("endTime", String(params.endTime));
-        const data = await fetchJson<BinanceKline[]>(url);
+        const data = await fetchBinanceKlines(url);
 
         return {
           symbol: normalizedSymbol,
@@ -317,7 +332,7 @@ export class MarketService {
           source: "binance",
           candles: data.map(mapBinanceKline)
         };
-      } catch {
+      } catch (spotError) {
         return {
           symbol: normalizedSymbol,
           timeframe,
@@ -333,6 +348,26 @@ export class MarketService {
       return this.tradableUsdtSymbolsCache.value;
     }
 
+    const symbols = await this.discoverRealtimeKlineTriggerSymbols();
+    const fallback = !symbols.length;
+    const value = fallback ? FALLBACK_OVERVIEW_SYMBOLS : symbols;
+    this.tradableUsdtSymbolsCache = { expiresAt: Date.now() + (fallback ? 2 : 10) * 60 * 1000, value, fallback };
+    return value;
+  }
+
+  async getStrictRealtimeKlineTriggerSymbols(): Promise<string[]> {
+    if (this.tradableUsdtSymbolsCache && !this.tradableUsdtSymbolsCache.fallback && this.tradableUsdtSymbolsCache.expiresAt > Date.now()) {
+      return this.tradableUsdtSymbolsCache.value;
+    }
+
+    const symbols = await this.discoverRealtimeKlineTriggerSymbols();
+    if (symbols.length) {
+      this.tradableUsdtSymbolsCache = { expiresAt: Date.now() + 10 * 60 * 1000, value: symbols, fallback: false };
+    }
+    return symbols;
+  }
+
+  private async discoverRealtimeKlineTriggerSymbols(): Promise<string[]> {
     const [spotResult, futuresResult] = await Promise.allSettled([
       this.fetchSpotUsdtSymbols(),
       this.fetchFuturesUsdtSymbols()
@@ -341,9 +376,7 @@ export class MarketService {
     const futuresSymbols = futuresResult.status === "fulfilled" ? futuresResult.value : [];
     const futuresSet = new Set(futuresSymbols);
     const symbols = spotSymbols.length && futuresSymbols.length ? spotSymbols.filter((symbol) => futuresSet.has(symbol)) : [];
-    const value = symbols.length ? symbols : futuresSymbols.length ? futuresSymbols : spotSymbols.length ? spotSymbols : FALLBACK_OVERVIEW_SYMBOLS;
-    this.tradableUsdtSymbolsCache = { expiresAt: Date.now() + (value === FALLBACK_OVERVIEW_SYMBOLS ? 2 : 10) * 60 * 1000, value };
-    return value;
+    return symbols.length ? symbols : futuresSymbols.length ? futuresSymbols : spotSymbols;
   }
 
   private async getTickerSnapshot(symbol: string): Promise<TickerSnapshot> {
@@ -452,6 +485,10 @@ function fixtureTickerSnapshot(symbol: string): TickerSnapshot {
 }
 
 async function fetchJson<T>(url: URL): Promise<T> {
+  if (preferredMarketFetchTransport() === "powershell") {
+    return fetchJsonWithPowerShell<T>(url);
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4500);
 
@@ -471,6 +508,41 @@ async function fetchJson<T>(url: URL): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function preferredKlineFetchTransport(
+  platform = process.platform,
+  configured = process.env.MARKET_KLINE_FETCH_TRANSPORT
+): "native" | "strategy-proxy" {
+  if (configured === "native" || configured === "strategy-proxy") return configured;
+  return platform === "win32" ? "strategy-proxy" : "native";
+}
+
+async function fetchBinanceKlines(url: URL): Promise<BinanceKline[]> {
+  if (preferredKlineFetchTransport() !== "strategy-proxy") {
+    return fetchJson<BinanceKline[]>(url);
+  }
+
+  try {
+    const proxyUrl = new URL("/market/klines", process.env.STRATEGY_SERVICE_URL || "http://127.0.0.1:8000");
+    for (const parameter of ["symbol", "interval", "limit", "startTime", "endTime"]) {
+      const value = url.searchParams.get(parameter);
+      if (value !== null) proxyUrl.searchParams.set(parameter, value);
+    }
+    const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(12_000) });
+    if (!response.ok) throw new Error(`Strategy market proxy returned ${response.status}`);
+    return response.json() as Promise<BinanceKline[]>;
+  } catch {
+    return fetchJson<BinanceKline[]>(url);
+  }
+}
+
+export function preferredMarketFetchTransport(
+  platform = process.platform,
+  configured = process.env.MARKET_FETCH_TRANSPORT
+): "native" | "powershell" {
+  if (configured === "native" || configured === "powershell") return configured;
+  return platform === "win32" ? "powershell" : "native";
 }
 
 function fetchJsonWithPowerShell<T>(url: URL): Promise<T> {

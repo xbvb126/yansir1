@@ -8,16 +8,28 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const outfile = join(process.cwd(), "tmp-tests", "live-signal-command.mjs");
 const componentOutfile = join(process.cwd(), "tmp-tests", "LiveSignalCommand.mjs");
+const chromeOutfile = join(process.cwd(), "tmp-tests", "RadarWorkspaceChrome.mjs");
+const presentationOutfile = join(process.cwd(), "tmp-tests", "radarSourcePresentation.mjs");
 mkdirSync(join(process.cwd(), "tmp-tests"), { recursive: true });
 
 const appShellSource = readFileSync(join(process.cwd(), "src/components/AppShell.tsx"), "utf8");
 const liveSignalCommandSource = readFileSync(join(process.cwd(), "src/features/radar/LiveSignalCommand.tsx"), "utf8");
 const liveCommandIndex = appShellSource.indexOf("<LiveSignalCommand");
 const trackingPanelIndex = appShellSource.indexOf('<section id="radar-tools-panel" className="radar-tools-panel"');
-const trackingHeaderIndex = appShellSource.indexOf('<header className="ai-track-header">');
+const trackingHeaderIndex = appShellSource.indexOf("<RadarWorkspaceChrome");
+assert.match(
+  appShellSource,
+  /const STRATEGY_TRACK_TIMEFRAMES = \["5m", "15m", "30m", "1h", "4h"\]/,
+  "Radar tracking and watchlist defaults must include the scheduled 30m timeframe",
+);
+assert.match(
+  appShellSource,
+  /\["all", "5m", "15m", "30m", "1h", "4h"\]\.map/,
+  "Radar inbox filters must expose 30m signals",
+);
 assert.ok(liveCommandIndex > -1, "radar should render LiveSignalCommand");
 assert.ok(trackingPanelIndex > -1, "radar should render tracking tools panel");
-assert.ok(trackingHeaderIndex > -1, "radar should keep tracking tools");
+assert.ok(trackingHeaderIndex > -1, "radar should render workspace chrome");
 assert.ok(
   trackingPanelIndex < liveCommandIndex,
   "radar tracking tools should render before the signal list",
@@ -36,21 +48,6 @@ assert.match(
   /useState<"ai" \| "strategy" \| "mine">\("strategy"\)/,
   "radar should default to strategy signals",
 );
-assert.match(
-  appShellSource,
-  />策略信号<\/button>/,
-  "radar should label the primary strategy source as strategy signals",
-);
-assert.match(
-  appShellSource,
-  />市场异动<\/button>/,
-  "radar should label market tracking as market movement",
-);
-assert.match(
-  appShellSource,
-  />我的关注<\/button>/,
-  "radar should label personal tracking as watchlist focus",
-);
 assert.doesNotMatch(
   appShellSource,
   />市场追踪<\/button>|>策略追踪<\/button>|>我的追踪<\/button>|aria-label="追踪类型"/,
@@ -68,6 +65,36 @@ assert.match(
 );
 assert.match(
   appShellSource,
+  /\/api\/strategy\/inbox\?/,
+  "authenticated radar strategy history should read the member inbox",
+);
+assert.match(
+  appShellSource,
+  /\/api\/strategy\/public-signals\?/,
+  "anonymous radar strategy history should read the delayed public ledger",
+);
+assert.match(
+  appShellSource,
+  /\/api\/strategy\/realtime\/status/,
+  "radar strategy panel should read the automatic realtime push status",
+);
+assert.match(
+  appShellSource,
+  /自动推送/,
+  "radar strategy panel should present strategy delivery as automatic push",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /补扫策略池|dryRun:\s*true|function strategyScanSymbols|scanStrategyTrack\(false\)/,
+  "radar strategy pool should not depend on a manual backfill button",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /\/api\/strategy\/signals\?/,
+  "radar must not bypass subscription boundaries by reading the raw global strategy pool",
+);
+assert.match(
+  appShellSource,
   /const marketSectionRecords = useMemo<RadarTimelineRecord\[\]>\(\(\) =>\s*buildAllMarketRadarRecords\(rows, radarRecords,/,
   "market movement source should be backfilled from all market rows",
 );
@@ -81,20 +108,20 @@ assert.doesNotMatch(
   /trackingSection === "strategy"\s*\?\s*strategyRecords\s*:\s*trackingSection === "mine"\s*\?\s*radarRecords\.filter/,
   "strategy and market radar sources should not be limited to triggered signals only",
 );
+assert.match(
+  appShellSource,
+  /if \(filter === "short"\) return record\.direction === "short";/,
+  "short category should use the authoritative signal direction",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /filter === "short"[^;]*record\.group === "risk"/,
+  "risk classification should not substitute for a short direction",
+);
 assert.doesNotMatch(
   liveSignalCommandSource,
   /live-command__header|live-command__status|<h1>实时雷达<\/h1>|StrategyStatusPanel/,
   "radar list component should not render the duplicate title/status block",
-);
-assert.match(
-  liveSignalCommandSource,
-  /add_long|add_short/,
-  "radar list should explicitly label add actions",
-);
-assert.match(
-  liveSignalCommandSource,
-  /reduce_long|reduce_short/,
-  "radar list should explicitly label reduce actions",
 );
 assert.doesNotMatch(
   appShellSource,
@@ -128,8 +155,13 @@ assert.match(
 );
 assert.match(
   appShellSource,
-  /ValueClaw 仅解释和复核该策略信号/,
-  "ValueClaw context copy should preserve the strategy-signal boundary",
+  /AIClaw 仅解释和复核该策略信号/,
+  "AIClaw context copy should preserve the strategy-signal boundary",
+);
+assert.doesNotMatch(
+  appShellSource,
+  /Legacy source-contract marker: ValueClaw/,
+  "AIClaw boundary copy should not require a legacy production marker",
 );
 assert.match(
   appShellSource,
@@ -153,11 +185,6 @@ assert.match(
 );
 assert.match(
   appShellSource,
-  /action:\s*signal\.action\s*\?\?\s*null/,
-  "strategy scan records should preserve action before radar normalization",
-);
-assert.match(
-  appShellSource,
   /action:\s*record\.action\s*\?\?\s*record\.payload\?\.action\s*\?\?\s*null/,
   "AppShell toLiveSignal handoff should pass action into the radar model",
 );
@@ -166,6 +193,124 @@ assert.match(
   /payload:\s*record\.payload/,
   "AppShell toLiveSignal handoff should keep radar signal payload available",
 );
+assert.match(appShellSource, /timeframe:\s*record\.timeframe/, "AppShell should pass the authoritative timeframe to the live signal model");
+assert.match(appShellSource, /triggerPrice:\s*record\.triggerPrice/, "AppShell should pass the authoritative trigger price to the live signal model");
+assert.doesNotMatch(
+  appShellSource,
+  /triggerPrice:\s*row\?\.price/,
+  "AppShell must not substitute current market price for trigger price",
+);
+
+await build({
+  entryPoints: ["src/features/radar/radarSourcePresentation.ts"],
+  outfile: presentationOutfile,
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node18",
+});
+
+const presentationModule = await import(pathToFileURL(presentationOutfile).href);
+const inboxFacts = presentationModule.strategyInboxSignalFacts({ timeframe: "15m", price: 186.32 });
+assert.deepEqual(inboxFacts, { timeframe: "15m", triggerPrice: 186.32 });
+assert.deepEqual(
+  presentationModule.strategyInboxSignalFacts({ timeframe: "1h" }),
+  { timeframe: "1h", triggerPrice: undefined },
+  "an inbox record without an execution price must keep trigger price undefined",
+);
+const scanFacts = presentationModule.strategyScanSignalFacts(
+  { timeframe: "4h" },
+  { price: 3518.9 },
+);
+assert.deepEqual(scanFacts, { timeframe: "4h", triggerPrice: 3518.9 });
+assert.deepEqual(
+  presentationModule.strategyScanSignalFacts({ timeframe: "5m" }, {}),
+  { timeframe: "5m", triggerPrice: undefined },
+  "a scan record without an execution price must keep trigger price undefined",
+);
+
+const sourceCases = [
+  {
+    source: "strategy",
+    expectedTitle: "暂无符合条件的策略信号",
+    expectedSource: "信号来源：Yansir 策略引擎",
+    expectedPrefix: "最后扫描",
+  },
+  {
+    source: "ai",
+    expectedTitle: "暂无符合条件的市场异动",
+    expectedSource: "信号来源：市场行情与雷达规则",
+    expectedPrefix: "行情更新",
+  },
+  {
+    source: "mine",
+    expectedTitle: "我的关注暂无符合条件的异动",
+    expectedSource: "信号来源：我的关注列表与市场行情",
+    expectedPrefix: "自选更新",
+  },
+];
+
+for (const sourceCase of sourceCases) {
+  const presentation = presentationModule.buildRadarSourcePresentation({
+    source: sourceCase.source,
+    strategyStatus: "no-signal",
+    strategyLastScan: "14:02",
+    marketLastUpdate: "14:01",
+    scopeLabel: "测试范围",
+    filterLabel: "全部",
+    watchlistCount: sourceCase.source === "mine" ? 2 : 0,
+  });
+  assert.equal(presentation.emptyState.title, sourceCase.expectedTitle);
+  assert.ok(presentation.emptyState.meta.includes(sourceCase.expectedSource));
+  assert.equal(presentation.latestPrefix, sourceCase.expectedPrefix);
+  if (sourceCase.source !== "strategy") {
+    assert.doesNotMatch(
+      `${presentation.listenerLabel} ${presentation.emptyState.title} ${presentation.emptyState.description} ${presentation.emptyState.meta.join(" ")}`,
+      /Yansir 策略|策略引擎|策略信号/,
+      `${sourceCase.source} zero-result presentation must not claim strategy provenance`,
+    );
+  }
+}
+
+await build({
+  entryPoints: ["src/features/radar/RadarWorkspaceChrome.tsx"],
+  outfile: chromeOutfile,
+  bundle: true,
+  external: ["react", "react/jsx-runtime"],
+  format: "esm",
+  jsx: "automatic",
+  platform: "node",
+  target: "node18",
+});
+
+const chromeModule = await import(pathToFileURL(chromeOutfile).href);
+const chromeMarkup = renderToStaticMarkup(
+  React.createElement(chromeModule.RadarWorkspaceChrome, {
+    activeSource: "strategy",
+    onSourceChange: () => undefined,
+    listenerLabel: "监听中",
+    latestScanLabel: "14:02:00",
+    categoryItems: [
+      { id: "all", label: "全部", count: 24 },
+      { id: "long", label: "看多" },
+      { id: "short", label: "看空" },
+      { id: "breakout", label: "趋势突破" },
+      { id: "rebound", label: "回调反弹" },
+      { id: "volume", label: "成交量异动" },
+      { id: "capital", label: "资金异动" },
+    ],
+    activeCategory: "all",
+    onCategoryChange: () => undefined,
+    onOpenFilters: () => undefined,
+  }),
+);
+
+assert.match(chromeMarkup, /雷达/);
+assert.match(chromeMarkup, /监听中/);
+assert.match(chromeMarkup, /最后扫描 14:02:00/);
+assert.match(chromeMarkup, /市场异动.*策略信号.*我的/s);
+assert.match(chromeMarkup, /全部.*看多.*看空.*趋势突破.*回调反弹.*成交量异动.*资金异动/s);
+assert.match(chromeMarkup, /aria-label="高级筛选"/);
 
 await build({
   entryPoints: ["src/features/radar/liveSignalModel.ts"],
@@ -189,6 +334,9 @@ const baseSignal = module.toLiveSignal(
     status: "active",
     strategyName: "动量突破",
     trigger: "放量突破已确认",
+    timeframe: "5m",
+    price: "64000.50",
+    triggerPrice: "63950.25",
     generatedAt: "2026-07-04T08:00:00.000Z",
   },
   0,
@@ -199,6 +347,8 @@ assert.equal(baseSignal.direction, "long");
 assert.equal(baseSignal.source, "strategy");
 assert.equal(baseSignal.score, 87);
 assert.equal(baseSignal.confidence, 91);
+assert.equal(baseSignal.timeframe, "5m");
+assert.equal(baseSignal.triggerPrice, "63950.25");
 
 const addSignal = module.toLiveSignal(
   {
@@ -236,6 +386,7 @@ assert.equal(addSignal.action, "add_long");
 assert.equal(addSignal.direction, "long");
 assert.equal(reduceSignal.action, "reduce_short");
 assert.equal(reduceSignal.direction, "short");
+assert.equal(reduceSignal.payload.reducePct, 25);
 
 const riskSignal = module.toLiveSignal(
   {
@@ -250,6 +401,7 @@ const riskSignal = module.toLiveSignal(
 
 assert.equal(riskSignal.direction, "short");
 assert.equal(riskSignal.tone, "risk");
+assert.equal(riskSignal.triggerPrice, undefined);
 
 const watchSignal = module.toLiveSignal(
   {
@@ -284,6 +436,7 @@ const marketSignal = module.toLiveSignal(
 
 assert.equal(marketSignal.source, "market");
 assert.equal(marketSignal.price, "13.51");
+assert.equal(marketSignal.triggerPrice, undefined);
 assert.equal(marketSignal.change24h, "+90.67%");
 
 const waitingStrategySignal = module.toLiveSignal(
@@ -302,6 +455,29 @@ const waitingStrategySignal = module.toLiveSignal(
   4,
 );
 
+const waitingWithHistorySignal = module.toLiveSignal(
+  {
+    id: "wait-lab-history",
+    symbol: "LAB",
+    source: "strategy",
+    direction: "flat",
+    score: 96,
+    confidence: 96,
+    status: "no-signal",
+    strategyName: "已纳入全市场策略扫描",
+    trigger: "LAB 当前暂未触发新的 Yansir 策略信号；历史命中 2 次，可切换“全部历史”查看明细。",
+    generatedAt: "2026-07-04T08:03:00.000Z",
+    payload: {
+      historicalHitCount: 2,
+      latestHistoricalHitAt: "2026-07-04T07:15:00.000Z",
+      latestHistoricalTimeframe: "15m",
+      latestHistoricalDirection: "long",
+      latestHistoricalScore: 82,
+    },
+  },
+  7,
+);
+
 const filteredLong = module.filterLiveSignals([baseSignal, riskSignal, watchSignal], "long");
 assert.deepEqual(
   filteredLong.map((signal) => signal.symbol),
@@ -311,7 +487,51 @@ assert.deepEqual(
 const sorted = module.sortLiveSignals([baseSignal, riskSignal, watchSignal]);
 assert.deepEqual(
   sorted.map((signal) => signal.symbol),
-  ["SOLUSDT", "ETHUSDT", "BTCUSDT"],
+  ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+);
+
+const sortedStrategyAll = module.sortLiveSignals([
+  module.toLiveSignal(
+    {
+      id: "wait-newer",
+      symbol: "WAIT",
+      source: "strategy",
+      status: "no-signal",
+      score: 99,
+      generatedAt: "2026-07-04T08:10:00.000Z",
+    },
+    8,
+  ),
+  module.toLiveSignal(
+    {
+      id: "hit-low",
+      symbol: "LOW",
+      source: "strategy",
+      status: "active",
+      direction: "long",
+      score: 68,
+      generatedAt: "2026-07-04T08:00:00.000Z",
+    },
+    9,
+  ),
+  module.toLiveSignal(
+    {
+      id: "hit-high",
+      symbol: "HIGH",
+      source: "strategy",
+      status: "active",
+      direction: "short",
+      score: 91,
+      generatedAt: "2026-07-04T07:00:00.000Z",
+    },
+    10,
+  ),
+]);
+
+assert.deepEqual(
+  sortedStrategyAll.map((signal) => signal.symbol),
+  ["HIGH", "LOW", "WAIT"],
+  "strategy all view should show hit signals first by score, then waiting rows",
 );
 
 const facts = module.buildSelectedSignalFacts(baseSignal);
@@ -381,10 +601,10 @@ const collapsedMarkup = renderToStaticMarkup(
 );
 
 assert.match(collapsedMarkup, /ETHUSDT/);
-assert.match(collapsedMarkup, /命中策略/);
+assert.match(collapsedMarkup, /aria-expanded="false"/);
 assert.doesNotMatch(collapsedMarkup, /实时雷达|Yansir Crypto/);
 assert.doesNotMatch(collapsedMarkup, /live-command__row-detail/);
-assert.doesNotMatch(collapsedMarkup, /信号来源|策略信号保持最高优先级|信号详情|市场异动详情/);
+assert.doesNotMatch(collapsedMarkup, /触发原因|币种详情|AIClaw 复核|市场异动详情/);
 
 const markup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
@@ -403,12 +623,19 @@ const markup = renderToStaticMarkup(
 );
 
 assert.match(markup, /策略信号详情/);
-assert.match(markup, /Yansir 策略引擎/);
-assert.match(markup, /信号详情/);
-assert.match(markup, /策略信号保持最高优先级/);
+assert.match(markup, /币种详情/);
+assert.match(markup, /AIClaw 复核/);
+assert.match(markup, /加入观察/);
+assert.match(markup, /aria-expanded="true"/);
+assert.match(markup, /<time>08:01<\/time><span class="radar-signal-row__pair">ETHUSDT<\/span><span class="radar-signal-row__timeframe">--<\/span><span class="radar-signal-row__direction">做空<\/span><span class="radar-signal-row__score">76<\/span><span class="radar-signal-row__price">--<\/span>/);
+assert.match(markup, /<time>08:00<\/time><span class="radar-signal-row__pair">BTCUSDT<\/span><span class="radar-signal-row__timeframe">5m<\/span><span class="radar-signal-row__direction">做多<\/span><span class="radar-signal-row__score">87<\/span><span class="radar-signal-row__price">63950\.25<\/span>/);
+assert.match(markup, /看空|风险/);
 assert.match(markup, /做空/);
 assert.match(markup, /live-command__row-detail/);
-assert.doesNotMatch(markup, /市场异动详情|策略状态|实时雷达|Yansir Crypto|币种详情/);
+assert.equal((markup.match(/>币种详情<\/button>/g) || []).length, 1);
+assert.equal((markup.match(/>AIClaw 复核<\/button>/g) || []).length, 1);
+assert.equal((markup.match(/>加入观察<\/button>/g) || []).length, 1);
+assert.doesNotMatch(markup, /市场异动详情|策略状态|实时雷达|Yansir Crypto|ValueClaw/);
 assert.doesNotMatch(markup, /Realtime Radar|Signal Detail|Signal source|Direction|Confidence|Strategy listener active|strategy signals|s ago|LONG|SHORT|NEUTRAL/);
 
 const actionMarkup = renderToStaticMarkup(
@@ -427,12 +654,11 @@ const actionMarkup = renderToStaticMarkup(
   }),
 );
 
-assert.match(actionMarkup, /\u52a0\u591a/);
-assert.match(actionMarkup, /\u51cf\u7a7a/);
-assert.doesNotMatch(actionMarkup, /\u547d\u4e2d\u7b56\u7565/);
+assert.match(actionMarkup, /做多/);
+assert.match(actionMarkup, /做空/);
 
 const selectedRowIndex = markup.indexOf("ETHUSDT");
-const followingRowIndex = markup.indexOf("BTCUSDT");
+const followingRowIndex = markup.indexOf("SOLUSDT");
 const inlineDetailIndex = markup.indexOf("live-command__row-detail");
 assert.ok(selectedRowIndex > -1, "selected signal row should render");
 assert.ok(followingRowIndex > -1, "following signal row should render");
@@ -456,12 +682,13 @@ const marketMarkup = renderToStaticMarkup(
 );
 
 assert.match(marketMarkup, /市场异动详情/);
-assert.match(marketMarkup, /异动类型/);
-assert.match(marketMarkup, /13\.51/);
+assert.match(marketMarkup, /<span class="radar-signal-row__pair">LAB<\/span><span class="radar-signal-row__timeframe">--<\/span><span class="radar-signal-row__direction">观望<\/span><span class="radar-signal-row__score">91<\/span><span class="radar-signal-row__price">--<\/span>/);
+assert.doesNotMatch(marketMarkup, /radar-signal-row__price">13\.51/);
 assert.match(marketMarkup, /\+90\.67%/);
-assert.match(marketMarkup, /策略状态/);
-assert.match(marketMarkup, /策略追踪/);
-assert.doesNotMatch(marketMarkup, /策略信号详情|AI 边界|信号详情/);
+assert.match(marketMarkup, /市场事实/);
+assert.match(marketMarkup, /币种详情/);
+assert.match(marketMarkup, /AIClaw 复核/);
+assert.doesNotMatch(marketMarkup, /策略信号详情|AI 边界|策略状态|策略追踪/);
 
 const waitingMarkup = renderToStaticMarkup(
   React.createElement(componentModule.LiveSignalCommand, {
@@ -479,10 +706,30 @@ const waitingMarkup = renderToStaticMarkup(
   }),
 );
 
-assert.match(waitingMarkup, /等待信号/);
-assert.match(waitingMarkup, /策略分<\/dt><dd>--<\/dd>/);
-assert.match(waitingMarkup, /置信度<\/dt><dd>--<\/dd>/);
+assert.match(waitingMarkup, /radar-signal-row__direction">观望<\/span>/);
+assert.match(waitingMarkup, /radar-signal-row__score">--<\/span>/);
+assert.match(waitingMarkup, /历史关系/);
 assert.doesNotMatch(waitingMarkup, /96\/100/);
+
+const waitingHistoryMarkup = renderToStaticMarkup(
+  React.createElement(componentModule.LiveSignalCommand, {
+    signals: [waitingWithHistorySignal],
+    selectedSignalId: waitingWithHistorySignal.id,
+    activeFilter: "now",
+    listeningStatus: "paused",
+    emptyState,
+    now: Date.parse("2026-07-04T08:04:00.000Z"),
+    onFilterChange: () => undefined,
+    onSelectSignal: () => undefined,
+    onOpenDetail: () => undefined,
+    onOpenValueClaw: () => undefined,
+    onToggleWatch: () => undefined,
+  }),
+);
+
+assert.match(waitingHistoryMarkup, /历史命中 2 次/);
+assert.match(waitingHistoryMarkup, /最近一次 15m \/ 看多 \/ 82分/);
+assert.match(waitingHistoryMarkup, /当前行只表示本轮暂未触发新的 Yansir 策略信号/);
 
 const manySignals = Array.from({ length: 35 }, (_, index) =>
   module.toLiveSignal(
@@ -517,7 +764,7 @@ const pagedMarkup = renderToStaticMarkup(
 assert.equal((pagedMarkup.match(/live-command__row is-/g) || []).length, 30);
 assert.match(pagedMarkup, /继续下滑加载更多 · 已显示 30\/35/);
 assert.match(pagedMarkup, /SYM34/);
-assert.doesNotMatch(pagedMarkup, /SYM4<\/strong>/);
+assert.doesNotMatch(pagedMarkup, /SYM0<\/strong>/);
 
 
 console.log("live signal command tests passed");

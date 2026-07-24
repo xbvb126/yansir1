@@ -63,7 +63,7 @@ const svipEntitlements = {
   maxPushPerDay: 2000,
   dailySignalQuota: 2000,
   teamSeats: 5,
-  allowedTimeframes: ['5m', '15m', '1h', '4h'],
+  allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
   minAlertScore: 65,
   signalOutcomes: true,
   maxWatchlistSymbols: 200
@@ -74,7 +74,7 @@ assert.equal(planLevel('VIP'), 2);
 assert.equal(planLevel('SVIP'), 3);
 assert.equal(planLevel('高级版'), 3);
 
-// 页面级路由权限：公开页不拦截；实时告警、团队、后台、ValueClaw 按登录和套餐拦截。
+// 页面级路由权限：公开页（包括 AIClaw 外壳）不拦截；实时告警、团队、后台按登录和套餐拦截。
 assert.equal(routeAccessPrompt('data', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('plans', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('login', guest, freeEntitlements), null);
@@ -102,6 +102,7 @@ assert.equal(routeAccessPrompt('admin', adminUser, svipEntitlements), null);
 assert.equal(routeAccessPrompt('kline-lab', guest, freeEntitlements)?.targetView, 'login');
 assert.equal(routeAccessPrompt('kline-lab', vipUser, vipEntitlements)?.title, '当前账号无内部验信权限');
 assert.equal(routeAccessPrompt('kline-lab', adminUser, svipEntitlements), null);
+assert.equal(routeAccessPrompt('claw', guest, freeEntitlements), null);
 assert.equal(routeAccessPrompt('claw', freeUser, freeEntitlements), null);
 
 // 周期权限：默认只允许 5m，Free/VIP/SVIP 分别解锁不同周期。
@@ -110,6 +111,8 @@ assert.equal(isTimeframeAllowed('15m', {}), false);
 assert.equal(isTimeframeAllowed('5m', freeEntitlements), true);
 assert.equal(isTimeframeAllowed('15m', freeEntitlements), false);
 assert.equal(isTimeframeAllowed('15m', vipEntitlements), true);
+assert.equal(isTimeframeAllowed('30m', vipEntitlements), false);
+assert.equal(isTimeframeAllowed('30m', svipEntitlements), true);
 assert.equal(isTimeframeAllowed('4h', vipEntitlements), false);
 assert.equal(isTimeframeAllowed('4h', svipEntitlements), true);
 

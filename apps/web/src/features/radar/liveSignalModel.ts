@@ -4,6 +4,18 @@ export type LiveSignalFilter = "now" | "long" | "risk" | "watch";
 export type StrategyListeningStatus = "live" | "degraded" | "paused";
 export type LiveSignalSource = "strategy" | "market";
 
+export type LiveSignalPayload = {
+  action?: string | null;
+  reducePct?: number | null;
+  reduce_pct?: number | null;
+  historicalHitCount?: number;
+  latestHistoricalHitAt?: string;
+  latestHistoricalTimeframe?: string;
+  latestHistoricalDirection?: string;
+  latestHistoricalScore?: number;
+  latestHistoricalCategory?: string;
+};
+
 export type RawRadarSignal = {
   id?: string;
   symbol?: string;
@@ -26,14 +38,12 @@ export type RawRadarSignal = {
   createdAt?: string;
   timestamp?: string | number;
   time?: string;
+  timeframe?: string;
+  triggerPrice?: number | string;
   price?: number | string;
   change24h?: number | string;
   source?: LiveSignalSource;
-  payload?: {
-    action?: string | null;
-    reducePct?: number | null;
-    reduce_pct?: number | null;
-  };
+  payload?: LiveSignalPayload;
 };
 
 export type LiveSignal = {
@@ -50,9 +60,12 @@ export type LiveSignal = {
   strategyName: string;
   trigger: string;
   generatedAt: string;
+  timeframe?: string;
+  triggerPrice?: number | string;
   price?: number | string;
   change24h?: number | string;
   source: LiveSignalSource;
+  payload?: LiveSignalPayload;
 };
 
 export type SignalFact = {
@@ -132,9 +145,12 @@ export function toLiveSignal(signal: RawRadarSignal, index: number): LiveSignal 
     strategyName: signal.strategyName ?? signal.strategy ?? "Yansir 策略",
     trigger: signal.trigger ?? signal.reason ?? signal.body ?? signal.title ?? "策略触发已确认",
     generatedAt,
+    timeframe: signal.timeframe,
+    triggerPrice: signal.triggerPrice,
     price: signal.price,
     change24h: signal.change24h,
     source: signal.source === "market" ? "market" : "strategy",
+    payload: signal.payload,
   };
 }
 
@@ -144,10 +160,27 @@ function resolveSignalAction(signal: RawRadarSignal): string | null {
 
 export function sortLiveSignals(signals: LiveSignal[]): LiveSignal[] {
   return [...signals].sort((a, b) => {
+    const strategyRankDelta = strategySortRank(a) - strategySortRank(b);
+    if (strategyRankDelta !== 0) return strategyRankDelta;
+    if (isActiveStrategyHit(a) && isActiveStrategyHit(b) && a.score !== b.score) {
+      return b.score - a.score;
+    }
+
     const timeDelta = Date.parse(b.generatedAt) - Date.parse(a.generatedAt);
     if (Number.isFinite(timeDelta) && timeDelta !== 0) return timeDelta;
     return b.score - a.score;
   });
+}
+
+function strategySortRank(signal: LiveSignal) {
+  if (signal.source !== "strategy") return 0;
+  if (isActiveStrategyHit(signal)) return 0;
+  if (signal.status === "no-signal") return 2;
+  return 1;
+}
+
+function isActiveStrategyHit(signal: LiveSignal) {
+  return signal.source === "strategy" && signal.status === "active";
 }
 
 export function filterLiveSignals(signals: LiveSignal[], filter: LiveSignalFilter): LiveSignal[] {

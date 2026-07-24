@@ -12,7 +12,22 @@ jobs:
     name: Run plan permission tests before deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: radar
+          POSTGRES_USER: radar
+          POSTGRES_PASSWORD: radar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U radar -d radar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
+      DATABASE_URL: postgresql://radar:radar@127.0.0.1:5432/radar
       E2E_API_BASE_URL: ${{ vars.E2E_API_BASE_URL || 'http://127.0.0.1:3101/api' }}
       E2E_WEB_BASE_URL: ${{ vars.E2E_WEB_BASE_URL || 'http://127.0.0.1:3200/yansir/' }}
       E2E_DEMO_PASSWORD: ${{ secrets.E2E_DEMO_PASSWORD || 'radar123' }}
@@ -26,8 +41,34 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install strategy dependencies
+        run: pip install -r services/strategy/requirements.txt
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Apply PostgreSQL schema
+        run: npm run db:schema
+
+      - name: Seed PostgreSQL fixtures
+        run: npm run db:seed
+
+      - name: Verify PostgreSQL schema
+        run: npm run db:verify
+
+      - name: Verify formal signal PostgreSQL readiness
+        run: npm run db:verify-formal
+
+      - name: Build API for runtime readiness
+        run: npm run build:api
+
+      - name: Verify formal signal runtime readiness
+        run: npm run ci:verify-formal-runtime
 
       - name: Run membership permission CI gate
         run: npm run test:plans:ci

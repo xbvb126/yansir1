@@ -2,8 +2,13 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import { apiGet, apiPost, apiPut, setActiveUserId, setAuthToken } from "../lib/api";
 import { planLevel, routeAccessPrompt } from "../lib/planAccess";
 import { normalizeViewParam } from "../lib/viewRouting";
+import { AIClawExperience } from "../features/claw/AIClawExperience";
+import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
+import { buildAIClawPrompt } from "../features/claw/aiClawPrompts";
 import { KlineLabView } from "../features/klineLab/KlineLabView";
 import { LiveSignalCommand } from "../features/radar/LiveSignalCommand";
+import { RadarWorkspaceChrome } from "../features/radar/RadarWorkspaceChrome";
+import type { RadarCategoryItem } from "../features/radar/RadarWorkspaceChrome";
 import type { LiveSignal, LiveSignalFilter, StrategyListeningStatus } from "../features/radar/liveSignalModel";
 import { formatDirectionLabel, toLiveSignal } from "../features/radar/liveSignalModel";
 import { accessDecision, type AccessRequirement } from "../features/portal/accessBoundary";
@@ -11,18 +16,19 @@ import { resolvePortalContentView, resolvePortalShellView } from "../features/po
 import { ResponsivePrimaryNav } from "../features/portal/ResponsivePrimaryNav";
 import { PublicClawPreview } from "../features/portal/PublicClawPreview";
 import { PublicHomeView } from "../features/portal/PublicHomeView";
-import { PublicTrackRecordView } from "../features/portal/PublicTrackRecordView";
 import { syncPublicMetadata } from "../features/portal/publicMetadata";
 import { getPublicSignals, type PublicSignal, type PublicSignalsResponse } from "../features/portal/publicPortalApi";
 import { canCreateMemberOrder, canPayMemberOrder, createPortalRequestCoordinator, effectivePrivatePortalState, hasVerifiedIdentity, portalSignalSource, portalSignalsForResult, type PortalRequestCoordinator } from "../features/portal/publicPortalRuntime";
 import { capturePromptTrigger, closePromptAndRestoreFocus } from "../features/portal/promptFocus";
 import { createRouteReturnIntent, restoreReturnIntent as restoreStoredReturnIntent, returnIntentSearchParams, saveReturnIntent, type ReturnIntent } from "../features/portal/returnIntent";
+import { buildRadarSourcePresentation, strategyInboxSignalFacts, strategyScanSignalFacts } from "../features/radar/radarSourcePresentation";
 import { BottomNav, ViewName } from "./BottomNav";
 import { SystemIcon } from "./SystemIcon";
 
 type Direction = "long" | "short" | "flat";
 type Tone = "success" | "warning" | "danger" | "normal";
 type RadarGroup = "surge" | "opportunity" | "risk";
+type RadarCategoryId = "all" | "long" | "short" | "breakout" | "rebound" | "volume" | "capital";
 
 type Signal = {
   id?: string;
@@ -208,6 +214,8 @@ type RadarTimelineRecord = ScanRecord & {
   score?: number;
   direction?: Direction;
   action?: string | null;
+  timeframe?: string;
+  triggerPrice?: number | string;
   strategyName?: string;
   trigger?: string;
   risk?: string;
@@ -215,6 +223,32 @@ type RadarTimelineRecord = ScanRecord & {
     action?: string | null;
     reducePct?: number | null;
     reduce_pct?: number | null;
+    historicalHitCount?: number;
+    latestHistoricalHitAt?: string;
+    latestHistoricalTimeframe?: string;
+    latestHistoricalDirection?: Direction;
+    latestHistoricalScore?: number;
+    latestHistoricalCategory?: string;
+  };
+};
+type StrategyHitHistorySummary = {
+  count: number;
+  latestTimestamp: number;
+  latestTimeframe?: string;
+  latestDirection?: Direction;
+  latestScore?: number;
+  latestCategory?: string;
+};
+type StrategyRealtimeStatusResponse = {
+  realtime?: {
+    enabled?: boolean;
+    connected?: boolean;
+    socketActive?: boolean;
+    symbols?: string[];
+    timeframes?: string[];
+    lastEventAt?: string | null;
+    lastSignalAt?: string | null;
+    lastError?: string | null;
   };
 };
 type StrategyScanAlertResponse = {
@@ -334,7 +368,7 @@ const SCAN_HISTORY_STORAGE_KEY = "radar.scanHistory";
 const SCAN_HISTORY_LIMIT = 12;
 const STRATEGY_TRACK_STORAGE_KEY = "radar.strategyTrackRecords";
 const STRATEGY_TRACK_HISTORY_LIMIT = 80;
-const STRATEGY_TRACK_TIMEFRAMES = ["5m", "15m", "1h", "4h"];
+const STRATEGY_TRACK_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"];
 const MARKET_LIST_INITIAL_LIMIT = 30;
 const MARKET_LIST_PAGE_SIZE = 30;
 const defaultWatchlistSymbols = ["BTC", "ETH", "SOL"];
@@ -746,7 +780,7 @@ export function AppShell() {
     returnIntentSignalsRef.current.set(signal.id, signal);
     if (!navigateWithRequirement("ai-claw", { view: "claw", signalId: signal.id, action: "review-signal" })) return;
     setValueClawSignalContext(signal);
-    showToast(`${signal.symbol} 的 ValueClaw 复核上下文已准备好`);
+    showToast(`${signal.symbol} 的 AIClaw 复核上下文已准备好`);
   }
 
   function openFullPerformance(filters: { symbol: string; direction: string }) {
@@ -919,8 +953,11 @@ export function AppShell() {
       {dataStatus !== "loading" && !showSymbolDetail && view === "signal" && (
         <AlertsPage entitlements={displayEntitlements} signals={safeSignals} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
       )}
+      {dataStatus !== "loading" && !showSymbolDetail && view === "track-record" && (
+        <PublicTrackRecordView />
+      )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "claw" && (
-        verifiedIdentity ? <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onNavigate={navigate} onOpenSearch={() => setSearchOpen(true)} onOpenSymbol={openSymbol} onToast={showToast} />
+        verifiedIdentity ? <ValueClawPage currentUser={currentUser} rows={rows} signals={safeSignals} signalContext={valueClawSignalContext} onClearSignalContext={() => setValueClawSignalContext(null)} onNavigate={navigate} onOpenSymbol={openSymbol} onToast={showToast} />
           : <PublicClawPreview onLogin={() => navigateWithRequirement("ai-claw", { view: "claw", action: "ai-claw" })} />
       )}
       {dataStatus !== "loading" && !showSymbolDetail && view === "account" && (
@@ -1192,7 +1229,7 @@ function DataPage({ currentUser, entitlements, factors, onNavigate, onOpenSearch
 
 function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpenSearch, onOpenSymbol, onOpenSymbolSignal, onOpenValueClawSignal, onToast, publicDelayHours, rows, signals, stats }: { authenticated: boolean; currentUser: CurrentUser; entitlements: Entitlements; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onOpenSymbolSignal: (signal: LiveSignal) => void; onOpenValueClawSignal: (signal: LiveSignal) => void; onToast: (message: string) => void; publicDelayHours: number | null; rows: MarketRow[]; signals: Signal[]; stats: MarketStats }) {
   const [trackingSection, setTrackingSection] = useState<"ai" | "strategy" | "mine">("strategy");
-  const [signalFilter, setSignalFilter] = useState<"all" | "surge" | "opportunity" | "risk">("all");
+  const [activeRadarCategory, setActiveRadarCategory] = useState<RadarCategoryId>("all");
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>(readWatchlistSymbols);
   const [activeLiveFilter, setActiveLiveFilter] = useState<LiveSignalFilter>("now");
   const [selectedLiveSignalId, setSelectedLiveSignalId] = useState<string | undefined>();
@@ -1204,16 +1241,18 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   const [scanNow, setScanNow] = useState(() => Date.now());
   const [strategyRecords, setStrategyRecords] = useState<RadarTimelineRecord[]>(readStrategyTrackRecords);
   const [strategyStatus, setStrategyStatus] = useState<"idle" | "scanning" | "ready" | "no-signal" | "error">("idle");
-  const [strategyHistoryMode, setStrategyHistoryMode] = useState<"current" | "all">("current");
+  const [strategyHistoryRecords, setStrategyHistoryRecords] = useState<RadarTimelineRecord[]>([]);
   const [strategyFilterSymbol, setStrategyFilterSymbol] = useState("");
   const [strategyFilterTimeframe, setStrategyFilterTimeframe] = useState("all");
   const [strategyFilterDirection, setStrategyFilterDirection] = useState("all");
   const [strategyFilterMinScore, setStrategyFilterMinScore] = useState("all");
+  const [strategyHistoryMode, setStrategyHistoryMode] = useState<"current" | "all">("current");
   const [strategyPagination, setStrategyPagination] = useState<StrategySignalPagination | null>(null);
   const [strategyLoadingMore, setStrategyLoadingMore] = useState(false);
   const [strategyLastScan, setStrategyLastScan] = useState("");
   const [strategyScanSummary, setStrategyScanSummary] = useState("");
-  const strategyScanInFlight = useRef(false);
+  const [strategyRealtimeSummary, setStrategyRealtimeSummary] = useState("");
+  const [strategyRealtime, setStrategyRealtime] = useState<StrategyRealtimeStatusResponse["realtime"] | null>(null);
   const strategyScheduleStarted = useRef(false);
   const strategyRequestCoordinatorRef = useRef<PortalRequestCoordinator | null>(null);
   const strategyLoadMoreCoordinatorRef = useRef<PortalRequestCoordinator | null>(null);
@@ -1250,12 +1289,14 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   }), [rows, scanBaseTime, signals]);
 
   const watchlistSet = useMemo(() => new Set(watchlistSymbols.map(normalizeDisplaySymbol)), [watchlistSymbols]);
+  const strategyHitHistoryRecords = strategyHistoryRecords.length ? strategyHistoryRecords : strategyRecords;
   const strategySectionRecords = useMemo<RadarTimelineRecord[]>(() =>
     buildAllMarketRadarRecords(rows, strategyRecords, {
       mode: "strategy",
-      scanBaseTime
+      scanBaseTime,
+      historyRecords: strategyHitHistoryRecords
     }),
-  [rows, scanBaseTime, strategyRecords]);
+  [rows, scanBaseTime, strategyHitHistoryRecords, strategyRecords]);
   const marketSectionRecords = useMemo<RadarTimelineRecord[]>(() =>
     buildAllMarketRadarRecords(rows, radarRecords, {
       mode: "market",
@@ -1267,38 +1308,28 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
     : trackingSection === "mine"
       ? marketSectionRecords.filter((record) => watchlistSet.has(record.symbol))
       : marketSectionRecords;
-  const isStrategySource = trackingSection === "strategy";
   const isStrategyWaitingRecord = (record: RadarTimelineRecord) => record.category === "等待策略信号";
-  const matchesSectionFilter = (record: RadarTimelineRecord, filter: typeof signalFilter) => {
+  const matchesSectionFilter = (record: RadarTimelineRecord, filter: RadarCategoryId) => {
     if (filter === "all") return true;
-    if (isStrategySource) {
-      if (filter === "surge") return !isStrategyWaitingRecord(record);
-      if (filter === "opportunity") return isStrategyWaitingRecord(record);
-      return record.group === "risk";
-    }
-    return record.group === filter;
+    if (isStrategyWaitingRecord(record)) return false;
+    if (filter === "long") return record.direction === "long";
+    if (filter === "short") return record.direction === "short";
+    const searchableText = [record.category, record.title, record.body, record.trigger, ...record.tags].join(" ");
+    if (filter === "breakout") return /趋势|突破/.test(searchableText);
+    if (filter === "rebound") return /回调|反弹/.test(searchableText);
+    if (filter === "volume") return /成交量|放量/.test(searchableText);
+    return /资金|资金费率/.test(searchableText);
   };
-  const filteredSignals = sectionRecords.filter((record) => matchesSectionFilter(record, signalFilter));
-  const filterCounts = {
-    all: sectionRecords.length,
-    surge: sectionRecords.filter((record) => matchesSectionFilter(record, "surge")).length,
-    opportunity: sectionRecords.filter((record) => matchesSectionFilter(record, "opportunity")).length,
-    risk: sectionRecords.filter((record) => matchesSectionFilter(record, "risk")).length
-  };
-  const allMonitorTabs: Array<[typeof signalFilter, string, number]> = isStrategySource
-    ? [
-      ["all", "全部", filterCounts.all],
-      ["surge", "命中", filterCounts.surge],
-      ["opportunity", "等待", filterCounts.opportunity],
-      ["risk", "风险", filterCounts.risk]
-    ]
-    : [
-      ["all", "全部", filterCounts.all],
-      ["surge", "急涨", filterCounts.surge],
-      ["risk", "风险", filterCounts.risk],
-      ["opportunity", "观察", filterCounts.opportunity]
-    ];
-  const monitorTabs = allMonitorTabs.filter(([key, , count]) => key === "all" || count > 0);
+  const filteredSignals = sectionRecords.filter((record) => matchesSectionFilter(record, activeRadarCategory));
+  const radarCategoryItems: RadarCategoryItem[] = [
+    { id: "all", label: "全部", count: sectionRecords.length },
+    { id: "long", label: "看多", count: sectionRecords.filter((record) => matchesSectionFilter(record, "long")).length },
+    { id: "short", label: "看空", count: sectionRecords.filter((record) => matchesSectionFilter(record, "short")).length },
+    { id: "breakout", label: "趋势突破", count: sectionRecords.filter((record) => matchesSectionFilter(record, "breakout")).length },
+    { id: "rebound", label: "回调反弹", count: sectionRecords.filter((record) => matchesSectionFilter(record, "rebound")).length },
+    { id: "volume", label: "成交量异动", count: sectionRecords.filter((record) => matchesSectionFilter(record, "volume")).length },
+    { id: "capital", label: "资金异动", count: sectionRecords.filter((record) => matchesSectionFilter(record, "capital")).length }
+  ];
   const liveSignals = useMemo<LiveSignal[]>(() => filteredSignals.map((record, index) => {
     const timestamp = record.timestamp ?? timestampFromScanTime(record.time) ?? scanBaseTime - index * 15 * 60 * 1000;
     const row = rows.find((item) => normalizeDisplaySymbol(item.symbol) === normalizeDisplaySymbol(record.symbol));
@@ -1315,17 +1346,14 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
       strategyName: waitingStrategySignal ? "已纳入全市场策略扫描" : record.strategyName ?? record.tags[2] ?? "Yansir 策略",
       trigger: record.trigger ?? record.body,
       generatedAt: new Date(timestamp).toISOString(),
+      timeframe: record.timeframe,
+      triggerPrice: record.triggerPrice,
       price: row?.price,
       change24h: row?.change,
       source,
       payload: record.payload
     }, index);
   }), [filteredSignals, rows, scanBaseTime, trackingSection]);
-  const listeningStatus: StrategyListeningStatus = strategyStatus === "error"
-    ? "degraded"
-    : strategyStatus === "idle" || strategyStatus === "no-signal"
-      ? "paused"
-      : "live";
   const liveFilterLabels: Record<LiveSignalFilter, string> = {
     now: "全部",
     long: "做多",
@@ -1333,37 +1361,45 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
     watch: "观察"
   };
   const latestScanLabel = strategyLastScan || formatClockTime(scanBaseTime);
+  const marketLastUpdateLabel = stats.updatedAt
+    ? formatStrategyScanTime(stats.updatedAt)
+    : formatClockTime(scanBaseTime);
   const activeScopeLabel = trackingSection === "strategy"
-    ? strategyHistoryMode === "current"
-      ? "全市场策略信号"
-      : "全部历史策略信号"
+    ? "全局策略信号池"
     : trackingSection === "mine"
       ? "我的关注信号"
       : "全市场雷达信号";
+  const sourcePresentation = buildRadarSourcePresentation({
+    source: trackingSection,
+    strategyStatus,
+    strategyLastScan: latestScanLabel,
+    marketLastUpdate: marketLastUpdateLabel,
+    scopeLabel: activeScopeLabel,
+    filterLabel: liveFilterLabels[activeLiveFilter],
+    watchlistCount: watchlistSymbols.length
+  });
+  const listeningStatus: StrategyListeningStatus = sourcePresentation.listeningStatus;
+  const listenerLabel = sourcePresentation.listenerLabel;
   const liveEmptyState = {
-    title: strategyStatus === "error" ? "策略信号暂时延迟" : "暂无符合条件的策略信号",
-    description:
-      strategyStatus === "error"
-        ? "正在使用最近一次策略数据，新的信号恢复后会自动更新。"
-        : "策略引擎没有发现满足当前筛选条件的信号，这不是 AI 判断缺席。",
-    meta: [
-      "信号来源：Yansir 策略引擎",
-      `最近扫描：${latestScanLabel}`,
-      `当前范围：${activeScopeLabel}`,
-      `当前筛选：${liveFilterLabels[activeLiveFilter]}`
-    ],
+    title: sourcePresentation.emptyState.title,
+    description: sourcePresentation.emptyState.description,
+    meta: sourcePresentation.emptyState.meta,
     primaryAction: {
-      label: "放宽筛选",
+      label: sourcePresentation.emptyState.primaryActionLabel,
       onClick: () => {
         setActiveLiveFilter("now");
-        setSignalFilter("all");
+        setActiveRadarCategory("all");
         setStrategyFilterDirection("all");
         setStrategyFilterMinScore("all");
       }
     },
     secondaryAction: {
-      label: "查看扫描记录",
-      onClick: () => setTrackingSection("strategy")
+      label: sourcePresentation.emptyState.secondaryActionLabel,
+      onClick: () => {
+        if (trackingSection === "ai") setTrackingSection("mine");
+        else if (trackingSection === "mine") onNavigate("data");
+        else setTrackingSection("strategy");
+      }
     }
   };
 
@@ -1388,6 +1424,26 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   }, [authenticated, currentUser.id, watchlistSymbols.join(",")]);
 
   useEffect(() => {
+    if (!currentUser.id) {
+      setStrategyHistoryRecords([]);
+      return;
+    }
+
+    let alive = true;
+    setStrategyHistoryRecords([]);
+    apiGet<StrategySignalListResponse>(strategySignalEndpoint(1, 80))
+      .then((response) => {
+        if (!alive) return;
+        setStrategyHistoryRecords((response.signals || []).map(strategyInboxToRecord));
+      })
+      .catch(() => undefined);
+
+    return () => {
+      alive = false;
+    };
+  }, [currentUser.id, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore]);
+
+  useEffect(() => {
     if (trackingSection !== "strategy") return;
     void refreshLatestStrategyScan(true);
     const timer = window.setInterval(() => {
@@ -1408,67 +1464,6 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
     writeStrategyTrackRecords([]);
   }, [authenticated, currentUser.id, strategyHistoryMode, strategyFilterSymbol, strategyFilterTimeframe, strategyFilterDirection, strategyFilterMinScore, trackingSection]);
 
-  useEffect(() => {
-    if (signalFilter !== "all" && filterCounts[signalFilter] === 0) {
-      setSignalFilter("all");
-    }
-  }, [filterCounts.opportunity, filterCounts.risk, filterCounts.surge, signalFilter]);
-
-  async function scanStrategyTrack(silent: boolean) {
-    if (!currentUser.id) return;
-    if (!authenticated) return;
-    if (strategyScanInFlight.current) {
-      return;
-    }
-
-    const symbols = watchlistSymbols.map(normalizeDisplaySymbol).filter(Boolean);
-    if (!symbols.length) {
-      setStrategyStatus("idle");
-      return;
-    }
-
-    strategyScanInFlight.current = true;
-    setStrategyStatus(strategyRecords.length ? "ready" : "scanning");
-    try {
-      const response = await withClientTimeout(
-        apiPost<StrategyScanAlertResponse>("/api/strategy/scan/alert", {
-          symbols,
-          timeframes: STRATEGY_TRACK_TIMEFRAMES,
-          minScore: 65,
-          directions: ["long", "short"],
-          cooldownMinutes: 15,
-          limit: 180
-        }),
-        "strategy scan",
-        45000
-      );
-      const nextRecords = strategyScanToRecords(response);
-      setStrategyLastScan(formatStrategyScanTime(response.scan.finishedAt));
-      setStrategyScanSummary(strategyScanSummaryText(response));
-      if (nextRecords.length) {
-        setStrategyRecords((items) => {
-          const merged = mergeStrategyRecords([...nextRecords, ...items]).slice(0, 40);
-          writeStrategyTrackRecords(merged);
-          return merged;
-        });
-        setStrategyStatus("ready");
-        if (!silent && response.alert?.sent) {
-          onToast(`策略信号已推送飞书 ${response.alert.sent} 条`);
-        }
-      } else {
-        setStrategyStatus("no-signal");
-      }
-    } catch {
-      setStrategyStatus("error");
-      setStrategyScanSummary("策略服务或 API 暂时不可用，已等待下一轮自动扫描。");
-      if (!silent) {
-        onToast("策略信号扫描失败");
-      }
-    } finally {
-      strategyScanInFlight.current = false;
-    }
-  }
-
   async function ensureStrategyRealtime() {
     if (!currentUser.id) return;
     if (!authenticated) return;
@@ -1484,19 +1479,23 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
           });
         }
       }
-      await apiPost("/api/strategy/scan/schedule/stop", {});
-      await apiPost("/api/strategy/realtime/start", {
-        timeframes: STRATEGY_TRACK_TIMEFRAMES,
-        minScore: 65,
-        directions: ["long", "short"],
-        cooldownMinutes: 15
-      });
-      setStrategyScanSummary(authenticated
-        ? "实时K线监听已启动：有新的 Pine V6 标准多空信号时才显示并触发推送。"
-        : `未登录仅展示${guestDelayText}的策略信号；登录后可查看自选币种实时信号并接收推送。`
-      );
+      const status = await apiGet<StrategyRealtimeStatusResponse>("/api/strategy/realtime/status");
+      let realtime = status.realtime || null;
+      if ((!realtime?.enabled || !realtime?.socketActive) && entitlements.apiAccess) {
+        const started = await apiPost<StrategyRealtimeStatusResponse>("/api/strategy/realtime/start", {
+          timeframes: STRATEGY_TRACK_TIMEFRAMES,
+          minScore: 65,
+          directions: ["long", "short"],
+          cooldownMinutes: 15
+        });
+        realtime = started.realtime || realtime;
+      }
+      setStrategyRealtime(realtime);
+      setStrategyRealtimeSummary(strategyRealtimeSummaryText(realtime, Boolean(currentUser.id)));
     } catch {
       strategyScheduleStarted.current = false;
+      setStrategyRealtime(null);
+      setStrategyRealtimeSummary("全市场自动推送监听状态暂时不可用，系统会继续尝试恢复。");
     }
   }
 
@@ -1518,6 +1517,13 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
     setStrategyFilterTimeframe("all");
     setStrategyFilterDirection("all");
     setStrategyFilterMinScore("all");
+    setActiveRadarCategory("all");
+  }
+
+  function selectRadarCategory(categoryId: string) {
+    const nextCategory = categoryId as RadarCategoryId;
+    setActiveRadarCategory(nextCategory);
+    setStrategyFilterDirection(nextCategory === "long" || nextCategory === "short" ? nextCategory : "all");
   }
 
   async function refreshLatestStrategyScan(runIfMissing = false) {
@@ -1623,23 +1629,17 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
   return (
     <section className="view active-view polished-screen radar-tracking-screen">
       <section id="radar-tools-panel" className="radar-tools-panel" aria-label="信号筛选与历史">
-      <header className="ai-track-header">
-        <div className="ai-track-topline">
-          <div className="ai-track-sections" role="tablist" aria-label="信号来源筛选">
-            <button className={trackingSection === "ai" ? "active" : ""} type="button" onClick={() => setTrackingSection("ai")}>市场异动</button>
-            <button className={trackingSection === "strategy" ? "active" : ""} type="button" onClick={() => setTrackingSection("strategy")}>策略信号</button>
-            <button className={trackingSection === "mine" ? "active" : ""} type="button" onClick={() => setTrackingSection("mine")}>我的关注</button>
-          </div>
-          <button className="ai-track-search-icon" type="button" aria-label="搜索" onClick={onOpenSearch}><SystemIcon name="search" /></button>
-        </div>
-        <div className="ai-track-tabs" role="tablist" aria-label="监控类型">
-          {monitorTabs.map(([key, label, count]) => (
-            <button className={signalFilter === key ? "active" : ""} type="button" key={key} onClick={() => setSignalFilter(key as typeof signalFilter)}>
-              {label}<span>{count}</span>
-            </button>
-          ))}
-        </div>
-      </header>
+      <RadarWorkspaceChrome
+        activeSource={trackingSection}
+        onSourceChange={setTrackingSection}
+        listenerLabel={listenerLabel}
+        latestPrefix={sourcePresentation.latestPrefix}
+        latestScanLabel={sourcePresentation.latestLabel}
+        categoryItems={radarCategoryItems}
+        activeCategory={activeRadarCategory}
+        onCategoryChange={selectRadarCategory}
+        onOpenFilters={() => setRuleSettingsOpen(true)}
+      />
       {trackingSection !== "strategy" && <section className="ai-track-login-strip">
         <span>{authenticated ? `已同步实时信号，下次扫描 ${scanSchedule.time}` : `当前展示${guestDelayText}的信号，登录了解更多。`}</span>
         <button type="button" onClick={() => (authenticated ? setRuleSettingsOpen(true) : setUpgradePrompt({ title: "登录后配置雷达规则", desc: "未登录只能查看延迟信号。登录后可配置规则，升级后可开启更多周期、推送和完整战绩。" }))}>{authenticated ? "规则" : "去登录"}</button>
@@ -1647,6 +1647,10 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
       {trackingSection === "strategy" && authenticated && <section className="ai-track-login-strip">
         <span>{strategyHistoryMode === "current" ? "当前自选：只看仍启用自选币种/周期" : "全部历史：保留取消自选前收到过的信号"}</span>
         <button type="button" onClick={() => setStrategyHistoryMode((mode) => mode === "current" ? "all" : "current")}>{strategyHistoryMode === "current" ? "全部历史" : "当前自选"}</button>
+      </section>}
+      {trackingSection === "strategy" && currentUser.id && <section className="ai-track-login-strip strategy-pool-strip">
+        <span>{strategyRealtimeSummary || "策略命中来自全局 signal_events，与 K线实验室同源；命中后按用户自选和推送配置自动推送。"}</span>
+        <strong className="strategy-auto-pill">{strategyRealtime?.connected || strategyRealtime?.socketActive ? "自动推送中" : "自动监听中"}</strong>
       </section>}
       {trackingSection === "strategy" && !authenticated && (
         <UpgradeGuideCard title="实时信号需登录后开启" desc={`未登录只能查看${guestDelayText}的全市场历史；登录并升级后可按自选币种实时接收推送。`} actionLabel="登录查看实时" onClick={() => onNavigate("login")} />
@@ -1689,6 +1693,28 @@ function RadarPage({ authenticated, currentUser, entitlements, onNavigate, onOpe
               <div><strong>雷达规则设置</strong><em>调整扫描窗口、入选阈值与推送方式</em></div>
               <button type="button" aria-label="关闭" onClick={() => setRuleSettingsOpen(false)}><SystemIcon name="x" /></button>
             </div>
+            {trackingSection === "strategy" && (
+              <div className="strategy-filter-panel">
+                <div className="strategy-filter-row symbol-row">
+                  <label>
+                    <span>币种</span>
+                    <input value={strategyFilterSymbol} onChange={(event) => setStrategyFilterSymbol(event.target.value)} placeholder="BTC / ETH / SOL" />
+                  </label>
+                  <button type="button" onClick={resetStrategyFilters}>重置</button>
+                </div>
+                <div className="strategy-filter-row quick-row" role="group" aria-label="策略信号周期筛选">
+                  {["all", "5m", "15m", "30m", "1h", "4h"].map((item) => {
+                    const allowed = item === "all" || !currentUser.id || (entitlements.allowedTimeframes || ["5m"]).includes(item);
+                    return <button key={`tf-${item}`} className={`${strategyFilterTimeframe === item ? "active" : ""} ${allowed ? "" : "locked"}`} type="button" aria-disabled={!allowed} onClick={() => allowed ? setStrategyFilterTimeframe(item) : setUpgradePrompt({ title: `升级解锁 ${item} 策略信号`, desc: `${entitlements.plan || "Free"} 当前可用周期 ${(entitlements.allowedTimeframes || ["5m"]).join(" / ")}。升级后可查看更多周期的历史和实时信号。` })}>{item === "all" ? "全部周期" : item}{allowed ? "" : " · 升级"}</button>;
+                  })}
+                </div>
+                <div className="strategy-filter-row quick-row score-row" role="group" aria-label="策略信号评分筛选">
+                  {[{ key: "all", label: "全部评分" }, { key: "65", label: "65+" }, { key: "80", label: "80+" }].map((item) => (
+                    <button key={`score-${item.key}`} className={strategyFilterMinScore === item.key ? "active" : ""} type="button" onClick={() => setStrategyFilterMinScore(item.key)}>{item.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="rule-control-group">
               <strong>扫描窗口</strong>
               <div className="rule-segment">
@@ -2085,7 +2111,7 @@ function PushPerformanceCard({ onOpenSymbol, signals }: { onOpenSymbol: (symbol:
   );
 }
 
-function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, onToast, rows, signalContext, signals }: { currentUser: CurrentUser; onNavigate: (view: ViewName) => void; onOpenSearch: () => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signalContext?: LiveSignal | null; signals: Signal[] }) {
+function ValueClawPage({ currentUser, onClearSignalContext, onNavigate, onOpenSymbol, onToast, rows, signalContext, signals }: { currentUser: CurrentUser; onClearSignalContext: () => void; onNavigate: (view: ViewName) => void; onOpenSymbol: (symbol: string) => void; onToast: (message: string) => void; rows: MarketRow[]; signalContext?: LiveSignal | null; signals: Signal[] }) {
   const [input, setInput] = useState("帮我分析 BTC 当前有没有机会，风险点在哪里");
   const [loading, setLoading] = useState(false);
   const [clawStatus, setClawStatus] = useState<ClawStatus | null>(null);
@@ -2094,7 +2120,7 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
     {
       role: "agent",
       blocks: [
-        { type: "summary", title: "我是 ValueClaw，一个面向币种和机会的聊天式 Agent", items: ["你可以直接问某个币为什么异动、现在是否值得跟踪、主要风险是什么、适合怎样设置告警。"] },
+        { type: "summary", title: "我是 AIClaw，一个面向币种和机会的聊天式 Agent", items: ["你可以直接问某个币为什么异动、现在是否值得跟踪、主要风险是什么、适合怎样设置告警。"] },
         { type: "action", title: "可以这样问", items: ["分析 BTC 当前机会和风险", "今天哪些币值得重点关注？", "帮我解释最新异常信号的触发原因"] }
       ]
     }
@@ -2126,7 +2152,7 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
     } catch {
       const target = extractSymbol(prompt) || rows[0]?.symbol || "BTC";
       setMessages((items) => [...items, { role: "agent", blocks: fallbackClawBlocks(target, rows, signals), meta: "接口暂不可用，已使用本地行情上下文生成" }]);
-      onToast("ValueClaw 暂时使用本地分析");
+      onToast("AIClaw 暂时使用本地分析");
     } finally {
       setLoading(false);
     }
@@ -2134,67 +2160,47 @@ function ValueClawPage({ currentUser, onNavigate, onOpenSearch, onOpenSymbol, on
 
   return (
     <section className="view active-view polished-screen claw-agent-screen">
-      <Topbar title="ValueClaw" eyebrow={!signedIn ? "需登录" : llmOnline ? "大模型在线" : "规则分析在线"} badge="分析助手" onSearch={onOpenSearch} />
-      {!signedIn ? (
-        <section className="polished-card claw-login-gate">
-          <span className="icon-tile blue"><SystemIcon name="network" /></span>
-          <div>
-            <h1>登录后使用 ValueClaw</h1>
-            <p>ValueClaw 会结合你的自选币种、历史扫描、实时行情和告警规则，分析对应币种和机会。</p>
-          </div>
-          <button type="button" onClick={() => onNavigate("login")}>去登录</button>
-        </section>
-      ) : (
-        <>
-      <section className="polished-card claw-hero-card">
-        <span className="icon-tile blue"><SystemIcon name="network" /></span>
-        <div><h1>ValueClaw</h1><p>聊天式币种机会分析 Agent</p></div>
-        <em>{llmOnline ? "LLM" : "规则"}</em>
-      </section>
-      <div className="claw-context-rail" aria-label="行情上下文">
-        {rows.slice(0, 4).map((row) => (
-          <button type="button" key={`claw-${row.symbol}`} onClick={() => setInput(`分析 ${normalizeDisplaySymbol(row.symbol)} 当前机会和风险`)}>
-            <CoinIcon symbol={row.symbol} />
-            <span><strong>{normalizeDisplaySymbol(row.symbol)}</strong><em className={row.change.startsWith("-") ? "negative" : ""}>{row.change}</em></span>
-          </button>
-        ))}
-      </div>
-      <div className="claw-prompt-row">
-        <button type="button" onClick={() => setInput("分析 ETH 当前机会")}>分析 ETH 当前机会</button>
-        <button type="button" onClick={() => setInput("今天有哪些机会币？")}>今天有哪些机会币？</button>
-        <button type="button" onClick={() => setInput("哪些信号风险最高？")}>哪些信号风险最高？</button>
-      </div>
-      {signalContext && (
-        <section className="polished-card claw-signal-context" aria-label="当前策略信号上下文">
-          <div className="claw-signal-context__head">
-            <span>来自实时雷达</span>
-            <strong>{signalContext.symbol}</strong>
-            <em>{formatDirectionLabel(signalContext.direction)} · {signalContext.score}/100</em>
-          </div>
-          <p>{signalContext.trigger}</p>
-          <small>ValueClaw 仅解释和复核该策略信号，不创建或覆盖交易方向；策略信号仍保持最高优先级。</small>
-          <button type="button" onClick={() => onOpenSymbol(signalContext.symbol)}>查看币种详情</button>
-        </section>
-      )}
-      <section className="polished-card claw-chat-card">
-        {messages.map((message, index) =>
+      <AIClawExperience
+        status={!signedIn ? "需登录" : llmOnline ? "在线" : "规则分析在线"}
+        signedIn={signedIn}
+        insightCopy={`已加载 ${rows.length} 个市场行情和 ${signals.length} 条策略信号。`}
+        messages={messages.map((message, index) =>
           message.role === "user" ? (
             <div className="agent-message user" key={index}><p>{message.text}</p></div>
           ) : (
             <div className="agent-message agent" key={index}>
-              <strong>ValueClaw</strong>
+              <strong>AIClaw</strong>
               {message.blocks?.map((block) => <ClawBlockCard block={block} key={`${block.type}-${block.title}`} onOpenSymbol={onOpenSymbol} />)}
               {message.meta && <small>{message.meta}</small>}
             </div>
           )
         )}
-      </section>
-      <form className="polished-card claw-compose-card" onSubmit={sendMessage}>
-        <label><span>问 ValueClaw</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} /></label>
-        <button type="submit" disabled={loading}><SystemIcon name="send" />{loading ? "分析中" : "发送"}</button>
-      </form>
-        </>
-      )}
+        signalContext={signalContext ? (
+          <div className="ai-claw-signal-context__body">
+            <div className="ai-claw-signal-context__facts">
+              <span>来自实时雷达</span>
+              <strong>{signalContext.symbol}</strong>
+              <em>{formatDirectionLabel(signalContext.direction)} · {signalContext.score}/100</em>
+            </div>
+            <p>{signalContext.trigger}</p>
+            <small>AIClaw 仅解释和复核该策略信号，不创建或覆盖交易方向；策略信号仍保持最高优先级。</small>
+            <button type="button" onClick={() => onOpenSymbol(signalContext.symbol)}>查看币种详情</button>
+          </div>
+        ) : undefined}
+        input={input}
+        loading={loading}
+        onQuickAction={(actionId) => setInput(buildAIClawPrompt(actionId, signalContext ? {
+          symbol: signalContext.symbol,
+          direction: signalContext.direction === "neutral" ? "flat" : signalContext.direction,
+          score: signalContext.score,
+        } : undefined))}
+        onInput={setInput}
+        onSubmit={sendMessage}
+        onLogin={() => onNavigate("login")}
+        onHelp={() => onToast("AIClaw 可解释市场行情和已有策略信号，不会创建或覆盖交易方向")}
+        onClearContext={onClearSignalContext}
+        renderIcon={(name) => <SystemIcon name={name} />}
+      />
     </section>
   );
 }
@@ -2552,8 +2558,8 @@ function SymbolDetailPage({ currentUser, entitlements, onBack, onNavigate, onOpe
             <strong>{formatDirectionLabel(radarSignalContext.direction)} · {radarSignalContext.score}/100</strong>
           </div>
           <p>{radarSignalContext.trigger}</p>
-          <small>信号来源：Yansir 策略引擎 · ValueClaw 仅用于解释和复核，策略信号保持最高优先级</small>
-          <button type="button" onClick={() => onOpenValueClawSignal(radarSignalContext)}>打开 ValueClaw 复核</button>
+          <small>信号来源：Yansir 策略引擎 · AIClaw 仅用于解释和复核，策略信号保持最高优先级</small>
+          <button type="button" onClick={() => onOpenValueClawSignal(radarSignalContext)}>打开 AIClaw 复核</button>
         </section>
       )}
       <section className={`polished-card symbol-overview-card ${tone}`}>
@@ -2751,7 +2757,7 @@ function fallbackPlansForDisplay(): Plan[] {
   return [
     { id: "free", code: "free", name: "Free", price: 0, signalQuota: 10, feishu: false, apiAccess: false, maxWatchlistSymbols: 5, allowedTimeframes: ["5m"], realtimeDelayHours: 8, historyDays: 7, minAlertScore: 80, maxPushPerDay: 0, signalOutcomes: false, teamSeats: 0, features: ["全市场信号延迟 8 小时", "自选 5 个币", "周期 5m", "基础战绩预览"] },
     { id: "vip", code: "vip", name: "VIP", price: 199, signalQuota: 300, feishu: true, apiAccess: false, maxWatchlistSymbols: 50, allowedTimeframes: ["5m", "15m"], realtimeDelayHours: 0, historyDays: 30, minAlertScore: 65, maxPushPerDay: 300, signalOutcomes: true, teamSeats: 1, features: ["每日 300 条实时推送", "自选 50 个币", "周期 5m / 15m", "完整战绩回看"] },
-    { id: "svip", code: "svip", name: "SVIP", price: 699, signalQuota: 2000, feishu: true, apiAccess: true, maxWatchlistSymbols: 200, allowedTimeframes: ["5m", "15m", "1h", "4h"], realtimeDelayHours: 0, historyDays: 180, minAlertScore: 65, maxPushPerDay: 2000, signalOutcomes: true, teamSeats: 5, features: ["每日 2000 条实时推送", "自选 200 个币", "周期 5m / 15m / 1h / 4h", "API 订阅"] }
+    { id: "svip", code: "svip", name: "SVIP", price: 699, signalQuota: 2000, feishu: true, apiAccess: true, maxWatchlistSymbols: 200, allowedTimeframes: ["5m", "15m", "30m", "1h", "4h"], realtimeDelayHours: 0, historyDays: 180, minAlertScore: 65, maxPushPerDay: 2000, signalOutcomes: true, teamSeats: 5, features: ["每日 2000 条实时推送", "自选 200 个币", "周期 5m / 15m / 30m / 1h / 4h", "API 订阅"] }
   ];
 }
 
@@ -3211,9 +3217,12 @@ function buildSignalScanRecord(symbol: string, signal: Signal): ScanRecord {
   };
 }
 
-function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRecord[], options: { mode: "strategy" | "market"; scanBaseTime: number }) {
+function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRecord[], options: { mode: "strategy" | "market"; scanBaseTime: number; historyRecords?: RadarTimelineRecord[] }) {
   const rowSymbols = new Set(rows.map((row) => normalizeDisplaySymbol(row.symbol)));
   const recordBySymbol = new Map<string, RadarTimelineRecord>();
+  const strategyHitHistoryBySymbol = options.mode === "strategy"
+    ? buildStrategyHitHistoryBySymbol(options.historyRecords ?? records)
+    : new Map<string, StrategyHitHistorySummary>();
 
   [...records]
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0) || (b.score || 0) - (a.score || 0))
@@ -3225,14 +3234,14 @@ function buildAllMarketRadarRecords(rows: MarketRow[], records: RadarTimelineRec
 
   const marketBackfilled = rows.map((row, index) => {
     const symbol = normalizeDisplaySymbol(row.symbol);
-    return recordBySymbol.get(symbol) || buildMarketBackfillRecord(row, index, options);
+    return recordBySymbol.get(symbol) || buildMarketBackfillRecord(row, index, options, strategyHitHistoryBySymbol.get(symbol));
   });
   const unmatchedRecords = records.filter((record) => !rowSymbols.has(normalizeDisplaySymbol(record.symbol)));
 
   return [...marketBackfilled, ...unmatchedRecords];
 }
 
-function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mode: "strategy" | "market"; scanBaseTime: number }): RadarTimelineRecord {
+function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mode: "strategy" | "market"; scanBaseTime: number }, strategyHitHistory?: StrategyHitHistorySummary): RadarTimelineRecord {
   const symbol = normalizeDisplaySymbol(row.symbol);
   const change = parseNumber(row.change);
   const score = normalizeRadarScore(row.score);
@@ -3247,7 +3256,7 @@ function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mod
         : "市场观察";
   const timestamp = options.scanBaseTime - (1000 + index) * 60 * 1000;
   const trigger = options.mode === "strategy"
-    ? `${symbol} 已纳入全市场策略扫描，当前暂未触发 Yansir 策略信号。`
+    ? buildStrategyWaitingTrigger(symbol, strategyHitHistory)
     : `${symbol} 当前价格 ${row.price || "-"}，24H ${row.change || "--"}，继续观察成交量、资金费率和下一轮雷达信号。`;
   const tone: Tone = isRisk ? "danger" : score >= 70 ? "warning" : "success";
   const direction: Direction = isRisk ? "short" : "flat";
@@ -3257,10 +3266,17 @@ function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mod
     symbol,
     group,
     category,
-    title: `${symbol} ${category}`,
+    title: options.mode === "strategy" && strategyHitHistory?.count
+      ? `${symbol} 当前未命中 · 历史命中 ${strategyHitHistory.count} 次`
+      : `${symbol} ${category}`,
     body: trigger,
     signature: createScanSignature(`${symbol} ${category}`, tone, [symbol, category]),
-    tags: [symbol, category, options.mode === "strategy" ? "策略扫描池" : "全市场"],
+    tags: [
+      symbol,
+      category,
+      options.mode === "strategy" ? "策略扫描池" : "全市场",
+      ...(options.mode === "strategy" && strategyHitHistory?.count ? ["历史命中"] : [])
+    ],
     time: formatClockTime(timestamp),
     timestamp,
     tone,
@@ -3268,8 +3284,65 @@ function buildMarketBackfillRecord(row: MarketRow, index: number, options: { mod
     direction,
     strategyName: options.mode === "strategy" ? "Yansir 策略引擎" : "市场观察池",
     trigger,
-    risk: isRisk ? category : undefined
+    risk: isRisk ? category : undefined,
+    payload: options.mode === "strategy" && strategyHitHistory?.count
+      ? {
+        historicalHitCount: strategyHitHistory.count,
+        latestHistoricalHitAt: new Date(strategyHitHistory.latestTimestamp).toISOString(),
+        latestHistoricalTimeframe: strategyHitHistory.latestTimeframe,
+        latestHistoricalDirection: strategyHitHistory.latestDirection,
+        latestHistoricalScore: strategyHitHistory.latestScore,
+        latestHistoricalCategory: strategyHitHistory.latestCategory
+      }
+      : undefined
   };
+}
+
+function buildStrategyHitHistoryBySymbol(records: RadarTimelineRecord[]) {
+  const summaryBySymbol = new Map<string, StrategyHitHistorySummary>();
+  for (const record of records) {
+    if (record.category === "等待策略信号") continue;
+    const symbol = normalizeDisplaySymbol(record.symbol);
+    if (!symbol) continue;
+    const timestamp = record.timestamp ?? timestampFromScanTime(record.time) ?? 0;
+    const current = summaryBySymbol.get(symbol);
+    if (!current) {
+      summaryBySymbol.set(symbol, {
+        count: 1,
+        latestTimestamp: timestamp,
+        latestTimeframe: record.tags[1],
+        latestDirection: record.direction,
+        latestScore: record.score,
+        latestCategory: record.category
+      });
+      continue;
+    }
+
+    current.count += 1;
+    if (timestamp >= current.latestTimestamp) {
+      current.latestTimestamp = timestamp;
+      current.latestTimeframe = record.tags[1];
+      current.latestDirection = record.direction;
+      current.latestScore = record.score;
+      current.latestCategory = record.category;
+    }
+  }
+  return summaryBySymbol;
+}
+
+function buildStrategyWaitingTrigger(symbol: string, history?: StrategyHitHistorySummary) {
+  if (!history?.count) {
+    return `${symbol} 已纳入全市场策略扫描，当前暂未触发新的 Yansir 策略信号。`;
+  }
+
+  const direction = history.latestDirection === "short" ? "看空" : history.latestDirection === "long" ? "看多" : "观望";
+  const latestParts = [
+    history.latestTimeframe,
+    direction,
+    Number.isFinite(history.latestScore) ? `${history.latestScore}分` : "",
+  ].filter(Boolean);
+  const latestText = latestParts.length ? `最近一次 ${latestParts.join(" / ")}，` : "";
+  return `${symbol} 当前暂未触发新的 Yansir 策略信号；历史命中 ${history.count} 次，${latestText}可切换“全部历史”查看明细。`;
 }
 
 function normalizeRadarScore(value: number | undefined) {
@@ -3297,6 +3370,7 @@ function strategyInboxToRecord(signal: StrategyInboxSignal): RadarTimelineRecord
     tone: signal.direction === "short" ? "danger" : "success",
     score: signal.score,
     direction: signal.direction,
+    ...strategyInboxSignalFacts(signal),
     action: signal.action ?? signal.payload?.action ?? null,
     payload: signal.payload,
     strategyName: signal.engine || signal.signalType || "Pine V6",
@@ -3334,6 +3408,7 @@ function strategyScanToRecords(response: { scan: StrategyScanAlertResponse["scan
         tone,
         score,
         direction: signal.side,
+        ...strategyScanSignalFacts(item.result || {}, signal),
         action: signal.action ?? null,
         payload: {
           action: signal.action ?? null,
@@ -3380,13 +3455,24 @@ function mergeStrategyRecords(records: RadarTimelineRecord[]) {
   return merged;
 }
 
+function strategyRealtimeSummaryText(realtime: StrategyRealtimeStatusResponse["realtime"] | null | undefined, signedIn: boolean) {
+  if (!signedIn) return "未登录仅展示延迟8小时的策略信号；登录后可查看自选币种实时信号并接收自动推送。";
+  if (!realtime?.enabled) return "全市场自动推送监听正在恢复中；命中会写入全局 signal_events，并按自选币种自动推送。";
+
+  const symbolCount = realtime.symbols?.length || 0;
+  const timeframeText = realtime.timeframes?.length ? realtime.timeframes.join(" / ") : STRATEGY_TRACK_TIMEFRAMES.join(" / ");
+  const statusText = realtime.connected || realtime.socketActive ? "自动推送中" : "自动监听中";
+  const coverage = symbolCount ? `覆盖 ${symbolCount} 个币种 · ${timeframeText}` : `覆盖全市场 · ${timeframeText}`;
+  return `全市场策略引擎${statusText}：${coverage}；命中后自动写入 signal_events，并按用户自选和推送配置自动推送。`;
+}
+
 function strategyStatusText(status: "idle" | "scanning" | "ready" | "no-signal" | "error", watchlistCount: number, lastScan: string) {
-  if (!watchlistCount) return "先在我的关注里添加币种，系统会实时监听 5m / 15m / 1h / 4h K线收盘信号。";
+  if (!watchlistCount) return "先在我的关注里添加币种，系统会实时监听 5m / 15m / 30m / 1h / 4h K线收盘信号。";
   if (status === "scanning") return `正在检查 ${watchlistCount} 个追踪币种的实时K线信号`;
   if (status === "ready") return `实时多空信号已更新${lastScan ? `，最近信号 ${lastScan}` : ""}`;
   if (status === "no-signal") return `当前暂无新的 Pine V6 标准信号${lastScan ? `，最近信号 ${lastScan}` : ""}`;
   if (status === "error") return "策略信号实时监听异常，请稍后重试。";
-  return `实时监听中，覆盖 ${watchlistCount} 个币种的 5m / 15m / 1h / 4h。`;
+  return `实时监听中，覆盖 ${watchlistCount} 个币种的 5m / 15m / 30m / 1h / 4h。`;
 }
 
 function strategyScanSummaryText(response: { scan: StrategyScanAlertResponse["scan"] }) {
@@ -3531,7 +3617,7 @@ function fallbackClawBlocks(target: string, rows: MarketRow[], signals: Signal[]
   const row = rows.find((item) => normalizeDisplaySymbol(item.symbol) === clean) || rows[0];
   const signal = signals.find((item) => normalizeDisplaySymbol(item.symbol) === clean);
   return [
-    { type: "summary", title: `ValueClaw 正在分析 ${clean || "当前市场"} 的机会`, items: [`当前价格 ${row?.price || "-"}，24H ${row?.change || "-"}，状态为 ${row?.state || "待观察"}。`, "已结合交易活跃度、主力资金、合约 OI、短周期趋势和风险偏离做综合筛选。"] },
+    { type: "summary", title: `AIClaw 正在分析 ${clean || "当前市场"} 的机会`, items: [`当前价格 ${row?.price || "-"}，24H ${row?.change || "-"}，状态为 ${row?.state || "待观察"}。`, "已结合交易活跃度、主力资金、合约 OI、短周期趋势和风险偏离做综合筛选。"] },
     { type: "group", title: `${clean || "市场"} 机会观察`, items: [signal?.title || "机会需要同时满足价格趋势改善、成交额放大、策略扫描出现有效触发。", "如果评分升至 65 以上，再结合风险提示生成告警并推送给团队。"] },
     { type: "risk", title: "风险提示", items: ["如果只有价格上涨但成交额、资金流和策略信号没有共振，容易是假突破。", "以上分析用于辅助决策，不构成投资建议；高波动行情需要设置止损和仓位上限。"] },
     { type: "action", title: "建议下一步", items: [`进入 ${clean || row?.symbol || "BTC"} 详情页确认扫描分数、最近 K 线和触发证据。`] }

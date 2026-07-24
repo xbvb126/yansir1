@@ -58,6 +58,63 @@ class StrategyZone(BaseModel):
     touched: bool = False
 
 
+class StrategyOverlayPoint(BaseModel):
+    open_time: int
+    close_time: int | None = None
+    avg: float | None = None
+    upper: float | None = None
+    lower: float | None = None
+    upper_extreme: float | None = None
+    lower_extreme: float | None = None
+    direction: int = 0
+    htf_direction: int = 0
+
+
+class StrategyOverlayEvent(BaseModel):
+    open_time: int
+    price: float
+    label: str
+    kind: str
+    side: str = "flat"
+
+
+class StrategyOverlayZone(BaseModel):
+    kind: str
+    top: float | None = None
+    bottom: float | None = None
+    strength: int = 0
+    touched: bool = False
+
+
+class StrategyRiskLine(BaseModel):
+    kind: str
+    price: float
+    side: str = "flat"
+    label: str
+
+
+class StrategyOverlays(BaseModel):
+    points: list[StrategyOverlayPoint] = Field(default_factory=list)
+    events: list[StrategyOverlayEvent] = Field(default_factory=list)
+    zones: list[StrategyOverlayZone] = Field(default_factory=list)
+    risk_lines: list[StrategyRiskLine] = Field(default_factory=list)
+    panel: dict[str, str] = Field(default_factory=dict)
+
+
+class StrategyTimelineSignal(BaseModel):
+    type: str
+    title: str
+    engine: str
+    side: str
+    action: str | None = None
+    price: float
+    reduce_pct: float | None = None
+    stop_price: float | None = None
+    take_profit_price: float | None = None
+    score_impact: int = 0
+    bar_time: int
+
+
 class StrategyDiagnostics(BaseModel):
     market_state_text: str = "unknown"
     risk_status: str = "unknown"
@@ -68,6 +125,8 @@ class StrategyDiagnostics(BaseModel):
     bands: list[StrategyBandPoint] = Field(default_factory=list)
     support: StrategyZone = Field(default_factory=StrategyZone)
     resistance: StrategyZone = Field(default_factory=StrategyZone)
+    overlays: StrategyOverlays = Field(default_factory=StrategyOverlays)
+    signal_timeline: list[StrategyTimelineSignal] = Field(default_factory=list)
 
 
 class StrategySignal(BaseModel):

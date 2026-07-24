@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { StrategyService } from '../dist/modules/strategy/strategy.service.js';
 import { AlertsService } from '../dist/modules/alerts/alerts.service.js';
+import { buildEntitlements } from '../dist/modules/users/entitlements.js';
+import { UsersRepository } from '../dist/modules/users/users.repository.js';
+import { UsersService } from '../dist/modules/users/users.service.js';
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
 
 const baseEntitlements = {
   plan: 'Free',
+  formalSignalAccess: 'delayed',
+  formalSignalDelayHours: 8,
+  formalSignalHistoryDays: 7,
+  intrabarPreview: false,
   maxScanSymbols: 5,
   maxWatchlistSymbols: 5,
   dailySignalQuota: 10,
@@ -28,6 +36,10 @@ const baseEntitlements = {
 const svipEntitlements = {
   ...baseEntitlements,
   plan: 'SVIP',
+  formalSignalAccess: 'realtime',
+  formalSignalDelayHours: 0,
+  formalSignalHistoryDays: 180,
+  intrabarPreview: false,
   maxScanSymbols: 200,
   maxWatchlistSymbols: 200,
   dailySignalQuota: 2000,
@@ -37,7 +49,7 @@ const svipEntitlements = {
   apiAccess: true,
   teamSeats: 5,
   minAlertScore: 65,
-  allowedTimeframes: ['5m', '15m', '1h', '4h'],
+  allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
   realtimeDelayHours: 0,
   historyDays: 180,
   maxPushPerDay: 2000,
@@ -47,6 +59,10 @@ const svipEntitlements = {
 const vipEntitlements = {
   ...baseEntitlements,
   plan: 'VIP',
+  formalSignalAccess: 'realtime',
+  formalSignalDelayHours: 0,
+  formalSignalHistoryDays: 30,
+  intrabarPreview: false,
   maxScanSymbols: 50,
   maxWatchlistSymbols: 50,
   dailySignalQuota: 300,
@@ -188,6 +204,162 @@ function sampleSignalRow(overrides = {}) {
   };
 }
 
+function entitlementUser(plan, { signalQuota, feishuEnabled, teamSeats }) {
+  return {
+    id: USER_ID,
+    name: `${plan} user`,
+    phone: '13800000000',
+    role: 'member',
+    plan,
+    status: 'active',
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    signalUsed: 0,
+    signalQuota,
+    feishuEnabled,
+    teamSeats
+  };
+}
+
+function pick(value, keys) {
+  return Object.fromEntries(keys.map((key) => [key, value[key]]));
+}
+
+async function testApprovedFormalSignalEntitlementMatrix() {
+  const keys = [
+    'formalSignalAccess', 'formalSignalDelayHours', 'formalSignalHistoryDays', 'maxWatchlistSymbols',
+    'allowedTimeframes', 'historyDays', 'feishuAlerts', 'maxPushPerDay',
+    'signalOutcomes', 'apiAccess', 'intrabarPreview'
+  ];
+  const free = buildEntitlements(entitlementUser('Free', { signalQuota: 10, feishuEnabled: false, teamSeats: '0/0' }));
+  const vip = buildEntitlements(entitlementUser('VIP', { signalQuota: 300, feishuEnabled: true, teamSeats: '0/1' }));
+  const svip = buildEntitlements(entitlementUser('SVIP', { signalQuota: 2000, feishuEnabled: true, teamSeats: '0/5' }));
+
+  assert.deepEqual(pick(free, keys), {
+    formalSignalAccess: 'delayed',
+    formalSignalDelayHours: 8,
+    formalSignalHistoryDays: 7,
+    maxWatchlistSymbols: 5,
+    allowedTimeframes: ['5m'],
+    historyDays: 7,
+    feishuAlerts: false,
+    maxPushPerDay: 0,
+    signalOutcomes: false,
+    apiAccess: false,
+    intrabarPreview: false
+  });
+  assert.deepEqual(pick(vip, keys), {
+    formalSignalAccess: 'realtime',
+    formalSignalDelayHours: 0,
+    formalSignalHistoryDays: 30,
+    maxWatchlistSymbols: 50,
+    allowedTimeframes: ['5m', '15m'],
+    historyDays: 30,
+    feishuAlerts: true,
+    maxPushPerDay: 300,
+    signalOutcomes: true,
+    apiAccess: false,
+    intrabarPreview: false
+  });
+  assert.deepEqual(pick(svip, keys), {
+    formalSignalAccess: 'realtime',
+    formalSignalDelayHours: 0,
+    formalSignalHistoryDays: 180,
+    maxWatchlistSymbols: 200,
+    allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
+    historyDays: 180,
+    feishuAlerts: true,
+    maxPushPerDay: 2000,
+    signalOutcomes: true,
+    apiAccess: true,
+    intrabarPreview: false
+  });
+
+  const unpushableFree = buildEntitlements(
+    entitlementUser('Free', { signalQuota: 10, feishuEnabled: false, teamSeats: '0/0' }),
+    { plan: 'Free', supportsFeishu: true, maxPushPerDay: 25, realtimeDelayHours: 0, historyDays: 365 }
+  );
+  assert.equal(unpushableFree.formalSignalAccess, 'delayed');
+  assert.equal(unpushableFree.formalSignalDelayHours, 8);
+  assert.equal(unpushableFree.formalSignalHistoryDays, 7);
+  assert.equal(unpushableFree.realtimeDelayHours, 8);
+  assert.equal(unpushableFree.historyDays, 7);
+  assert.equal(unpushableFree.maxPushPerDay, 0);
+  assert.equal(unpushableFree.remainingDailyPushes, 0);
+
+  const staleFreeOverride = buildEntitlements(
+    entitlementUser('Free', { signalQuota: 2000, feishuEnabled: true, teamSeats: '0/5' }),
+    {
+      plan: 'SVIP',
+      dailySignalQuota: 2000,
+      supportsFeishu: true,
+      supportsApi: true,
+      maxWatchlistSymbols: 200,
+      allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
+      maxPushPerDay: 2000,
+      supportsSignalOutcomes: true,
+      realtimeDelayHours: 0,
+      historyDays: 365,
+      minAlertScore: 0
+    }
+  );
+  assert.equal(staleFreeOverride.maxWatchlistSymbols, 5);
+  assert.equal(staleFreeOverride.maxScanSymbols, 5);
+  assert.deepEqual(staleFreeOverride.allowedTimeframes, ['5m']);
+  assert.equal(staleFreeOverride.feishuAlerts, false, 'a stale Feishu binding cannot expand Free');
+  assert.equal(staleFreeOverride.apiAccess, false);
+  assert.equal(staleFreeOverride.maxPushPerDay, 0);
+  assert.equal(staleFreeOverride.dailySignalQuota, 10);
+  assert.equal(staleFreeOverride.formalSignalDelayHours, 8);
+  assert.equal(staleFreeOverride.formalSignalHistoryDays, 7);
+  assert.equal(staleFreeOverride.signalOutcomes, false);
+  assert.equal(staleFreeOverride.minAlertScore, 80);
+
+  const staleVipOverride = buildEntitlements(
+    entitlementUser('VIP', { signalQuota: 2000, feishuEnabled: true, teamSeats: '0/5' }),
+    {
+      plan: 'VIP',
+      dailySignalQuota: 2000,
+      supportsFeishu: true,
+      supportsApi: true,
+      maxWatchlistSymbols: 200,
+      allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
+      maxPushPerDay: 2000,
+      supportsSignalOutcomes: true
+    }
+  );
+  assert.equal(staleVipOverride.maxWatchlistSymbols, 50);
+  assert.deepEqual(staleVipOverride.allowedTimeframes, ['5m', '15m']);
+  assert.equal(staleVipOverride.feishuAlerts, true);
+  assert.equal(staleVipOverride.apiAccess, false, 'VIP must not gain SVIP API access');
+  assert.equal(staleVipOverride.maxPushPerDay, 300);
+  assert.equal(staleVipOverride.dailySignalQuota, 300);
+  assert.equal(staleVipOverride.formalSignalDelayHours, 0);
+  assert.equal(staleVipOverride.formalSignalHistoryDays, 30);
+
+  const tightenedVipOverride = buildEntitlements(
+    entitlementUser('VIP', { signalQuota: 300, feishuEnabled: true, teamSeats: '0/1' }),
+    {
+      plan: 'VIP',
+      dailySignalQuota: 5,
+      supportsFeishu: false,
+      supportsApi: false,
+      maxWatchlistSymbols: 3,
+      allowedTimeframes: ['5m'],
+      maxPushPerDay: 1,
+      minAlertScore: 90,
+      supportsSignalOutcomes: false
+    }
+  );
+  assert.equal(tightenedVipOverride.maxWatchlistSymbols, 3);
+  assert.deepEqual(tightenedVipOverride.allowedTimeframes, ['5m']);
+  assert.equal(tightenedVipOverride.feishuAlerts, false);
+  assert.equal(tightenedVipOverride.apiAccess, false);
+  assert.equal(tightenedVipOverride.maxPushPerDay, 0, 'disabling Feishu removes push allowance');
+  assert.equal(tightenedVipOverride.dailySignalQuota, 5);
+  assert.equal(tightenedVipOverride.minAlertScore, 90);
+  assert.equal(tightenedVipOverride.signalOutcomes, false);
+}
+
 async function expectRejectsMessage(fn, expected) {
   await assert.rejects(fn, (error) => {
     assert.match(error.message, expected);
@@ -263,9 +435,11 @@ async function testInboxAppliesPlanWindowAndPerformanceLock() {
   assert.equal(response.signals[0].performance.returns['4h'], null);
   assert.deepEqual(response.signals[0].performance.access.lockedFields, ['4h', '24h', 'maxFavorablePct', 'maxAdversePct']);
   const countQuery = db.queries.find((query) => query.sql.includes('from user_signal_inbox inbox') && query.sql.includes('count(*)'));
-  assert.ok(countQuery.sql.includes("se.emitted_at >= now() - ($3::integer * interval '1 day')"));
+  assert.ok(countQuery.sql.includes("se.emitted_at >= now() - ($4::integer * interval '1 day')"));
   assert.deepEqual(countQuery.params[1], ['5m']);
-  assert.equal(countQuery.params[2], 7);
+  assert.ok(countQuery.sql.includes("se.emitted_at <= now() - ($3::integer * interval '1 hour')"));
+  assert.equal(countQuery.params[2], 8);
+  assert.equal(countQuery.params[3], 7);
 }
 
 async function testSvipInboxGetsFullPerformance() {
@@ -277,18 +451,74 @@ async function testSvipInboxGetsFullPerformance() {
   assert.equal(response.signals[0].performance.maxFavorablePct, 0.12);
 }
 
+async function testThirtyMinuteSubscriptionAndInboxVisibilityIsExplicitlySvip() {
+  const fallbackEntitlements = buildEntitlements({
+    id: USER_ID,
+    name: 'SVIP user',
+    phone: '13800000000',
+    role: 'member',
+    plan: 'SVIP',
+    status: 'active',
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    signalUsed: 0,
+    signalQuota: 2000,
+    feishuEnabled: true,
+    teamSeats: '0/5'
+  });
+  assert.deepEqual(fallbackEntitlements.allowedTimeframes, ['5m', '15m', '30m', '1h', '4h']);
+  assert.equal(buildEntitlements({
+    id: USER_ID,
+    name: 'VIP user',
+    phone: '13800000001',
+    role: 'member',
+    plan: 'VIP',
+    status: 'active',
+    expiresAt: '2027-01-01T00:00:00.000Z',
+    signalUsed: 0,
+    signalQuota: 300,
+    feishuEnabled: true,
+    teamSeats: '0/1'
+  }).allowedTimeframes.includes('30m'), false, '30m policy must remain an explicit SVIP entitlement');
+
+  const row = { ...sampleSignalRow(), timeframe: '30m' };
+  const db = createDb({ signalRows: [row] });
+  const service = strategyService({ entitlements: svipEntitlements, db });
+  const watchlist = await service.updateUserWatchlist({
+    items: [{ symbol: 'BTCUSDT', timeframes: ['30m'], enabled: true, minScore: 65 }]
+  }, USER_ID);
+  assert.deepEqual(db.watchlists[0].timeframes, ['30m']);
+  assert.deepEqual(watchlist.watchlist[0].timeframes, ['30m']);
+
+  const inbox = await service.getUserSignalInbox(USER_ID, { mode: 'all', timeframe: '30m' });
+  assert.ok(inbox.access.allowedTimeframes.includes('30m'));
+  assert.equal(inbox.signals[0].timeframe, '30m');
+  const countQuery = db.queries.find((query) => query.sql.includes('from user_signal_inbox inbox') && query.sql.includes('count(*)'));
+  assert.ok(countQuery.params[1].includes('30m'));
+  assert.deepEqual(countQuery.params[3], ['30m']);
+
+  const schemaSource = readFileSync(new URL('../../../infra/schema.sql', import.meta.url), 'utf8');
+  const seedSource = readFileSync(new URL('../../../infra/seed.sql', import.meta.url), 'utf8');
+  assert.match(schemaSource, /default array\['5m', '15m', '30m', '1h', '4h'\]/);
+  assert.match(seedSource, /'svip'[\s\S]*array\['5m', '15m', '30m', '1h', '4h'\]/i);
+}
+
 async function testPublicSignalsAreDelayedAndPreviewOnly() {
   const db = createDb({ signalRows: [sampleSignalRow()] });
   const service = strategyService({ db });
   const response = await service.getPublicDelayedSignals({ limit: '5', symbol: 'BTC' });
   assert.equal(response.delayHours, 8);
   assert.equal(response.historyDays, 7);
+  assert.equal(response.access.formalSignalAccess, 'delayed');
+  assert.equal(response.access.formalSignalDelayHours, 8);
+  assert.equal(response.access.formalSignalHistoryDays, 7);
   assert.equal(response.access.performancePreviewOnly, true);
   assert.equal(response.signals[0].performance.returns['1h'], 0.02);
   assert.equal(response.signals[0].performance.returns['24h'], null);
   const countQuery = db.queries.find((query) => query.sql.includes('from signal_events se where'));
   assert.ok(countQuery.sql.includes("se.emitted_at <= now() - interval '8 hours'"));
   assert.ok(countQuery.sql.includes("se.emitted_at >= now() - interval '7 days'"));
+  assert.ok(countQuery.sql.includes("se.timeframe = '5m'"), 'Guest/Free delayed visibility is fixed to 5m');
+  assert.ok(countQuery.sql.includes('se.is_formal = true'), 'public reads must exclude provisional and legacy-unverified events');
 }
 
 async function testFeishuConfigPlanGuardsAndClamping() {
@@ -312,6 +542,97 @@ async function testFeishuDailyLimitRecordsSkippedDelivery() {
   assert.match(result.reason, /今日推送次数已达套餐上限 300 条/);
   assert.equal(db.lastDeliveryParams[8], 'skipped');
   assert.match(db.lastDeliveryParams[10], /今日推送次数已达套餐上限/);
+}
+
+async function testDailyPushUsageExposesOnlySentAsConsumed() {
+  const usersServiceSource = readFileSync(new URL('../src/modules/users/users.service.ts', import.meta.url), 'utf8');
+  const repositorySource = readFileSync(new URL('../src/modules/users/users.repository.ts', import.meta.url), 'utf8');
+  assert.match(usersServiceSource, /dailyPushUsed:\s*usage\.sent/);
+  assert.match(usersServiceSource, /dailyPushSkipped:\s*usage\.skipped/);
+  assert.match(usersServiceSource, /dailyPushFailed:\s*usage\.failed/);
+  assert.match(usersServiceSource, /remainingDailyPushes:\s*Math\.max\(0, maxPushPerDay - usage\.sent\)/);
+  assert.match(repositorySource, /count\(\*\) filter \(where status = 'sent'\)::int as sent/);
+  assert.match(repositorySource, /count\(\*\) filter \(where status = 'skipped'\)::int as skipped/);
+  assert.match(repositorySource, /count\(\*\) filter \(where status = 'failed'\)::int as failed/);
+}
+
+async function testFormalEntitlementsUseStrictExactUserReads() {
+  const strictQueries = [];
+  const database = {
+    enabled: true,
+    query: async () => { throw new Error('formal entitlement lookup must not use swallowing query'); },
+    queryStrict: async (sql, params = []) => {
+      const text = String(sql);
+      strictQueries.push({ sql: text, params });
+      if (text.includes('daily_signal_quota')) {
+        return [{
+          plan: 'SVIP',
+          daily_signal_quota: 2000,
+          supports_feishu: true,
+          supports_api: true,
+          supports_team: true,
+          max_watchlist_symbols: 200,
+          allowed_timeframes: ['5m', '15m', '30m', '1h', '4h'],
+          realtime_delay_hours: 0,
+          history_days: 180,
+          min_alert_score: 65,
+          max_push_per_day: 2000,
+          supports_signal_outcomes: true
+        }];
+      }
+      if (text.includes("count(*) filter (where status = 'sent')")) {
+        return [{
+          sent: 2,
+          skipped: 0,
+          failed: 0,
+          total: 2,
+          period_start: '2026-07-23T00:00:00.000Z',
+          period_end: '2026-07-24T00:00:00.000Z'
+        }];
+      }
+      if (text.includes('from users u')) {
+        if (!/where u\.id::text = \$1/i.test(text)) {
+          return [{
+            id: 'wrong-first-user',
+            name: 'Wrong user',
+            phone: '13000000000',
+            role: 'member',
+            status: 'active',
+            plan: 'Free',
+            expires_at: null,
+            used_count: 0,
+            quota_limit: 10,
+            feishu_enabled: false,
+            team_members: 0,
+            team_limit: 0
+          }];
+        }
+        return [{
+          id: USER_ID,
+          name: 'Exact user beyond list limit',
+          phone: '13800000000',
+          role: 'member',
+          status: 'active',
+          plan: 'SVIP',
+          expires_at: '2027-01-01T00:00:00.000Z',
+          used_count: 2,
+          quota_limit: 2000,
+          feishu_enabled: true,
+          team_members: 0,
+          team_limit: 5
+        }];
+      }
+      throw new Error(`Unhandled formal entitlement query: ${text}`);
+    }
+  };
+  const service = new UsersService(new UsersRepository(database));
+  const result = await service.getFormalEntitlementsById(USER_ID);
+
+  assert.equal(result.userId, USER_ID);
+  assert.equal(result.entitlements.plan, 'SVIP');
+  assert.equal(result.entitlements.dailyPushUsed, 2);
+  assert.ok(strictQueries.length >= 3);
+  assert.ok(strictQueries.every(({ params }) => params.includes(USER_ID)));
 }
 
 async function testWatchlistBoundaryUpdatesDoNotConsumeExtraSlots() {
@@ -391,15 +712,19 @@ async function testFeishuBlankWebhookDoesNotEnablePushAndClampsInvalidSettings()
 }
 
 const tests = [
+  testApprovedFormalSignalEntitlementMatrix,
   testAdvancedApiRequiresSvip,
   testSvipCanUseAdvancedScan,
   testAlertRuleTimeframeAndMinScore,
   testWatchlistTimeframeCapacityAndMinScore,
   testInboxAppliesPlanWindowAndPerformanceLock,
   testSvipInboxGetsFullPerformance,
+  testThirtyMinuteSubscriptionAndInboxVisibilityIsExplicitlySvip,
   testPublicSignalsAreDelayedAndPreviewOnly,
   testFeishuConfigPlanGuardsAndClamping,
   testFeishuDailyLimitRecordsSkippedDelivery,
+  testDailyPushUsageExposesOnlySentAsConsumed,
+  testFormalEntitlementsUseStrictExactUserReads,
   testWatchlistBoundaryUpdatesDoNotConsumeExtraSlots,
   testWatchlistCanDisableLegacyDisallowedTimeframesWhenPlanDowngrades,
   testPublicSignalQueryClampsAndSanitizesBoundaryFilters,

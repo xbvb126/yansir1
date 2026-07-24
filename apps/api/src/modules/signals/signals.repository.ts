@@ -1,6 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, DatabaseTransaction } from "../database/database.service";
 import { SignalRecord } from "../shared/mocks";
+import {
+  PUBLIC_FORMAL_SIGNAL_DELAY_HOURS,
+  PUBLIC_FORMAL_SIGNAL_HISTORY_DAYS,
+  PUBLIC_FORMAL_SIGNAL_TIMEFRAMES
+} from "../strategy/formal-signal-policy";
 
 type SignalRow = {
   id: string;
@@ -28,7 +33,10 @@ export type StrategySignalToPersist = {
   score: number;
   source: string;
   dedupeKey: string;
+  barTime: Date;
   emittedAt: Date;
+  strategyVersion: string;
+  formal: true;
   payload: Record<string, unknown>;
 };
 
@@ -46,15 +54,18 @@ export class SignalsRepository {
           se.price::text,
           se.score,
           se.emitted_at,
-          s.title,
-          s.reason,
-          s.signal_type,
+          se.title,
+          se.reason,
+          se.signal_type,
           sp.return_15m::text,
           coalesce(se.payload->>'oiChange', se.payload->>'oi_change') as oi_change,
           coalesce(se.payload->>'funding', se.payload->>'funding_rate') as funding
         from signal_events se
-        left join signals s on s.id = se.signal_id
         left join signal_performance sp on sp.signal_event_id = se.id
+        where se.is_formal = true
+          and se.timeframe = '${PUBLIC_FORMAL_SIGNAL_TIMEFRAMES[0]}'
+          and se.emitted_at <= now() - interval '${PUBLIC_FORMAL_SIGNAL_DELAY_HOURS} hours'
+          and se.emitted_at >= now() - interval '${PUBLIC_FORMAL_SIGNAL_HISTORY_DAYS} days'
         order by se.emitted_at desc
         limit 50
       `
@@ -79,6 +90,13 @@ export class SignalsRepository {
   }
 
   async saveStrategySignals(signals: StrategySignalToPersist[]) {
+    return {
+      persisted: false,
+      count: 0
+    };
+  }
+
+  async saveStrategySignalsStrict(signals: StrategySignalToPersist[]) {
     if (!this.database.enabled || !signals.length) {
       return {
         persisted: false,
@@ -86,9 +104,17 @@ export class SignalsRepository {
       };
     }
 
+    return this.database.withTransaction((transaction) => this.persistStrategySignals(signals, transaction, true));
+  }
+
+  private async persistStrategySignals(signals: StrategySignalToPersist[], transaction: DatabaseTransaction, strict: boolean) {
     let count = 0;
     for (const signal of signals) {
-      const existingRows = await this.database.query<{ signal_id: string }>(
+      if (!signal.formal) {
+        if (strict) throw new Error(`non_formal_signal_persistence_rejected:${signal.dedupeKey}`);
+        continue;
+      }
+      const existingRows = await transaction.query<{ signal_id: string }>(
         `
           select id::text as signal_id
           from signals
@@ -104,7 +130,7 @@ export class SignalsRepository {
 
       let signalId = existingRows[0]?.signal_id;
       if (!signalId) {
-        const insertedRows = await this.database.query<{ signal_id: string }>(
+        const insertedRows = await transaction.query<{ signal_id: string }>(
           `
             insert into signals (symbol, market, direction, signal_type, title, reason, score, source)
             values ($1::varchar, 'futures', $2::varchar, $3::varchar, $4::varchar, $5::text, $6::integer, $7::varchar)
@@ -124,10 +150,11 @@ export class SignalsRepository {
       }
 
       if (!signalId) {
+        if (strict) throw new Error(`signal_persistence_incomplete:${signal.dedupeKey}:signal`);
         continue;
       }
 
-      const eventRows = await this.database.query<{ id: string }>(
+      const eventRows = await transaction.query<{ id: string }>(
         `
           insert into signal_events (
             signal_id,
@@ -144,19 +171,12 @@ export class SignalsRepository {
             bar_time,
             payload,
             dedupe_key,
-            emitted_at
+            emitted_at,
+            strategy_version,
+            is_formal
           )
-          values ($1, 'BINANCE_FUTURES', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
-          on conflict (dedupe_key) do update set
-            price = excluded.price,
-            score = excluded.score,
-            signal_type = excluded.signal_type,
-            title = excluded.title,
-            reason = excluded.reason,
-            engine = excluded.engine,
-            bar_time = excluded.bar_time,
-            payload = excluded.payload,
-            emitted_at = excluded.emitted_at
+          values ($1, 'BINANCE_FUTURES', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16)
+          on conflict (dedupe_key) do nothing
           returning id::text
         `,
         [
@@ -170,16 +190,39 @@ export class SignalsRepository {
           String(signal.payload.engine ?? signal.source),
           signal.price,
           signal.score,
-          signal.emittedAt,
+          signal.barTime,
           JSON.stringify(signal.payload),
           signal.dedupeKey,
-          signal.emittedAt
+          signal.emittedAt,
+          signal.strategyVersion,
+          signal.formal
         ]
       );
 
       if (eventRows.length) {
         count += 1;
+      } else {
+        const existingEvents = await transaction.query<{ id: string }>(
+          `
+            select id::text
+            from signal_events
+            where dedupe_key = $1::varchar
+              and is_formal = true
+              and strategy_version = $2::varchar
+            limit 1
+          `,
+          [signal.dedupeKey, signal.strategyVersion]
+        );
+        if (existingEvents.length) {
+          count += 1;
+        } else if (strict) {
+          throw new Error(`signal_persistence_incomplete:${signal.dedupeKey}:event`);
+        }
       }
+    }
+
+    if (strict && count !== signals.length) {
+      throw new Error(`signal_persistence_incomplete:expected=${signals.length}:actual=${count}`);
     }
 
     return {

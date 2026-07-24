@@ -123,7 +123,10 @@ create table if not exists alert_deliveries (
   skip_reason text,
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  sent_at timestamptz
+  sent_at timestamptz,
+  retry_count integer not null default 0,
+  next_retry_at timestamptz,
+  last_attempt_at timestamptz
 );
 
 create table if not exists watchlists (
@@ -132,7 +135,7 @@ create table if not exists watchlists (
   symbol varchar(32) not null,
   market varchar(32) not null default 'futures',
   enabled boolean not null default true,
-  timeframes text[] not null default array['5m', '15m', '1h', '4h'],
+  timeframes text[] not null default array['5m', '15m', '30m', '1h', '4h'],
   min_score integer not null default 65,
   signal_scope varchar(32) not null default 'all',
   push_enabled boolean not null default true,
@@ -171,6 +174,8 @@ create table if not exists signal_events (
   bar_time timestamptz,
   payload jsonb not null default '{}'::jsonb,
   dedupe_key varchar(255) unique,
+  strategy_version varchar(120) not null default 'legacy-v0',
+  is_formal boolean not null default false,
   emitted_at timestamptz not null default now(),
   detected_at timestamptz not null default now()
 );
@@ -263,6 +268,32 @@ create table if not exists strategy_runs (
   finished_at timestamptz
 );
 
+create table if not exists strategy_close_evaluations (
+  id uuid primary key default gen_random_uuid(),
+  job_key varchar(255) not null unique,
+  symbol varchar(32) not null,
+  timeframe varchar(16) not null,
+  bar_time timestamptz not null,
+  closed_at timestamptz not null,
+  source varchar(32) not null,
+  status varchar(32) not null default 'running',
+  attempts integer not null default 1,
+  signal_count integer not null default 0,
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (source in ('realtime', 'reconciliation')),
+  check (status in ('running', 'succeeded', 'failed'))
+);
+
+create index if not exists idx_close_evaluations_status_time
+  on strategy_close_evaluations(status, closed_at);
+
+create index if not exists idx_close_evaluations_symbol_time
+  on strategy_close_evaluations(symbol, timeframe, bar_time desc);
+
 create table if not exists scheduled_tasks (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references users(id),
@@ -297,7 +328,8 @@ create table if not exists audit_logs (
 );
 
 alter table watchlists add column if not exists enabled boolean not null default true;
-alter table watchlists add column if not exists timeframes text[] not null default array['5m', '15m', '1h', '4h'];
+alter table watchlists add column if not exists timeframes text[] not null default array['5m', '15m', '30m', '1h', '4h'];
+alter table watchlists alter column timeframes set default array['5m', '15m', '30m', '1h', '4h'];
 alter table watchlists add column if not exists min_score integer not null default 65;
 alter table watchlists add column if not exists signal_scope varchar(32) not null default 'all';
 alter table watchlists add column if not exists push_enabled boolean not null default true;
@@ -311,12 +343,17 @@ alter table signal_events add column if not exists reason text;
 alter table signal_events add column if not exists engine varchar(120);
 alter table signal_events add column if not exists bar_time timestamptz;
 alter table signal_events add column if not exists detected_at timestamptz not null default now();
+alter table signal_events add column if not exists strategy_version varchar(120) not null default 'legacy-v0';
+alter table signal_events add column if not exists is_formal boolean not null default false;
 
 alter table alert_deliveries add column if not exists signal_event_id uuid;
 alter table alert_deliveries add column if not exists timeframe varchar(16);
 alter table alert_deliveries add column if not exists signal_type varchar(120);
 alter table alert_deliveries add column if not exists skip_reason text;
 alter table alert_deliveries add column if not exists sent_at timestamptz;
+alter table alert_deliveries add column if not exists retry_count integer not null default 0;
+alter table alert_deliveries add column if not exists next_retry_at timestamptz;
+alter table alert_deliveries add column if not exists last_attempt_at timestamptz;
 
 
 alter table plans add column if not exists max_watchlist_symbols integer not null default 5;
@@ -341,11 +378,16 @@ alter table signal_performance add column if not exists updated_at timestamptz n
 
 create index if not exists idx_signal_events_symbol_time on signal_events(symbol, emitted_at desc);
 create index if not exists idx_signal_events_symbol_tf_time on signal_events(symbol, timeframe, emitted_at desc);
+create index if not exists idx_signal_events_formal_time on signal_events(is_formal, timeframe, emitted_at desc);
 create index if not exists idx_user_signal_inbox_user_time on user_signal_inbox(user_id, created_at desc);
 create index if not exists idx_market_snapshots_symbol_time on market_snapshots(symbol, captured_at desc);
 create index if not exists idx_strategy_runs_symbol_time on strategy_runs(symbol, started_at desc);
 create index if not exists idx_alert_deliveries_user_time on alert_deliveries(user_id, created_at desc);
 create unique index if not exists idx_alert_deliveries_user_signal_channel on alert_deliveries(user_id, signal_event_id, channel) where signal_event_id is not null;
+drop index if exists idx_alert_deliveries_retry;
+create index idx_alert_deliveries_retry
+  on alert_deliveries(status, next_retry_at)
+  where status in ('pending', 'failed', 'sending');
 create index if not exists idx_billing_orders_user_time on billing_orders(user_id, created_at desc);
 
 

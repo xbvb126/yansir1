@@ -50,7 +50,11 @@ async function verifyDatabase(client) {
     ["feishu_bindings", "select count(*)::int as count from feishu_bindings"],
     ["alert_rules", "select count(*)::int as count from alert_rules"],
     ["alert_deliveries", "select count(*)::int as count from alert_deliveries"],
-    ["signals", "select count(*)::int as count from signals"]
+    ["signals", "select count(*)::int as count from signals"],
+    ["signal_events", "select count(*)::int as count from signal_events"],
+    ["user_signal_inbox", "select count(*)::int as count from user_signal_inbox"],
+    ["signal_performance", "select count(*)::int as count from signal_performance"],
+    ["strategy_close_evaluations", "select count(*)::int as count from strategy_close_evaluations"]
   ];
 
   const result = {};

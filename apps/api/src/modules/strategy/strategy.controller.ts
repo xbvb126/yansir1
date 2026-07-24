@@ -57,6 +57,11 @@ export class StrategyController {
     return this.strategyService.getUserSignalInbox(authorization || userId, query);
   }
 
+  @Get("signals")
+  getSignals(@Query() query: Record<string, string | string[] | undefined>, @Headers("authorization") authorization?: string, @Headers("x-radar-user-id") userId?: string) {
+    return this.strategyService.getGlobalSignalEvents(authorization || userId, query);
+  }
+
   @Get("public-signals")
   getPublicSignals(@Query() query: Record<string, string | string[] | undefined>) {
     return this.strategyService.getPublicDelayedSignals(query);
@@ -65,6 +70,11 @@ export class StrategyController {
   @Get("public-performance-summary")
   getPublicPerformanceSummary() {
     return this.strategyService.getPublicPerformanceSummary();
+  }
+
+  @Get("scan/global/status")
+  getGlobalScanStatus() {
+    return this.strategyService.getGlobalScanStatus();
   }
 
   @Post("scan/schedule/start")
@@ -95,6 +105,11 @@ export class StrategyController {
   @Get("realtime/status")
   getRealtimeStatus() {
     return this.strategyService.getRealtimeStatus();
+  }
+
+  @Get("formal/status")
+  getFormalSignalStatus() {
+    return this.strategyService.getFormalSignalStatus();
   }
 
   @Get("performance/status")

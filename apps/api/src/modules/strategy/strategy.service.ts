@@ -1,12 +1,27 @@
-import { BadRequestException, Injectable, OnModuleInit } from "@nestjs/common";
+import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { WebSocket as WsWebSocket } from "ws";
 import { AlertsService } from "../alerts/alerts.service";
-import { DatabaseService } from "../database/database.service";
+import { DatabaseService, DatabaseTransaction } from "../database/database.service";
 import { MarketService } from "../market/market.service";
-import { Candle } from "../market/market.types";
+import { Candle, MarketKlinesResult } from "../market/market.types";
 import { SignalsService } from "../signals/signals.service";
 import { UserEntitlements } from "../users/entitlements";
 import { UsersService } from "../users/users.service";
 import { AlertDirection, AlertRuleDto } from "./dto/alert-rule.dto";
+import { AlignedGlobalScanner } from "./aligned-global-scanner";
+import { CloseEvaluationRepository, type CloseEvaluationReservation } from "./close-evaluation.repository";
+import { FormalSignalJob, formalSignalJobFromClosedKline, formalSignalJobKey } from "./closed-candle-job";
+import { FormalSignalQueue } from "./formal-signal-queue";
+import { FormalSignalReconciler } from "./formal-signal-reconciler";
+import { FormalDeliveryRetry, type FormalDeliveryRetryCandidate } from "./formal-delivery-retry";
+import { FormalAsyncWorkQueue } from "./formal-async-work-queue";
+import {
+  FORMAL_STRATEGY_VERSION,
+  PUBLIC_FORMAL_SIGNAL_DELAY_HOURS,
+  PUBLIC_FORMAL_SIGNAL_HISTORY_DAYS,
+  PUBLIC_FORMAL_SIGNAL_TIMEFRAMES
+} from "./formal-signal-policy";
+import { GlobalScanSlot } from "./global-scan-schedule";
 import {
   StrategyRunPayload,
   StrategyRealtimePayload,
@@ -17,12 +32,14 @@ import {
 } from "./strategy.client";
 
 const DEFAULT_SCAN_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "TONUSDT", "TRXUSDT", "DOTUSDT", "BCHUSDT", "LTCUSDT", "UNIUSDT", "ARBUSDT", "OPUSDT", "APTUSDT", "SUIUSDT", "FILUSDT"];
-const DEFAULT_STRATEGY_TIMEFRAMES = ["5m", "15m", "1h", "4h"];
+const DEFAULT_STRATEGY_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"];
 const MAX_SCAN_SYMBOLS = 600;
-const MAX_SCAN_TIMEFRAMES = 4;
+const MAX_SCAN_TIMEFRAMES = 5;
 const DEFAULT_SCHEDULE_INTERVAL_SECONDS = 300;
 const MIN_SCHEDULE_INTERVAL_SECONDS = 30;
 const MAX_SCHEDULE_INTERVAL_SECONDS = 86400;
+const DEFAULT_REALTIME_STREAM_URL = "wss://data-stream.binance.vision/stream";
+const PERFORMANCE_CANDLE_MS = 5 * 60_000;
 const PUBLIC_LEDGER_ELIGIBILITY = [
   "se.direction in ('long', 'short')",
   "coalesce(se.signal_type, '') <> 'market_observation'"
@@ -89,6 +106,32 @@ type RealtimeState = {
   recentSignals: ScanResult[];
 };
 
+export type FormalSignalExecution = {
+  status: "completed" | "duplicate" | "failed";
+  job: FormalSignalJob;
+  signalCount: number;
+  error?: string;
+};
+
+type FormalPipelineState = {
+  latestSuccessfulCalculationAt: string | null;
+  latestPersistenceAt: string | null;
+  latestMatchedAt: string | null;
+  latestPersistenceFailureAt: string | null;
+  recentSuccesses: number;
+  recentFailures: number;
+  recentTimedOut: number;
+  recentReconciled: number;
+  latestFailure: { at: string; key: string; error: string } | null;
+};
+
+type FormalOutcome = {
+  at: number;
+  outcome: "succeeded" | "failed";
+  source: FormalSignalJob["source"];
+  timedOut: boolean;
+};
+
 type BinanceKlineEvent = {
   stream?: string;
   data?: {
@@ -111,6 +154,20 @@ type RuntimeWebSocket = {
   onmessage: ((event: { data: unknown }) => void) | null;
   close: () => void;
 };
+type RuntimeWebSocketConstructor = new (url: string) => RuntimeWebSocket;
+
+export function resolveRuntimeWebSocketCtor(): RuntimeWebSocketConstructor | undefined {
+  const GlobalWebSocket = (globalThis as unknown as { WebSocket?: RuntimeWebSocketConstructor }).WebSocket;
+  return GlobalWebSocket ?? (WsWebSocket as unknown as RuntimeWebSocketConstructor);
+}
+
+export function normalizeRealtimeSymbols(symbols?: string[]) {
+  return normalizeScanSymbols(symbols);
+}
+
+export function buildRealtimeStreamUrl(streams: string[], baseUrl = process.env.BINANCE_REALTIME_STREAM_URL || DEFAULT_REALTIME_STREAM_URL) {
+  return `${baseUrl}?streams=${streams.join("/")}`;
+}
 
 type AlertRuleRow = {
   symbols: string[];
@@ -137,6 +194,7 @@ type WatchlistRow = {
 
 type SignalEventRow = {
   id: string;
+  dedupe_key: string;
   symbol: string;
   timeframe: string;
   direction: AlertDirection;
@@ -146,6 +204,9 @@ type SignalEventRow = {
   engine: string | null;
   price: string;
   score: number;
+  bar_time?: Date | string | null;
+  strategy_version?: string;
+  is_formal?: boolean;
   emitted_at: Date | string;
   payload: Record<string, unknown> | string | null;
   performance_entry_price: string | null;
@@ -232,19 +293,64 @@ type PerformanceState = {
   lastError: string | null;
 };
 
+type DeliveryPreparation = {
+  candidate: ReturnType<typeof eventToAlertCandidate>;
+  providerTarget: {
+    userId: string;
+    webhookUrl: string;
+  };
+  entitlements: UserEntitlements;
+  pushSetting: UserPushSettingRow;
+  rule: Required<AlertRuleDto>;
+  dailyLimit: number;
+  cooldownMinutes: number;
+};
+
+type MarketDataLoadOptions = {
+  strictClosedAt?: Date;
+  cache?: Map<string, Promise<MarketKlinesResult>>;
+  expectedFormalJob?: ExpectedFormalBar;
+  formalErrorCode?: string;
+};
+
+type ExpectedFormalBar = {
+  symbol: string;
+  timeframe: string;
+  klineOpenTime: number;
+};
+
 @Injectable()
-export class StrategyService implements OnModuleInit {
+export class StrategyService implements OnModuleInit, OnModuleDestroy {
   private lastScan: ScanResult | null = null;
   private alertRule: Required<AlertRuleDto> = DEFAULT_ALERT_RULE;
   private alertRuleByUserId = new Map<string, Required<AlertRuleDto>>();
   private lastAlertAtByKey = new Map<string, number>();
   private scheduleTimer: ReturnType<typeof setInterval> | null = null;
   private performanceTimer: ReturnType<typeof setInterval> | null = null;
+  private realtimeStartupTimer: ReturnType<typeof setTimeout> | null = null;
+  private performanceStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private realtimeSockets: RuntimeWebSocket[] = [];
+  private readonly openRealtimeSockets = new Set<RuntimeWebSocket>();
   private realtimeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly realtimeBusyKeys = new Set<string>();
-  private realtimeQueue: Array<{ symbol: string; timeframe: string; klineOpenTime: number }> = [];
-  private realtimeWorkers = 0;
+  private formalSignalQueue: FormalSignalQueue;
+  private readonly formalMatchQueue: FormalAsyncWorkQueue;
+  private readonly formalDeliveryQueue: FormalAsyncWorkQueue;
+  private readonly formalSignalReconciler: FormalSignalReconciler;
+  private readonly formalDeliveryRetry: FormalDeliveryRetry;
+  private formalPipeline: FormalPipelineState = {
+    latestSuccessfulCalculationAt: null,
+    latestPersistenceAt: null,
+    latestMatchedAt: null,
+    latestPersistenceFailureAt: null,
+    recentSuccesses: 0,
+    recentFailures: 0,
+    recentTimedOut: 0,
+    recentReconciled: 0,
+    latestFailure: null
+  };
+  private formalOutcomeHistory: FormalOutcome[] = [];
+  private readonly userDeliveryTails = new Map<string, Promise<void>>();
+  private destroyed = false;
   private realtime: RealtimeState = {
     enabled: false,
     symbols: [],
@@ -281,6 +387,7 @@ export class StrategyService implements OnModuleInit {
     lastResult: null,
     lastError: null
   };
+  private readonly globalScanner: AlignedGlobalScanner;
 
   constructor(
     private readonly strategyClient: StrategyClient,
@@ -288,11 +395,45 @@ export class StrategyService implements OnModuleInit {
     private readonly signalsService: SignalsService,
     private readonly alertsService: AlertsService,
     private readonly usersService: UsersService,
-    private readonly database: DatabaseService
-  ) {}
+    private readonly database: DatabaseService,
+    private readonly closeEvaluations: CloseEvaluationRepository
+  ) {
+    this.globalScanner = new AlignedGlobalScanner({
+      now: () => new Date(),
+      setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+      executeSlot: (slot) => this.runGlobalScanSlot(slot)
+    });
+    this.formalSignalQueue = this.createFormalSignalQueue();
+    this.formalMatchQueue = new FormalAsyncWorkQueue({
+      capacity: process.env.STRATEGY_FORMAL_MATCH_QUEUE_CAPACITY,
+      concurrency: process.env.STRATEGY_FORMAL_MATCH_CONCURRENCY
+    });
+    this.formalDeliveryQueue = new FormalAsyncWorkQueue({
+      capacity: process.env.STRATEGY_FORMAL_DELIVERY_QUEUE_CAPACITY,
+      concurrency: process.env.STRATEGY_FORMAL_DELIVERY_CONCURRENCY
+    });
+    this.formalSignalReconciler = new FormalSignalReconciler({
+      targets: async () => ({
+        symbols: await this.resolveGlobalScanSymbols(),
+        timeframes: DEFAULT_STRATEGY_TIMEFRAMES.map((timeframe) => timeframe as FormalSignalJob["timeframe"])
+      }),
+      closeEvaluations: this.closeEvaluations,
+      enqueue: (job) => this.formalSignalQueue.enqueue(job)
+    });
+    this.formalDeliveryRetry = new FormalDeliveryRetry({
+      database: this.database,
+      retryDelivery: (candidate) => this.retryFormalDelivery(candidate)
+    });
+  }
 
   onModuleInit() {
-    setTimeout(() => {
+    if (process.env.STRATEGY_GLOBAL_SCAN_ENABLED === "true") this.globalScanner.start();
+    this.formalDeliveryRetry.start();
+
+    this.realtimeStartupTimer = setTimeout(() => {
+      this.realtimeStartupTimer = null;
+      if (this.destroyed) return;
       this.startRealtimeTracking({
         timeframes: DEFAULT_STRATEGY_TIMEFRAMES,
         minScore: DEFAULT_ALERT_RULE.minScore,
@@ -304,10 +445,14 @@ export class StrategyService implements OnModuleInit {
           enabled: false,
           lastError: (error as Error).message
         };
+      }).finally(() => {
+        if (!this.destroyed) this.formalSignalReconciler.start();
       });
     }, 1000);
 
-    setTimeout(() => {
+    this.performanceStartupTimer = setTimeout(() => {
+      this.performanceStartupTimer = null;
+      if (this.destroyed) return;
       this.startPerformanceUpdater({ runImmediately: true }).catch((error: unknown) => {
         this.performance = {
           ...this.performance,
@@ -319,11 +464,124 @@ export class StrategyService implements OnModuleInit {
     }, 4000);
   }
 
+  onModuleDestroy() {
+    this.destroyed = true;
+    if (this.realtimeStartupTimer) {
+      clearTimeout(this.realtimeStartupTimer);
+      this.realtimeStartupTimer = null;
+    }
+    if (this.performanceStartupTimer) {
+      clearTimeout(this.performanceStartupTimer);
+      this.performanceStartupTimer = null;
+    }
+    this.closeRealtimeSocket(false);
+    this.globalScanner.stop();
+    this.formalSignalReconciler.stop();
+    this.formalSignalQueue.stop();
+    this.formalMatchQueue.stop();
+    this.formalDeliveryQueue.stop();
+    this.formalDeliveryRetry.stop();
+  }
+
+  getGlobalScanStatus() {
+    return {
+      scanner: this.globalScanner.getStatus(),
+      reconciliation: this.formalSignalReconciler.getStatus(),
+      deliveryRetry: this.formalDeliveryRetry.getStatus()
+    };
+  }
+
+  private async runGlobalScanSlot(slot: GlobalScanSlot) {
+    const symbols = await this.resolveGlobalScanSymbols();
+    const marketDataCaches = new Map<string, Map<string, Promise<MarketKlinesResult>>>();
+    const remainingJobsBySymbol = new Map(symbols.map((symbol) => [symbol, slot.timeframes.length]));
+    const jobs = symbols.flatMap((symbol) => slot.timeframes.map((timeframe) => {
+      const klineOpenTime = slot.closedAt.getTime() - timeframeDurationMs(timeframe);
+      return {
+        key: formalSignalJobKey(symbol, timeframe as FormalSignalJob["timeframe"], klineOpenTime),
+        symbol,
+        timeframe: timeframe as FormalSignalJob["timeframe"],
+        klineOpenTime,
+        closedAt: slot.closedAt,
+        enqueuedAt: slot.runAt,
+        source: "reconciliation" as const
+      } satisfies FormalSignalJob;
+    }));
+    const outcomes = await mapWithConcurrency(jobs, globalScanJobConcurrency(slot.timeframes.length), async (job) => {
+      const { symbol, timeframe } = job;
+      let marketDataCache = marketDataCaches.get(symbol);
+      if (!marketDataCache) {
+        marketDataCache = new Map<string, Promise<MarketKlinesResult>>();
+        marketDataCaches.set(symbol, marketDataCache);
+      }
+      try {
+        const execution = await this.executeFormalSignalJob(
+          job,
+          () => undefined,
+          marketDataCache,
+          "unexpected_global_scan_bar_time",
+          true
+        );
+        if (execution.status === "failed") throw new Error(execution.error ?? "formal_global_scan_failed");
+        return { ok: true, matchedSignals: execution.signalCount } as const;
+      } catch (error) {
+        return { ok: false, error: `${symbol}:${timeframe}: ${(error as Error).message}` } as const;
+      } finally {
+        const remainingJobs = (remainingJobsBySymbol.get(symbol) ?? 1) - 1;
+        if (remainingJobs <= 0) {
+          marketDataCache.clear();
+          marketDataCaches.delete(symbol);
+          remainingJobsBySymbol.delete(symbol);
+        } else {
+          remainingJobsBySymbol.set(symbol, remainingJobs);
+        }
+      }
+    });
+    const failedSymbols = new Set<string>();
+    const errors: string[] = [];
+    let matchedSignals = 0;
+
+    outcomes.forEach((outcome, index) => {
+      if (outcome.ok) {
+        matchedSignals += outcome.matchedSignals;
+        return;
+      }
+      failedSymbols.add(jobs[index].symbol);
+      if (errors.length < 8) errors.push(outcome.error);
+    });
+
+    return {
+      scannedSymbols: symbols.length,
+      matchedSignals,
+      failedSymbols: failedSymbols.size,
+      errors
+    };
+  }
+
   async runStrategy(payload: StrategyRunPayload, userId?: string) {
     if (userId !== undefined) await this.assertApiAccess(userId);
-    const enrichedPayload = await this.withMarketData(payload);
+    return this.executeStrategy(payload);
+  }
+
+  private async executeStrategy(
+    payload: StrategyRunPayload,
+    marketDataOptions?: MarketDataLoadOptions,
+    onCalculationComplete?: () => void
+  ) {
+    const enrichedPayload = await this.withMarketData(payload, marketDataOptions);
     const result = await this.strategyClient.runStrategy(enrichedPayload);
-    const persistence = await this.signalsService.saveStrategySignals(mapStrategySignals(result));
+    if (marketDataOptions?.strictClosedAt) {
+      assertExpectedFormalBarTime(
+        result,
+        marketDataOptions.expectedFormalJob ?? {
+          symbol: payload.symbol,
+          timeframe: payload.timeframe ?? "5m",
+          klineOpenTime: marketDataOptions.strictClosedAt.getTime() - timeframeDurationMs(payload.timeframe ?? "5m")
+        },
+        marketDataOptions.formalErrorCode
+      );
+    }
+    onCalculationComplete?.();
 
     return {
       result,
@@ -331,8 +589,178 @@ export class StrategyService implements OnModuleInit {
         source: enrichedPayload.market_data_source ?? "request",
         candles: enrichedPayload.candles?.length ?? 0
       },
-      persistence
+      persistence: {
+        persisted: false,
+        count: 0
+      }
     };
+  }
+
+  private async executeFormalSignalJob(
+    job: FormalSignalJob,
+    reportPersistence: (completedAt: Date) => void = () => undefined,
+    marketDataCache = new Map<string, Promise<MarketKlinesResult>>(),
+    formalErrorCode = "unexpected_formal_bar_time",
+    retryTransientTransport = false
+  ): Promise<FormalSignalExecution> {
+    let reservation: CloseEvaluationReservation | null = null;
+    let calculationCompleted = false;
+    let persistenceCompleted = false;
+
+    try {
+      reservation = await this.closeEvaluations.reserve(job);
+      if (!reservation) return { status: "duplicate", job, signalCount: 0 };
+      const onCalculationComplete = () => {
+        calculationCompleted = true;
+        this.formalPipeline = {
+          ...this.formalPipeline,
+          latestSuccessfulCalculationAt: new Date().toISOString()
+        };
+      };
+      const calculate = () => withPromiseTimeout(
+        this.executeStrategy(
+          { symbol: job.symbol, timeframe: job.timeframe, limit: 180 },
+          {
+            strictClosedAt: job.closedAt,
+            cache: marketDataCache,
+            expectedFormalJob: job,
+            formalErrorCode
+          },
+          onCalculationComplete
+        ),
+        formalStrategyTimeoutMs(),
+        `formal_strategy_timeout:${job.key}`
+      );
+      let run;
+      try {
+        run = await calculate();
+      } catch (error) {
+        if (!retryTransientTransport || !isTransientGlobalScanTransportError(error)) throw error;
+        marketDataCache.clear();
+        run = await calculate();
+      }
+      assertExpectedFormalBarTime(run.result, job, formalErrorCode);
+      const formalSignals = mapFormalStrategySignals(run.result, job);
+      if (formalSignals.length) {
+        const persistence = await this.signalsService.saveStrategySignals(formalSignals, { strict: true });
+        if (!persistence.persisted) throw new Error("signal_persistence_unavailable");
+        if (persistence.count !== formalSignals.length) {
+          throw new Error(
+            `signal_persistence_incomplete:expected=${formalSignals.length}:actual=${persistence.count}`
+          );
+        }
+      }
+      const persistenceCompletedAt = new Date();
+      reportPersistence(persistenceCompletedAt);
+      this.formalPipeline = {
+        ...this.formalPipeline,
+        latestPersistenceAt: persistenceCompletedAt.toISOString()
+      };
+      persistenceCompleted = true;
+
+      const dedupeKeys = formalSignals.map((signal) => signal.dedupeKey);
+      const matchOutcome = this.formalMatchQueue.enqueue({
+        key: job.key,
+        closedAt: job.closedAt,
+        enqueuedAt: new Date(),
+        execute: () => this.finishFormalMatching(job, reservation!.id, dedupeKeys)
+      });
+      if (matchOutcome === "pressure") {
+        throw new Error(`formal_match_queue_${matchOutcome}:${job.key}`);
+      }
+      return { status: "completed", job, signalCount: formalSignals.length };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (reservation) {
+        try {
+          await this.closeEvaluations.fail(reservation.id, message, new Date());
+        } catch {
+          // The original execution failure remains the observable failure; reconciliation retries the ledger write.
+        }
+      }
+      this.recordFormalFailure(job, message, calculationCompleted && !persistenceCompleted);
+      return { status: "failed", job, signalCount: 0, error: message };
+    }
+  }
+
+  private async finishFormalMatching(
+    job: FormalSignalJob,
+    reservationId: string,
+    dedupeKeys: string[]
+  ) {
+    try {
+      const events = await this.loadSignalEventsForKeys(dedupeKeys, true);
+      await this.matchSignalEventsToUsers(events, {
+        source: job.source,
+        closedAt: job.closedAt
+      });
+      const matchedAt = new Date();
+      await this.closeEvaluations.complete(reservationId, events.length, matchedAt);
+      this.formalPipeline = {
+        ...this.formalPipeline,
+        latestMatchedAt: matchedAt.toISOString()
+      };
+      this.recordFormalSuccess(job, events.length);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await this.closeEvaluations.fail(reservationId, message, new Date());
+      } catch {
+        // The match queue exposes the original failure; stale running rows remain reconcilable.
+      }
+      this.recordFormalFailure(job, message);
+      throw error;
+    }
+  }
+
+  private recordFormalSuccess(job: FormalSignalJob, signalCount: number) {
+    this.formalOutcomeHistory.push({
+      at: Date.now(),
+      outcome: "succeeded",
+      source: job.source,
+      timedOut: false
+    });
+    this.formalPipeline = {
+      ...this.formalPipeline,
+      recentSuccesses: Math.min(1_000, this.formalPipeline.recentSuccesses + 1),
+      recentReconciled: job.source === "reconciliation"
+        ? Math.min(1_000, this.formalPipeline.recentReconciled + 1)
+        : this.formalPipeline.recentReconciled
+    };
+    if (job.source === "realtime" && signalCount) {
+      this.realtime = {
+        ...this.realtime,
+        lastSignalAt: new Date().toISOString()
+      };
+    }
+  }
+
+  private recordFormalFailure(job: FormalSignalJob, error: string, persistenceFailure = false) {
+    const at = new Date().toISOString();
+    this.formalOutcomeHistory.push({
+      at: Date.now(),
+      outcome: "failed",
+      source: job.source,
+      timedOut: error.startsWith("formal_strategy_timeout:")
+    });
+    this.formalPipeline = {
+      ...this.formalPipeline,
+      recentFailures: Math.min(1_000, this.formalPipeline.recentFailures + 1),
+      recentTimedOut: error.startsWith("formal_strategy_timeout:")
+        ? Math.min(1_000, this.formalPipeline.recentTimedOut + 1)
+        : this.formalPipeline.recentTimedOut,
+      latestPersistenceFailureAt: persistenceFailure ? at : this.formalPipeline.latestPersistenceFailureAt,
+      latestFailure: { at, key: job.key, error }
+    };
+    if (job.source === "realtime") this.realtime = { ...this.realtime, lastError: error };
+  }
+
+  private createFormalSignalQueue() {
+    return new FormalSignalQueue({
+      execute: (job, reportPersistence) => this.executeFormalSignalJob(job, reportPersistence),
+      onPressure: (job) => this.recordFormalFailure(job, "formal_queue_pressure"),
+      onFailure: (job, error) => this.recordFormalFailure(job, error.message)
+    });
   }
 
   async scanSymbols(payload: StrategyScanPayload = {}, userId?: string) {
@@ -592,11 +1020,15 @@ export class StrategyService implements OnModuleInit {
     }
 
     const params: Array<string | string[] | AlertDirection[] | number | Date> = [currentUserId];
-    const where = ["inbox.user_id = $1::uuid"];
+    const where = ["inbox.user_id = $1::uuid", "se.is_formal = true"];
     params.push(entitlements.allowedTimeframes);
     where.push(`se.timeframe = any($${params.length}::varchar[])`);
-    if (entitlements.historyDays > 0) {
-      params.push(entitlements.historyDays);
+    if (entitlements.formalSignalAccess === "delayed" && entitlements.formalSignalDelayHours > 0) {
+      params.push(entitlements.formalSignalDelayHours);
+      where.push(`se.emitted_at <= now() - ($${params.length}::integer * interval '1 hour')`);
+    }
+    if (entitlements.formalSignalHistoryDays > 0) {
+      params.push(entitlements.formalSignalHistoryDays);
       where.push(`se.emitted_at >= now() - ($${params.length}::integer * interval '1 day')`);
     }
     if (mode === "current") {
@@ -703,9 +1135,124 @@ export class StrategyService implements OnModuleInit {
     };
   }
 
+  async getGlobalSignalEvents(userId?: string, query: PublicSignalsQuery = {}) {
+    const entitlements = (await this.usersService.getCurrentEntitlements(userId)).entitlements;
+    const filters = normalizePublicSignalsQuery(query);
+    if (!this.database.enabled) {
+      return {
+        signals: [],
+        source: "global_signal_events",
+        mode: "global",
+        access: signalAccessSummary(entitlements),
+        filters: publicSignalFiltersResponse(filters),
+        pagination: publicSignalPagination(filters, 0)
+      };
+    }
+
+    const where: string[] = ["se.is_formal = true"];
+    const params: Array<string[] | AlertDirection[] | number | Date> = [];
+    if (entitlements.allowedTimeframes.length) {
+      params.push(entitlements.allowedTimeframes);
+      where.push(`se.timeframe = any($${params.length}::varchar[])`);
+    }
+    if (entitlements.formalSignalAccess === "delayed" && entitlements.formalSignalDelayHours > 0) {
+      params.push(entitlements.formalSignalDelayHours);
+      where.push(`se.emitted_at <= now() - ($${params.length}::integer * interval '1 hour')`);
+    }
+    if (entitlements.formalSignalHistoryDays > 0) {
+      params.push(entitlements.formalSignalHistoryDays);
+      where.push(`se.emitted_at >= now() - ($${params.length}::integer * interval '1 day')`);
+    }
+    if (filters.symbols.length) {
+      params.push(filters.symbols);
+      where.push(`se.symbol = any($${params.length}::varchar[])`);
+    }
+    if (filters.timeframes.length) {
+      params.push(filters.timeframes);
+      where.push(`se.timeframe = any($${params.length}::varchar[])`);
+    }
+    if (filters.directions.length) {
+      params.push(filters.directions);
+      where.push(`se.direction = any($${params.length}::varchar[])`);
+    }
+    if (filters.signalTypes.length) {
+      params.push(filters.signalTypes);
+      where.push(`se.signal_type = any($${params.length}::varchar[])`);
+    }
+    if (filters.minScore !== null) {
+      params.push(filters.minScore);
+      where.push(`se.score >= $${params.length}::integer`);
+    }
+    if (filters.from) {
+      params.push(filters.from);
+      where.push(`se.emitted_at >= $${params.length}::timestamptz`);
+    }
+    if (filters.to) {
+      params.push(filters.to);
+      where.push(`se.emitted_at <= $${params.length}::timestamptz`);
+    }
+
+    const whereSql = where.length ? `where ${where.join(" and ")}` : "";
+    const countRows = await this.database.query<SignalEventCountRow>(
+      `select count(*)::text as total_count from signal_events se ${whereSql}`,
+      params
+    );
+    const total = Number(countRows[0]?.total_count ?? 0);
+    const rows = await this.database.query<SignalEventRow>(
+      `
+        select
+          se.id::text,
+          se.symbol,
+          se.timeframe,
+          se.direction,
+          se.signal_type,
+          se.title,
+          se.reason,
+          se.engine,
+          se.price::text,
+          se.score,
+          se.emitted_at,
+          se.payload,
+          sp.entry_price::text as performance_entry_price,
+          sp.price_15m::text as performance_price_15m,
+          sp.price_1h::text as performance_price_1h,
+          sp.price_4h::text as performance_price_4h,
+          sp.price_24h::text as performance_price_24h,
+          sp.return_5m::text as performance_return_5m,
+          sp.return_15m::text as performance_return_15m,
+          sp.return_1h::text as performance_return_1h,
+          sp.return_4h::text as performance_return_4h,
+          sp.return_24h::text as performance_return_24h,
+          coalesce(sp.max_favorable_pct, sp.max_favorable_excursion)::text as performance_max_favorable_pct,
+          coalesce(sp.max_adverse_pct, sp.max_adverse_excursion)::text as performance_max_adverse_pct,
+          sp.outcome_status as performance_outcome_status,
+          sp.evaluated_until as performance_evaluated_until,
+          sp.updated_at as performance_updated_at
+        from signal_events se
+        left join signal_performance sp on sp.signal_event_id = se.id
+        ${whereSql}
+        order by se.emitted_at desc, se.id desc
+        limit $${params.length + 1}::integer
+        offset $${params.length + 2}::integer
+      `,
+      [...params, filters.limit, filters.offset]
+    );
+
+    return {
+      signals: rows.map((row) => mapSignalEventRow(row, entitlements.signalOutcomes)),
+      source: "global_signal_events",
+      mode: "global",
+      delayHours: entitlements.formalSignalDelayHours,
+      historyDays: entitlements.formalSignalHistoryDays,
+      access: signalAccessSummary(entitlements),
+      filters: publicSignalFiltersResponse(filters),
+      pagination: publicSignalPagination(filters, total)
+    };
+  }
+
   async getPublicDelayedSignals(query: PublicSignalsQuery = {}) {
-    const delayHours = 8;
-    const historyDays = 7;
+    const delayHours = PUBLIC_FORMAL_SIGNAL_DELAY_HOURS;
+    const historyDays = PUBLIC_FORMAL_SIGNAL_HISTORY_DAYS;
     const filters = normalizePublicSignalsQuery(query);
     if (!this.database.enabled) {
       return {
@@ -715,6 +1262,9 @@ export class StrategyService implements OnModuleInit {
         historyDays,
         access: {
           plan: "Guest",
+          formalSignalAccess: "delayed",
+          formalSignalDelayHours: delayHours,
+          formalSignalHistoryDays: historyDays,
           realtimeDelayHours: delayHours,
           historyDays,
           signalOutcomes: false,
@@ -729,6 +1279,8 @@ export class StrategyService implements OnModuleInit {
     const where = [
       "se.emitted_at <= now() - interval '8 hours'",
       "se.emitted_at >= now() - interval '7 days'",
+      `se.timeframe = '${PUBLIC_FORMAL_SIGNAL_TIMEFRAMES[0]}'`,
+      "se.is_formal = true",
       ...PUBLIC_LEDGER_ELIGIBILITY
     ];
     const params: Array<string[] | AlertDirection[] | number | Date> = [];
@@ -813,6 +1365,9 @@ export class StrategyService implements OnModuleInit {
       historyDays,
       access: {
         plan: "Guest",
+        formalSignalAccess: "delayed",
+        formalSignalDelayHours: delayHours,
+        formalSignalHistoryDays: historyDays,
         realtimeDelayHours: delayHours,
         historyDays,
         signalOutcomes: false,
@@ -847,6 +1402,8 @@ export class StrategyService implements OnModuleInit {
       left join signal_performance sp on sp.signal_event_id = se.id
       where se.emitted_at <= now() - interval '8 hours'
         and se.emitted_at >= now() - interval '7 days'
+        and se.timeframe = '${PUBLIC_FORMAL_SIGNAL_TIMEFRAMES[0]}'
+        and se.is_formal = true
         and ${PUBLIC_LEDGER_ELIGIBILITY.join("\n        and ")}
     `);
     return {
@@ -876,10 +1433,10 @@ export class StrategyService implements OnModuleInit {
       lastError: null
     };
     this.performanceTimer = setInterval(() => {
-      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) });
+      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) }).catch(() => undefined);
     }, intervalSeconds * 1000);
     if (payload.runImmediately !== false) {
-      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) });
+      void this.runPerformanceBackfill({ limit: Number(process.env.STRATEGY_PERFORMANCE_BATCH_SIZE || 80) }).catch(() => undefined);
     }
     return this.getPerformanceStatus();
   }
@@ -923,32 +1480,44 @@ export class StrategyService implements OnModuleInit {
     }
 
     this.performance = { ...this.performance, running: true, lastError: null };
-    const events = await this.loadPerformanceBackfillEvents(limit);
-    const summary: PerformanceRunSummary = { startedAt, finishedAt: startedAt, requestedLimit: limit, picked: events.length, updated: 0, skipped: 0, failed: 0, errors: [] };
-    for (const event of events) {
-      try {
-        const result = await this.updateSignalPerformance(event);
-        if (result.updated) summary.updated += 1;
-        else summary.skipped += 1;
-      } catch (error) {
-        summary.failed += 1;
-        if (summary.errors.length < 8) summary.errors.push(`${event.symbol} ${event.timeframe}: ${(error as Error).message}`);
+    try {
+      const events = await this.loadPerformanceBackfillEvents(limit);
+      const summary: PerformanceRunSummary = { startedAt, finishedAt: startedAt, requestedLimit: limit, picked: events.length, updated: 0, skipped: 0, failed: 0, errors: [] };
+      for (const event of events) {
+        try {
+          const result = await this.updateSignalPerformance(event);
+          if (result.updated) summary.updated += 1;
+          else summary.skipped += 1;
+        } catch (error) {
+          summary.failed += 1;
+          if (summary.errors.length < 8) summary.errors.push(`${event.symbol} ${event.timeframe}: ${(error as Error).message}`);
+        }
       }
+      summary.finishedAt = new Date().toISOString();
+      this.performance = {
+        ...this.performance,
+        running: false,
+        lastRunAt: summary.finishedAt,
+        nextRunAt: this.performance.enabled ? nextRunAt(this.performance.intervalSeconds) : null,
+        lastResult: summary,
+        lastError: summary.failed ? summary.errors[0] ?? "performance_backfill_failed" : null
+      };
+      return summary;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.performance = {
+        ...this.performance,
+        running: false,
+        lastRunAt: new Date().toISOString(),
+        nextRunAt: this.performance.enabled ? nextRunAt(this.performance.intervalSeconds) : null,
+        lastError: message
+      };
+      throw error;
     }
-    summary.finishedAt = new Date().toISOString();
-    this.performance = {
-      ...this.performance,
-      running: false,
-      lastRunAt: summary.finishedAt,
-      nextRunAt: this.performance.enabled ? nextRunAt(this.performance.intervalSeconds) : null,
-      lastResult: summary,
-      lastError: summary.failed ? summary.errors[0] ?? "performance_backfill_failed" : null
-    };
-    return summary;
   }
 
   private async loadPerformanceBackfillEvents(limit: number) {
-    return this.database.query<PerformanceEventRow>(
+    return this.database.queryStrict<PerformanceEventRow>(
       `
         select
           se.id::text,
@@ -960,7 +1529,8 @@ export class StrategyService implements OnModuleInit {
           se.bar_time
         from signal_events se
         left join signal_performance sp on sp.signal_event_id = se.id
-        where se.emitted_at <= now() - interval '5 minutes'
+        where se.is_formal = true
+          and se.emitted_at <= now() - interval '5 minutes'
           and (
             sp.signal_event_id is null
             or sp.outcome_status in ('pending', 'partial')
@@ -977,7 +1547,7 @@ export class StrategyService implements OnModuleInit {
 
   private async updateSignalPerformance(event: PerformanceEventRow) {
     const entryPrice = Number(event.price);
-    const signalTime = event.bar_time ? new Date(event.bar_time).getTime() : new Date(event.emitted_at).getTime();
+    const signalTime = new Date(event.emitted_at).getTime();
     if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(signalTime)) return { updated: false };
     const now = Date.now();
     const startTime = Math.max(0, signalTime - 5 * 60 * 1000);
@@ -987,7 +1557,7 @@ export class StrategyService implements OnModuleInit {
     const candles = klines.candles.filter((candle) => (candle.close_time ?? candle.open_time) >= signalTime).sort((left, right) => left.open_time - right.open_time);
     if (!candles.length || klines.source === "fixture") return { updated: false };
     const metrics = calculateSignalPerformance(event, entryPrice, signalTime, candles, now);
-    await this.database.query(
+    await this.database.queryStrict(
       `
         insert into signal_performance (
           signal_event_id,
@@ -1150,6 +1720,8 @@ export class StrategyService implements OnModuleInit {
     if (userId) await this.assertApiAccess(userId);
     this.stopTimer();
     this.closeRealtimeSocket(false);
+    this.formalSignalQueue.stop();
+    this.formalSignalQueue = this.createFormalSignalQueue();
 
     const entitlements = (await this.usersService.getCurrentEntitlements(userId)).entitlements;
     const rule = normalizeAlertRule({ ...(await this.currentAlertRule(userId)), ...payload });
@@ -1188,23 +1760,36 @@ export class StrategyService implements OnModuleInit {
       enabled: false,
       connected: false
     };
+    this.formalSignalQueue.stop();
     this.closeRealtimeSocket(false);
     return this.getRealtimeStatus();
   }
 
   getRealtimeStatus() {
+    const recent = this.recentFormalOutcomes();
     return {
       realtime: {
         ...this.realtime,
-        socketActive: this.realtimeSockets.length > 0,
+        socketActive: this.hasOpenRealtimeSocket(),
         recentSignals: this.realtime.recentSignals.slice(0, 20)
+      },
+      formalPipeline: {
+        queue: this.formalSignalQueue.getStatus(),
+        matchQueue: this.formalMatchQueue.getStatus(),
+        deliveryQueue: this.formalDeliveryQueue.getStatus(),
+        latestSuccessfulCalculationAt: this.formalPipeline.latestSuccessfulCalculationAt,
+        latestPersistenceAt: this.formalPipeline.latestPersistenceAt,
+        latestMatchedAt: this.formalPipeline.latestMatchedAt,
+        recentSuccesses: recent.succeeded,
+        recentFailures: recent.failed,
+        latestFailure: this.formalPipeline.latestFailure ? { ...this.formalPipeline.latestFailure } : null
       }
     };
   }
 
   private openRealtimeSocket() {
     if (!this.realtime.enabled || !this.realtime.symbols.length || !this.realtime.timeframes.length) return;
-    const WebSocketCtor = (globalThis as unknown as { WebSocket?: new (url: string) => RuntimeWebSocket }).WebSocket;
+    const WebSocketCtor = resolveRuntimeWebSocketCtor();
     if (!WebSocketCtor) {
       this.realtime = { ...this.realtime, lastError: "当前 Node 运行时不支持 WebSocket。" };
       return;
@@ -1218,17 +1803,24 @@ export class StrategyService implements OnModuleInit {
     // 实际策略计算仍在 runStrategy() 中拉取 Binance Futures K线数据。
     const streamChunks = chunkArray(streams, 180);
     this.realtimeSockets = streamChunks.map((chunk) => {
-      const url = `wss://stream.binance.com:9443/stream?streams=${chunk.join("/")}`;
+      const url = buildRealtimeStreamUrl(chunk);
       const socket = new WebSocketCtor(url);
       socket.onopen = () => {
-        this.realtime = { ...this.realtime, connected: true, lastError: null };
+        this.openRealtimeSockets.add(socket);
+        this.realtime = { ...this.realtime, connected: this.hasOpenRealtimeSocket(), lastError: null };
       };
       socket.onerror = (event: unknown) => {
-        this.realtime = { ...this.realtime, lastError: `实时行情连接错误：${String(event)}` };
+        this.openRealtimeSockets.delete(socket);
+        this.realtime = {
+          ...this.realtime,
+          connected: this.hasOpenRealtimeSocket(),
+          lastError: `实时行情连接错误：${String(event)}`
+        };
       };
       socket.onclose = () => {
         this.realtimeSockets = this.realtimeSockets.filter((item) => item !== socket);
-        this.realtime = { ...this.realtime, connected: this.realtimeSockets.length > 0 };
+        this.openRealtimeSockets.delete(socket);
+        this.realtime = { ...this.realtime, connected: this.hasOpenRealtimeSocket() };
         if (this.realtime.enabled && !this.realtimeReconnectTimer) {
           this.realtimeReconnectTimer = setTimeout(() => {
             this.realtimeReconnectTimer = null;
@@ -1252,12 +1844,94 @@ export class StrategyService implements OnModuleInit {
     }
     const sockets = this.realtimeSockets;
     this.realtimeSockets = [];
+    this.openRealtimeSockets.clear();
+    this.realtime = { ...this.realtime, connected: false };
     for (const socket of sockets) {
       if (!scheduleReconnect) socket.onclose = null;
       socket.close();
     }
-    this.realtimeQueue = [];
-    this.realtimeWorkers = 0;
+  }
+
+  async getFormalSignalStatus() {
+    const database = await this.database.health();
+    const queue = this.formalSignalQueue.getStatus();
+    const matchQueue = this.formalMatchQueue.getStatus();
+    const deliveryQueue = this.formalDeliveryQueue.getStatus();
+    const reconciliation = this.formalSignalReconciler.getStatus();
+    const deliveryRetry = this.formalDeliveryRetry.getStatus();
+    const realtime = {
+      enabled: this.realtime.enabled,
+      connected: this.hasOpenRealtimeSocket(),
+      lastClosedEventAt: this.realtime.lastEventAt
+    };
+    const recent = this.recentFormalOutcomes();
+    const reasons = [
+      database.mode === "mock" || !database.connected ? "database_unavailable" : null,
+      !realtime.enabled ? "realtime_disabled" : null,
+      !realtime.connected ? "realtime_disconnected" : null,
+      !reconciliation.enabled ? "reconciliation_disabled" : null,
+      reconciliation.lastError ? "reconciliation_error" : null,
+      !deliveryRetry.enabled ? "delivery_retry_disabled" : null,
+      deliveryRetry.lastError ? "delivery_retry_error" : null,
+      queue.oldestInFlightAt && Date.now() - new Date(queue.oldestInFlightAt).getTime() > 60_000 ? "queue_latency_exceeded" : null,
+      queue.pressureActive ? "queue_pressure" : null,
+      matchQueue.oldestInFlightAt && Date.now() - new Date(matchQueue.oldestInFlightAt).getTime() > 60_000 ? "match_queue_latency_exceeded" : null,
+      matchQueue.pressureActive ? "match_queue_pressure" : null,
+      matchQueue.latestFailure && (
+        !matchQueue.latestCompletedAt
+        || new Date(matchQueue.latestFailure.at).getTime() > new Date(matchQueue.latestCompletedAt).getTime()
+      ) ? "matching_failed" : null,
+      deliveryQueue.oldestInFlightAt && Date.now() - new Date(deliveryQueue.oldestInFlightAt).getTime() > 60_000 ? "delivery_queue_latency_exceeded" : null,
+      deliveryQueue.pressureActive ? "delivery_queue_pressure" : null,
+      this.hasNewerPersistenceFailure() ? "persistence_failed" : null
+    ].filter((reason): reason is string => Boolean(reason));
+
+    return {
+      ready: reasons.length === 0,
+      reason: reasons[0] ?? null,
+      realtime,
+      queue,
+      matchQueue,
+      deliveryQueue,
+      reconciliation,
+      latestCalculationAt: this.formalPipeline.latestSuccessfulCalculationAt,
+      latestPersistenceAt: this.formalPipeline.latestPersistenceAt,
+      latestMatchedAt: this.formalPipeline.latestMatchedAt,
+      recent: {
+        succeeded: recent.succeeded,
+        failed: recent.failed,
+        timedOut: recent.timedOut,
+        reconciled: recent.reconciled
+      },
+      deliveryRetry
+    };
+  }
+
+  private recentFormalOutcomes() {
+    const cutoff = Date.now() - 15 * 60_000;
+    this.formalOutcomeHistory = this.formalOutcomeHistory.filter((outcome) => outcome.at >= cutoff);
+    return {
+      succeeded: this.formalOutcomeHistory.filter((outcome) => outcome.outcome === "succeeded").length,
+      failed: this.formalOutcomeHistory.filter((outcome) => outcome.outcome === "failed").length,
+      timedOut: this.formalOutcomeHistory.filter((outcome) => outcome.timedOut).length,
+      reconciled: this.formalOutcomeHistory.filter(
+        (outcome) => outcome.outcome === "succeeded" && outcome.source === "reconciliation"
+      ).length
+    };
+  }
+
+  private hasNewerPersistenceFailure() {
+    const failedAt = this.formalPipeline.latestPersistenceFailureAt;
+    if (!failedAt) return false;
+    const persistedAt = this.formalPipeline.latestPersistenceAt;
+    return !persistedAt || new Date(failedAt).getTime() > new Date(persistedAt).getTime();
+  }
+
+  private hasOpenRealtimeSocket() {
+    for (const socket of this.openRealtimeSockets) {
+      if (this.realtimeSockets.includes(socket)) return true;
+    }
+    return false;
   }
 
   private handleRealtimeMessage(raw: unknown) {
@@ -1268,73 +1942,20 @@ export class StrategyService implements OnModuleInit {
       return;
     }
     const kline = event.data?.k;
-    if (!kline?.x || !kline.s || !kline.i) return;
-    const symbol = kline.s.toUpperCase();
-    const timeframe = fromBinanceInterval(kline.i);
+    if (!kline?.s || !kline.i) return;
+    let job: FormalSignalJob | null;
+    try {
+      job = formalSignalJobFromClosedKline(kline);
+    } catch (error) {
+      this.realtime = { ...this.realtime, lastError: error instanceof Error ? error.message : String(error) };
+      return;
+    }
+    if (!job) return;
+    const { symbol, timeframe } = job;
     if (!this.realtime.symbols.includes(symbol) || !this.realtime.timeframes.includes(timeframe)) return;
 
-    const busyKey = `${symbol}:${timeframe}:${kline.t}`;
-    if (this.realtimeBusyKeys.has(busyKey)) return;
-    this.realtimeBusyKeys.add(busyKey);
-    this.realtimeQueue.push({ symbol, timeframe, klineOpenTime: kline.t });
     this.realtime = { ...this.realtime, lastEventAt: new Date().toISOString() };
-    this.drainRealtimeQueue();
-  }
-
-  private drainRealtimeQueue() {
-    const maxWorkers = Math.max(1, Math.min(Number(process.env.STRATEGY_REALTIME_CONCURRENCY || 8), 24));
-    while (this.realtime.enabled && this.realtimeWorkers < maxWorkers && this.realtimeQueue.length) {
-      const job = this.realtimeQueue.shift();
-      if (!job) return;
-      this.realtimeWorkers += 1;
-      void this.processRealtimeKline(job.symbol, job.timeframe, job.klineOpenTime)
-        .finally(() => {
-          this.realtimeWorkers = Math.max(0, this.realtimeWorkers - 1);
-          this.realtimeBusyKeys.delete(`${job.symbol}:${job.timeframe}:${job.klineOpenTime}`);
-          this.drainRealtimeQueue();
-        });
-    }
-  }
-
-  private async processRealtimeKline(symbol: string, timeframe: string, klineOpenTime: number) {
-    try {
-      const run = await this.runStrategy({ symbol, timeframe, limit: 180 });
-      const item: ScanItem = {
-        symbol,
-        ok: true,
-        signalCount: run.result.signals.length,
-        marketData: run.marketData,
-        persistence: run.persistence,
-        result: run.result
-      };
-      const scan = buildSingleScan(symbol, timeframe, item);
-      if (run.result.signals.length) {
-        this.lastScan = scan;
-        const events = await this.loadSignalEventsForResult(run.result);
-        await this.matchSignalEventsToUsers(events);
-        this.realtime = {
-          ...this.realtime,
-          lastSignalAt: new Date().toISOString(),
-          recentSignals: [scan, ...this.realtime.recentSignals].slice(0, 80)
-        };
-      }
-    } catch (error) {
-      this.realtime = { ...this.realtime, lastError: (error as Error).message };
-    }
-  }
-
-  private async deliverRealtimeAlerts(scan: ScanResult) {
-    const currentUserId = await this.currentUserId(this.realtime.payload.userId);
-    const entitlements = (await this.usersService.getCurrentEntitlements(currentUserId)).entitlements;
-    const rule = normalizeAlertRule({ ...(await this.currentAlertRule(currentUserId)), ...this.realtime.payload });
-    const minScore = Math.max(rule.minScore, entitlements.minAlertScore);
-    const candidates = extractAlertCandidates(scan, minScore).filter((signal) => rule.directions.includes(signal.direction));
-    const deliverableCandidates = filterCooldownCandidates(candidates, rule, this.lastAlertAtByKey, currentUserId);
-    if (!entitlements.feishuAlerts || !deliverableCandidates.length) return;
-    for (const candidate of deliverableCandidates) {
-      await this.alertsService.sendFeishu(candidate, currentUserId);
-      this.lastAlertAtByKey.set(alertCooldownKey(candidate, currentUserId), Date.now());
-    }
+    this.formalSignalQueue.enqueue(job);
   }
 
   private async runScheduledScan() {
@@ -1380,8 +2001,26 @@ export class StrategyService implements OnModuleInit {
     }
   }
 
+  private async resolveGlobalScanSymbols() {
+    const configured = configuredFormalSymbols();
+    if (configured.length) return configured;
+    let discovered: string[];
+    try {
+      discovered = await this.marketService.getStrictRealtimeKlineTriggerSymbols();
+    } catch {
+      throw new Error("global_scan_symbols_unavailable");
+    }
+    if (!discovered.length) throw new Error("global_scan_symbols_unavailable");
+
+    const symbols = normalizeScanSymbols(discovered).slice(0, MAX_SCAN_SYMBOLS);
+    if (!symbols.length) throw new Error("global_scan_symbols_unavailable");
+    return symbols;
+  }
+
   private async resolveRealtimeSymbols(payload: StrategyRealtimePayload, rule: Required<AlertRuleDto>) {
     if (payload.symbols?.length) return normalizeScanSymbols(payload.symbols).slice(0, MAX_SCAN_SYMBOLS);
+    const configured = configuredFormalSymbols();
+    if (configured.length) return configured;
     try {
       const binanceSymbols = await this.marketService.getRealtimeKlineTriggerSymbols();
       if (binanceSymbols.length) return normalizeScanSymbols(binanceSymbols).slice(0, MAX_SCAN_SYMBOLS);
@@ -1398,14 +2037,18 @@ export class StrategyService implements OnModuleInit {
     return normalizeScanSymbols(rule.symbols?.length ? rule.symbols : DEFAULT_SCAN_SYMBOLS).slice(0, MAX_SCAN_SYMBOLS);
   }
 
-  private async loadSignalEventsForResult(result: StrategyRunResult) {
-    if (!this.database.enabled || !result.signals.length) return [];
-    const dedupeKeys = mapStrategySignals(result).map((signal) => signal.dedupeKey);
+  private async loadSignalEventsForKeys(rawDedupeKeys: string[], strict = false) {
+    if (!rawDedupeKeys.length) return [];
+    if (!this.database.enabled) {
+      if (strict) throw new Error("signal_event_lookup_incomplete:database_unavailable");
+      return [];
+    }
+    const dedupeKeys = Array.from(new Set(rawDedupeKeys));
     if (!dedupeKeys.length) return [];
-    return this.database.query<SignalEventRow>(
-      `
+    const sql = `
         select
           id::text,
+          dedupe_key,
           symbol,
           timeframe,
           direction,
@@ -1415,20 +2058,39 @@ export class StrategyService implements OnModuleInit {
           engine,
           price::text,
           score,
+          bar_time,
+          strategy_version,
+          is_formal,
           emitted_at,
           payload
         from signal_events
         where dedupe_key = any($1::varchar[])
+          and is_formal = true
         order by emitted_at desc
-      `,
-      [dedupeKeys]
-    );
+      `;
+    const rows = strict
+      ? await this.database.queryStrict<SignalEventRow>(sql, [dedupeKeys])
+      : await this.database.query<SignalEventRow>(sql, [dedupeKeys]);
+
+    if (strict) {
+      const persistedKeys = new Set(rows.map((row) => row.dedupe_key));
+      const found = dedupeKeys.filter((dedupeKey) => persistedKeys.has(dedupeKey)).length;
+      if (found !== dedupeKeys.length) {
+        throw new Error(`signal_event_lookup_incomplete:expected=${dedupeKeys.length}:actual=${found}`);
+      }
+    }
+
+    return rows;
   }
 
-  private async matchSignalEventsToUsers(events: SignalEventRow[]) {
+  private async matchSignalEventsToUsers(
+    events: SignalEventRow[],
+    context: Pick<FormalSignalJob, "source" | "closedAt">
+  ) {
     if (!this.database.enabled || !events.length) return;
+    const entitlementsByUser = new Map<string, UserEntitlements>();
     for (const event of events) {
-      const watchlists = await this.database.query<WatchlistRow>(
+      const watchlists = await this.database.queryStrict<WatchlistRow>(
         `
           select
             id::text,
@@ -1451,11 +2113,19 @@ export class StrategyService implements OnModuleInit {
         [event.symbol, event.timeframe, Number(event.score)]
       );
       for (const watchlist of watchlists.filter((item) => signalScopeMatches(item.signal_scope, event.signal_type))) {
-        await this.database.query(
+        let entitlements = entitlementsByUser.get(watchlist.user_id);
+        if (!entitlements) {
+          entitlements = (await this.usersService.getFormalEntitlementsById(watchlist.user_id)).entitlements;
+          entitlementsByUser.set(watchlist.user_id, entitlements);
+        }
+        if (!entitlements.allowedTimeframes.includes(event.timeframe)) continue;
+
+        await this.database.queryStrict<{ id: string }>(
           `
             insert into user_signal_inbox (user_id, signal_event_id, symbol, timeframe, side, score, matched_rule)
             values ($1, $2, $3, $4, $5, $6, $7::jsonb)
             on conflict (user_id, signal_event_id) do nothing
+            returning id::text
           `,
           [
             watchlist.user_id,
@@ -1473,77 +2143,308 @@ export class StrategyService implements OnModuleInit {
             })
           ]
         );
-        await this.deliverInboxSignal(event, watchlist);
+        if (context.source === "reconciliation" && Date.now() - context.closedAt.getTime() > reconciliationPushMaxAgeMs()) {
+          await this.recordSkippedDelivery(event, watchlist.user_id, "reconciliation_too_old");
+          continue;
+        }
+        await this.enqueueInitialDelivery(event, watchlist, context.closedAt);
       }
     }
   }
 
-  private async deliverInboxSignal(event: SignalEventRow, watchlist: WatchlistRow) {
-    const channel = "feishu";
-    if (!watchlist.push_enabled) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled");
-      return;
-    }
+  private async enqueueInitialDelivery(event: SignalEventRow, watchlist: WatchlistRow, closedAt: Date) {
+    const pending = await this.ensurePendingDelivery(event, watchlist.user_id);
+    if (!pending) return;
+    const key = `${watchlist.user_id}:${event.id}:feishu`;
+    const outcome = this.formalDeliveryQueue.enqueue({
+      key,
+      closedAt,
+      enqueuedAt: new Date(),
+      execute: async () => {
+        try {
+          await this.deliverInboxSignal(event, watchlist);
+        } catch (error) {
+          await this.recordFailedDelivery(
+            event,
+            watchlist.user_id,
+            `initial_delivery_failed:${error instanceof Error ? error.message : String(error)}`
+          );
+          throw error;
+        }
+      }
+    });
+    // A pressure-rejected job remains durable as pending so the retry worker can claim it.
+    if (outcome === "pressure") return;
+  }
 
-    const entitlements = (await this.usersService.getCurrentEntitlements(watchlist.user_id)).entitlements;
-    if (!entitlements.feishuAlerts) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "plan_or_feishu_disabled");
-      return;
-    }
+  private async ensurePendingDelivery(event: SignalEventRow, userId: string) {
+    const rows = await this.database.queryStrict<{ id: string; status: string }>(
+      `
+        insert into alert_deliveries (
+          user_id, signal_event_id, channel, symbol, timeframe, direction,
+          signal_type, score, title, status, payload
+        )
+        values (
+          $1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar,
+          $6::varchar, $7::integer, $8::varchar, 'pending', $9::jsonb
+        )
+        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
+          status = alert_deliveries.status
+        where alert_deliveries.status = 'pending'
+        returning id::text, status
+      `,
+      [
+        userId,
+        event.id,
+        event.symbol,
+        event.timeframe,
+        event.direction,
+        event.signal_type,
+        Number(event.score),
+        event.title,
+        JSON.stringify(event.payload ?? {})
+      ]
+    );
+    return rows[0]?.status === "pending";
+  }
 
-    const pushSetting = await this.loadUserPushSetting(watchlist.user_id, channel);
-    if (!pushSetting.enabled) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "push_setting_disabled");
-      return;
-    }
-    if (!pushSetting.target_encrypted && !pushSetting.binding_webhook_url && !pushSetting.target_masked) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "push_target_missing");
-      return;
-    }
+  private async recordFailedDelivery(event: SignalEventRow, userId: string, reason: string) {
+    await this.database.queryStrict(
+      `
+        insert into alert_deliveries (
+          user_id, signal_event_id, channel, symbol, timeframe, direction,
+          signal_type, score, title, status, reason, payload, next_retry_at
+        )
+        values (
+          $1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar,
+          $6::varchar, $7::integer, $8::varchar, 'failed', $9::text, $10::jsonb, now()
+        )
+        on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
+          status = 'failed',
+          reason = excluded.reason,
+          next_retry_at = now()
+        where alert_deliveries.status = 'pending'
+      `,
+      [
+        userId,
+        event.id,
+        event.symbol,
+        event.timeframe,
+        event.direction,
+        event.signal_type,
+        Number(event.score),
+        event.title,
+        reason,
+        JSON.stringify(event.payload ?? {})
+      ]
+    );
+  }
 
-    const rule = await this.currentAlertRule(watchlist.user_id);
-    const minScore = Math.max(rule.minScore, entitlements.minAlertScore, Number(pushSetting.min_score || 0));
-    if (!rule.directions.includes(event.direction) || Number(event.score) < minScore) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "below_push_setting_or_plan");
-      return;
-    }
-
-    const dailyLimit = Math.max(0, Number(entitlements.maxPushPerDay || 0));
-    if (!dailyLimit) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_not_allowed");
-      return;
-    }
-    const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel);
-    if (sentToday >= dailyLimit) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_limit");
-      return;
-    }
-
-    const cooldownMinutes = Math.max(0, Number(pushSetting.cooldown_minutes || rule.cooldownMinutes || 0));
-    const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes);
-    if (inDbCooldown) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "db_cooldown");
-      return;
-    }
-
-    const candidate = eventToAlertCandidate(event);
-    const cooldownRule = { ...rule, cooldownMinutes };
-    const deliverable = filterCooldownCandidates([candidate], cooldownRule, this.lastAlertAtByKey, watchlist.user_id);
-    if (!deliverable.length) {
-      await this.recordSkippedDelivery(event, watchlist.user_id, "memory_cooldown");
-      return;
-    }
-
-    const result = await this.alertsService.sendFeishu(candidate, watchlist.user_id);
-    if (Boolean((result as { sent?: boolean }).sent)) {
-      await this.upsertDeliveryCooldown(event, watchlist.user_id, channel);
-      this.lastAlertAtByKey.set(alertCooldownKey(candidate, watchlist.user_id), Date.now());
+  private async retryFormalDelivery(candidate: FormalDeliveryRetryCandidate) {
+    const event: SignalEventRow = {
+      ...candidate.event,
+      performance_entry_price: null,
+      performance_price_15m: null,
+      performance_price_1h: null,
+      performance_price_4h: null,
+      performance_price_24h: null,
+      performance_return_5m: null,
+      performance_return_15m: null,
+      performance_return_1h: null,
+      performance_return_4h: null,
+      performance_return_24h: null,
+      performance_max_favorable_pct: null,
+      performance_max_adverse_pct: null,
+      performance_outcome_status: null,
+      performance_evaluated_until: null,
+      performance_updated_at: null
+    };
+    try {
+      return (await this.deliverInboxSignal(event, candidate.watchlist, true, true, candidate.deliveryId)) ?? { skipped: true };
+    } catch (error) {
+      const reason = `retry_preparation_failed:${error instanceof Error ? error.message : String(error)}`;
+      await this.finalizeReservedDelivery(event, candidate.userId, { sent: false, reason });
+      return { failed: true, reason };
     }
   }
 
-  private async recordSkippedDelivery(event: SignalEventRow, userId: string, reason: string) {
-    await this.database.query(
+  private async deliverInboxSignal(
+    event: SignalEventRow,
+    watchlist: WatchlistRow,
+    retry = false,
+    preclaimedRetry = false,
+    preclaimedDeliveryId?: string
+  ) {
+    if (!retry && this.database.enabled && !(await this.ensurePendingDelivery(event, watchlist.user_id))) return;
+    return this.withUserDeliveryLock(watchlist.user_id, async () => {
+      const preparation = await this.prepareDelivery(event, watchlist.user_id);
+      if (!this.database.enabled) {
+        await this.recordSkippedDelivery(event, watchlist.user_id, "database_unavailable");
+        return;
+      }
+
+      const reserved = await this.database.withAdvisoryTransaction(
+        `formal-delivery:${watchlist.user_id}`,
+        (transaction) => this.reserveDelivery(event, watchlist, preparation, transaction, retry, preclaimedRetry, preclaimedDeliveryId)
+      );
+      if (!reserved) return;
+
+      const timeoutMs = formalDeliveryTimeoutMs();
+      let result: { sent?: boolean; failed?: boolean; skipped?: boolean; status?: number; reason?: string };
+      try {
+        result = await withPromiseTimeout(
+          this.alertsService.sendFormalFeishu(preparation.candidate, preparation.providerTarget, { timeoutMs }),
+          timeoutMs,
+          `feishu_delivery_timeout:${timeoutMs}ms`
+        );
+      } catch (error) {
+        result = {
+          sent: false,
+          failed: true,
+          reason: (error as Error).message
+        };
+      }
+
+      await this.finalizeReservedDelivery(event, watchlist.user_id, result);
+      if (result.sent) {
+        this.lastAlertAtByKey.set(alertCooldownKey(preparation.candidate, watchlist.user_id), Date.now());
+      }
+      return result;
+    });
+  }
+
+  private async prepareDelivery(event: SignalEventRow, userId: string): Promise<DeliveryPreparation> {
+    const channel = "feishu";
+    const entitlements = (await this.usersService.getFormalEntitlementsById(userId)).entitlements;
+    const pushSetting = await this.loadUserPushSetting(userId, channel);
+    const rule = await this.currentFormalAlertRule(userId);
+    return {
+      candidate: eventToAlertCandidate(event),
+      providerTarget: {
+        userId,
+        webhookUrl: pushSetting.target_encrypted || pushSetting.binding_webhook_url || ""
+      },
+      entitlements,
+      pushSetting,
+      rule,
+      dailyLimit: Math.max(0, Number(entitlements.maxPushPerDay || 0)),
+      cooldownMinutes: Math.max(0, Number(pushSetting.cooldown_minutes || rule.cooldownMinutes || 0))
+    };
+  }
+
+  private async reserveDelivery(
+    event: SignalEventRow,
+    watchlist: WatchlistRow,
+    preparation: DeliveryPreparation,
+    transaction: DatabaseTransaction,
+    retry = false,
+    preclaimedRetry = false,
+    preclaimedDeliveryId?: string
+  ) {
+    const channel = "feishu";
+    if (!watchlist.enabled) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_disabled", transaction);
+      return false;
+    }
+
+    if (!watchlist.push_enabled) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "watchlist_push_disabled", transaction);
+      return false;
+    }
+
+    const { entitlements, pushSetting, rule, dailyLimit, cooldownMinutes, candidate } = preparation;
+    if (!entitlements.allowedTimeframes.includes(event.timeframe)) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "plan_timeframe_not_allowed", transaction);
+      return false;
+    }
+    if (!entitlements.feishuAlerts) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "plan_or_feishu_disabled", transaction);
+      return false;
+    }
+
+    if (!pushSetting.enabled) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "push_setting_disabled", transaction);
+      return false;
+    }
+    if (!pushSetting.target_encrypted && !pushSetting.binding_webhook_url && !pushSetting.target_masked) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "push_target_missing", transaction);
+      return false;
+    }
+
+    const minScore = Math.max(rule.minScore, entitlements.minAlertScore, Number(pushSetting.min_score || 0));
+    if (!rule.directions.includes(event.direction) || Number(event.score) < minScore) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "below_push_setting_or_plan", transaction);
+      return false;
+    }
+
+    if (!dailyLimit) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_not_allowed", transaction);
+      return false;
+    }
+    const excludeDeliveryId = preclaimedRetry ? preclaimedDeliveryId ?? null : null;
+    const sentToday = await this.countDailySentDeliveries(watchlist.user_id, channel, transaction, excludeDeliveryId);
+    if (sentToday >= dailyLimit) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "daily_push_limit", transaction);
+      return false;
+    }
+
+    const inDbCooldown = await this.isDeliveryInCooldown(event, watchlist.user_id, channel, cooldownMinutes, transaction, excludeDeliveryId);
+    if (inDbCooldown) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "db_cooldown", transaction);
+      return false;
+    }
+
+    const cooldownRule = { ...rule, cooldownMinutes };
+    const deliverable = filterCooldownCandidates([candidate], cooldownRule, this.lastAlertAtByKey, watchlist.user_id);
+    if (!deliverable.length) {
+      await this.recordSkippedDelivery(event, watchlist.user_id, "memory_cooldown", transaction);
+      return false;
+    }
+
+    if (preclaimedRetry) return true;
+
+    const claimed = await transaction.query<{ id: string }>(
       `
+        update alert_deliveries
+        set status = 'sending',
+            retry_count = retry_count + case when $4::boolean then 1 else 0 end,
+            last_attempt_at = now(),
+            next_retry_at = null,
+            reason = null,
+            skip_reason = null
+        where user_id = $1::uuid
+          and signal_event_id = $2::uuid
+          and channel = $3::varchar
+          and status = case when $4::boolean then 'failed' else 'pending' end
+          and (not $4::boolean or retry_count < 3)
+          and (not $4::boolean or coalesce(next_retry_at, now()) <= now())
+        returning id::text
+      `,
+      [watchlist.user_id, event.id, channel, retry]
+    );
+    return claimed.length === 1;
+  }
+
+  private async withUserDeliveryLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.userDeliveryTails.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.userDeliveryTails.set(userId, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.userDeliveryTails.get(userId) === tail) this.userDeliveryTails.delete(userId);
+    }
+  }
+
+  private async recordSkippedDelivery(event: SignalEventRow, userId: string, reason: string, transaction?: DatabaseTransaction) {
+    const sql = `
         insert into alert_deliveries (user_id, signal_event_id, channel, symbol, timeframe, direction, signal_type, score, title, status, reason, skip_reason, payload)
         values ($1::uuid, $2::uuid, 'feishu', $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::integer, $8::varchar, 'skipped', $9::text, $9::text, $10::jsonb)
         on conflict (user_id, signal_event_id, channel) where signal_event_id is not null do update set
@@ -1551,9 +2452,52 @@ export class StrategyService implements OnModuleInit {
           reason = case when alert_deliveries.status = 'sent' then alert_deliveries.reason else excluded.reason end,
           skip_reason = case when alert_deliveries.status = 'sent' then alert_deliveries.skip_reason else excluded.skip_reason end,
           payload = case when alert_deliveries.status = 'sent' then alert_deliveries.payload else excluded.payload end
-      `,
-      [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, reason, JSON.stringify(event.payload ?? {})]
-    );
+      `;
+    const params = [userId, event.id, event.symbol, event.timeframe, event.direction, event.signal_type, Number(event.score), event.title, reason, JSON.stringify(event.payload ?? {})];
+    if (transaction) await transaction.query(sql, params);
+    else await this.database.queryStrict(sql, params);
+  }
+
+  private async finalizeReservedDelivery(
+    event: SignalEventRow,
+    userId: string,
+    result: { sent?: boolean; status?: number; reason?: string }
+  ) {
+    const status = result.sent ? "sent" : "failed";
+    const reason = result.sent ? null : result.reason ?? "feishu_delivery_not_sent";
+    await this.database.withTransaction(async (transaction) => {
+      const updated = await transaction.query<{ id: string }>(
+        `
+          update alert_deliveries
+          set status = $4::varchar,
+              http_status = $5::integer,
+              reason = $6::text,
+              skip_reason = null,
+              payload = $7::jsonb,
+              sent_at = case when $4::varchar = 'sent' then now() else sent_at end,
+              last_attempt_at = now(),
+              next_retry_at = case
+                when $4::varchar = 'sent' then null
+                when retry_count = 0 then now() + interval '1 minute'
+                when retry_count = 1 then now() + interval '2 minutes'
+                when retry_count = 2 then now() + interval '4 minutes'
+                else null
+              end
+          where user_id = $1::uuid
+            and signal_event_id = $2::uuid
+            and channel = $3::varchar
+            and status = 'sending'
+          returning id::text
+        `,
+        [userId, event.id, "feishu", status, result.status ?? null, reason, JSON.stringify(event.payload ?? {})]
+      );
+      if (updated.length !== 1) {
+        throw new Error(`delivery_finalization_incomplete:${userId}:${event.id}`);
+      }
+      if (result.sent) {
+        await this.upsertDeliveryCooldown(event, userId, "feishu", transaction);
+      }
+    });
   }
 
   private async loadUserPushSetting(userId: string, channel: string) {
@@ -1568,7 +2512,7 @@ export class StrategyService implements OnModuleInit {
       } satisfies UserPushSettingRow;
     }
 
-    const rows = await this.database.query<UserPushSettingRow>(
+    const rows = await this.database.queryStrict<UserPushSettingRow>(
       `
         select
           coalesce(ups.enabled, false) as enabled,
@@ -1602,28 +2546,50 @@ export class StrategyService implements OnModuleInit {
     };
   }
 
-  private async countDailySentDeliveries(userId: string, channel: string) {
+  private async countDailySentDeliveries(userId: string, channel: string, transaction: DatabaseTransaction, excludeDeliveryId: string | null = null) {
     if (!this.database.enabled) return 0;
-    const rows = await this.database.query<{ sent_count: string | number }>(
+    const rows = await transaction.query<{ sent_count: string | number }>(
       `
         select count(*)::text as sent_count
         from alert_deliveries
         where user_id = $1::uuid
           and channel = $2::varchar
-          and status = 'sent'
+          and status in ('sending', 'sent')
+          and ($3::uuid is null or id <> $3::uuid)
           and coalesce(sent_at, created_at) >= date_trunc('day', now())
           and coalesce(sent_at, created_at) < date_trunc('day', now()) + interval '1 day'
       `,
-      [userId, channel]
+      [userId, channel, excludeDeliveryId]
     );
     return Number(rows[0]?.sent_count ?? 0);
   }
 
-  private async isDeliveryInCooldown(event: SignalEventRow, userId: string, channel: string, cooldownMinutes: number) {
+  private async isDeliveryInCooldown(
+    event: SignalEventRow,
+    userId: string,
+    channel: string,
+    cooldownMinutes: number,
+    transaction: DatabaseTransaction,
+    excludeDeliveryId: string | null = null
+  ) {
     if (!this.database.enabled || cooldownMinutes <= 0) return false;
-    const rows = await this.database.query<{ in_cooldown: boolean }>(
+    const rows = await transaction.query<{ in_cooldown: boolean }>(
       `
-        select exists (
+        select (
+          exists (
+            select 1
+            from alert_deliveries
+            where user_id = $1::uuid
+              and channel = $2::varchar
+              and symbol = $3::varchar
+              and timeframe = $4::varchar
+              and direction = $5::varchar
+              and coalesce(signal_type, 'unknown') = $6::varchar
+              and status in ('sending', 'sent')
+              and coalesce(sent_at, created_at) > now() - ($7::integer * interval '1 minute')
+              and ($8::uuid is null or id <> $8::uuid)
+          )
+          or exists (
           select 1
           from signal_delivery_cooldowns
           where user_id = $1::uuid
@@ -1633,16 +2599,17 @@ export class StrategyService implements OnModuleInit {
             and direction = $5::varchar
             and signal_type = $6::varchar
             and last_sent_at > now() - ($7::integer * interval '1 minute')
+          )
         ) as in_cooldown
       `,
-      [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown", cooldownMinutes]
+      [userId, channel, event.symbol, event.timeframe, event.direction, event.signal_type ?? "unknown", cooldownMinutes, excludeDeliveryId]
     );
     return Boolean(rows[0]?.in_cooldown);
   }
 
-  private async upsertDeliveryCooldown(event: SignalEventRow, userId: string, channel: string) {
+  private async upsertDeliveryCooldown(event: SignalEventRow, userId: string, channel: string, transaction: DatabaseTransaction) {
     if (!this.database.enabled) return;
-    await this.database.query(
+    await transaction.query(
       `
         insert into signal_delivery_cooldowns (user_id, channel, symbol, timeframe, direction, signal_type, last_sent_at)
         values ($1::uuid, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, now())
@@ -1715,8 +2682,9 @@ export class StrategyService implements OnModuleInit {
     }
   }
 
-  private async withMarketData(payload: StrategyRunPayload): Promise<StrategyRunPayload> {
+  private async withMarketData(payload: StrategyRunPayload, options?: MarketDataLoadOptions): Promise<StrategyRunPayload> {
     if (payload.candles?.length) {
+      if (options?.strictClosedAt) throw new Error("non_authoritative_market_data:request");
       return {
         ...payload,
         market_data_source: "request"
@@ -1728,22 +2696,41 @@ export class StrategyService implements OnModuleInit {
     const mtfTimeframe = payload.mtf_timeframe ?? "15m";
     const htfTimeframe = payload.htf_timeframe ?? "1h";
     const [klines, mtfKlines, htfKlines] = await Promise.all([
-      this.marketService.getKlines(payload.symbol, timeframe, limit),
-      this.marketService.getKlines(payload.symbol, mtfTimeframe, limit),
-      this.marketService.getKlines(payload.symbol, htfTimeframe, limit)
+      this.loadMarketKlines(payload.symbol, timeframe, limit, options),
+      this.loadMarketKlines(payload.symbol, mtfTimeframe, limit, options),
+      this.loadMarketKlines(payload.symbol, htfTimeframe, limit, options)
     ]);
+
+    const closedAt = options?.strictClosedAt;
+    const marketResults = closedAt
+      ? [klines, mtfKlines, htfKlines].map((result) => authoritativeClosedKlines(result, closedAt))
+      : [klines, mtfKlines, htfKlines];
+    const [baseResult, mtfResult, htfResult] = marketResults;
 
     return {
       ...payload,
-      symbol: klines.symbol,
-      timeframe: klines.timeframe,
-      mtf_timeframe: mtfKlines.timeframe,
-      htf_timeframe: htfKlines.timeframe,
-      candles: klines.candles,
-      mtf_candles: mtfKlines.candles,
-      htf_candles: htfKlines.candles,
-      market_data_source: klines.source
+      symbol: baseResult.symbol,
+      timeframe: baseResult.timeframe,
+      mtf_timeframe: mtfResult.timeframe,
+      htf_timeframe: htfResult.timeframe,
+      candles: baseResult.candles,
+      mtf_candles: mtfResult.candles,
+      htf_candles: htfResult.candles,
+      market_data_source: baseResult.source
     };
+  }
+
+  private loadMarketKlines(symbol: string, timeframe: string, limit: number, options?: MarketDataLoadOptions) {
+    if (!options?.strictClosedAt) return this.marketService.getKlines(symbol, timeframe, limit);
+
+    const endTime = options.strictClosedAt.getTime() - 1;
+    const cacheKey = `${normalizeOneSymbol(symbol)}:${timeframe}:${limit}:${endTime}`;
+    let request = options.cache?.get(cacheKey);
+    if (!request) {
+      request = this.marketService.getStrictKlinesBefore(symbol, timeframe, endTime, limit);
+      options.cache?.set(cacheKey, request);
+    }
+    return request;
   }
 
   private async currentAlertRule(userId?: string) {
@@ -1779,6 +2766,34 @@ export class StrategyService implements OnModuleInit {
     }
 
     return this.alertRuleByUserId.get(currentUserId) ?? DEFAULT_ALERT_RULE;
+  }
+
+  private async currentFormalAlertRule(userId: string) {
+    const rows = await this.database.queryStrict<AlertRuleRow>(
+      `
+        select
+          symbols,
+          timeframe,
+          min_score,
+          directions,
+          cooldown_minutes,
+          interval_seconds
+        from alert_rules
+        where user_id::text = $1 and name = 'default' and status = 'active'
+        limit 1
+      `,
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) throw new Error(`formal_alert_rule_not_found:${userId}`);
+    return normalizeAlertRule({
+      symbols: row.symbols,
+      timeframe: row.timeframe,
+      minScore: Number(row.min_score),
+      directions: row.directions,
+      cooldownMinutes: Number(row.cooldown_minutes),
+      intervalSeconds: Number(row.interval_seconds)
+    });
   }
 
   private async currentUserId(userId?: string) {
@@ -1924,7 +2939,12 @@ function calculateSignalPerformance(event: PerformanceEventRow, entryPrice: numb
 }
 
 function candleAtOrAfter(candles: Candle[], targetTime: number) {
-  return candles.find((candle) => (candle.close_time ?? candle.open_time) >= targetTime) ?? null;
+  return candles.find((candle) => {
+    const closeExclusive = candle.close_time !== undefined
+      ? candle.close_time + 1
+      : candle.open_time + PERFORMANCE_CANDLE_MS;
+    return closeExclusive >= targetTime;
+  }) ?? null;
 }
 
 function normalizePublicSignalsQuery(query: PublicSignalsQuery): NormalizedPublicSignalsQuery {
@@ -2178,7 +3198,8 @@ function normalizeScanSymbols(symbols?: string[]) {
   const normalized = source
     .map((symbol) => symbol.trim().toUpperCase())
     .filter(Boolean)
-    .map((symbol) => (symbol.endsWith("USDT") ? symbol : `${symbol}USDT`));
+    .map((symbol) => (symbol.endsWith("USDT") ? symbol : `${symbol}USDT`))
+    .filter((symbol) => /^[A-Z0-9]+USDT$/.test(symbol));
 
   return Array.from(new Set(normalized)).slice(0, MAX_SCAN_SYMBOLS);
 }
@@ -2247,9 +3268,118 @@ function nextRunAt(intervalSeconds: number) {
   return new Date(Date.now() + intervalSeconds * 1000).toISOString();
 }
 
-function mapStrategySignals(result: StrategyRunResult) {
-  const emittedAt = result.bar_time ? new Date(result.bar_time) : new Date();
+function authoritativeClosedKlines(result: MarketKlinesResult, closedAt: Date): MarketKlinesResult {
+  if (result.source !== "binance") {
+    throw new Error(`non_authoritative_market_data:${result.symbol}:${result.timeframe}:${result.source}`);
+  }
+  const cutoff = closedAt.getTime();
+  const duration = timeframeDurationMs(result.timeframe);
+  const candles = result.candles.filter((candle) => {
+    const closesAt = candle.close_time === undefined ? candle.open_time + duration : candle.close_time + 1;
+    return closesAt <= cutoff;
+  });
+  if (!candles.length) throw new Error(`authoritative_market_data_unavailable:${result.symbol}:${result.timeframe}`);
+  return { ...result, candles };
+}
 
+function assertExpectedFormalBarTime(
+  result: StrategyRunResult,
+  job: ExpectedFormalBar,
+  errorCode = "unexpected_formal_bar_time"
+) {
+  const expected = job.klineOpenTime;
+  const actual = Number(result.bar_time);
+  if (
+    !Number.isFinite(actual)
+    || actual !== expected
+    || result.timeframe !== job.timeframe
+    || result.symbol !== job.symbol
+  ) {
+    throw new Error(
+      `${errorCode}:${job.symbol}:${job.timeframe}:expected=${expected}:actual=${String(result.bar_time)}`
+    );
+  }
+}
+
+function configuredFormalSymbols() {
+  const configured = process.env.STRATEGY_FORMAL_SYMBOLS;
+  if (!configured?.trim()) return [];
+  return normalizeScanSymbols(configured.split(",")).slice(0, MAX_SCAN_SYMBOLS);
+}
+
+function timeframeDurationMs(timeframe: string) {
+  const match = /^(\d+)(m|h)$/.exec(String(timeframe).trim().toLowerCase());
+  if (!match) throw new Error(`unsupported_timeframe:${timeframe}`);
+  return Number(match[1]) * (match[2] === "h" ? 60 : 1) * 60 * 1000;
+}
+
+function globalScanConcurrency() {
+  const configured = Number(process.env.STRATEGY_GLOBAL_SCAN_CONCURRENCY || 8);
+  if (!Number.isFinite(configured)) return 8;
+  return Math.max(1, Math.min(Math.trunc(configured), 24));
+}
+
+function globalScanJobConcurrency(timeframeCount: number) {
+  return Math.min(globalScanConcurrency() * Math.max(1, timeframeCount), 48);
+}
+
+function isTransientGlobalScanTransportError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|authoritative_market_data_unavailable|Strategy service returned 5\d\d/i.test(message);
+}
+
+function formalDeliveryTimeoutMs() {
+  const configured = Number(process.env.STRATEGY_FEISHU_TIMEOUT_MS || 10_000);
+  if (!Number.isFinite(configured) || configured <= 0) return 10_000;
+  return Math.max(10, Math.min(Math.round(configured), 60_000));
+}
+
+function formalStrategyTimeoutMs() {
+  const configured = Number(process.env.STRATEGY_FORMAL_EXECUTION_TIMEOUT_MS || 55_000);
+  if (!Number.isFinite(configured) || configured <= 0) return 55_000;
+  return Math.max(1_000, Math.min(Math.round(configured), 60_000));
+}
+
+function reconciliationPushMaxAgeMs() {
+  const configured = Number(process.env.STRATEGY_RECONCILIATION_PUSH_MAX_AGE_MS || 300_000);
+  if (!Number.isFinite(configured) || configured < 0) return 300_000;
+  return Math.min(Math.round(configured), 86_400_000);
+}
+
+async function withPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  };
+
+  const workerCount = Math.min(items.length, Math.max(1, Math.trunc(concurrency)));
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
+
+function mapFormalStrategySignals(result: StrategyRunResult, job: FormalSignalJob) {
+  const barTime = new Date(Number(result.bar_time));
+  const emittedAt = new Date(job.closedAt);
   return result.signals.map((signal) => {
     const reducePct = signal.reduce_pct ?? (signal as { reducePct?: number | null }).reducePct ?? null;
 
@@ -2266,13 +3396,21 @@ function mapStrategySignals(result: StrategyRunResult) {
       dedupeKey: [
         result.symbol,
         result.timeframe,
-        result.bar_time ?? emittedAt.getTime(),
+        result.bar_time,
+        FORMAL_STRATEGY_VERSION,
         signal.type,
         signal.side,
         signal.action ?? signal.side
       ].join(":"),
+      barTime,
       emittedAt,
+      strategyVersion: FORMAL_STRATEGY_VERSION,
+      formal: true as const,
       payload: {
+        formal: true,
+        strategyVersion: FORMAL_STRATEGY_VERSION,
+        barTime: barTime.toISOString(),
+        closedAt: emittedAt.toISOString(),
         engine: signal.engine,
         action: signal.action ?? null,
         reducePct,
@@ -2359,8 +3497,11 @@ function signalAccessSummary(entitlements: UserEntitlements) {
   return {
     plan: entitlements.plan,
     allowedTimeframes: entitlements.allowedTimeframes,
-    historyDays: entitlements.historyDays,
-    realtimeDelayHours: entitlements.realtimeDelayHours,
+    formalSignalAccess: entitlements.formalSignalAccess,
+    formalSignalDelayHours: entitlements.formalSignalDelayHours,
+    formalSignalHistoryDays: entitlements.formalSignalHistoryDays,
+    historyDays: entitlements.formalSignalHistoryDays,
+    realtimeDelayHours: entitlements.formalSignalDelayHours,
     signalOutcomes: entitlements.signalOutcomes,
     performancePreviewOnly: !entitlements.signalOutcomes,
     lockedPerformanceFields: entitlements.signalOutcomes ? [] : ["4h", "24h", "maxFavorablePct", "maxAdversePct"]

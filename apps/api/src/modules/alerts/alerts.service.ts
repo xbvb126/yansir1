@@ -19,6 +19,16 @@ type AlertResult = {
   reason?: string;
 };
 
+type FeishuSendOptions = {
+  timeoutMs?: number;
+  persistDelivery?: boolean;
+};
+
+export type FormalFeishuTarget = {
+  userId: string;
+  webhookUrl: string;
+};
+
 type AlertHistoryRecord = {
   id: string;
   channel: "feishu";
@@ -54,7 +64,7 @@ type AlertDeliveryRow = {
   direction: FeishuAlertDto["direction"];
   score: number;
   title: string | null;
-  status: "sent" | "skipped" | "failed";
+  status: "sending" | "sent" | "skipped" | "failed";
   http_status: number | null;
   reason: string | null;
   created_at: Date | string;
@@ -210,7 +220,8 @@ export class AlertsService {
     };
   }
 
-  async sendFeishu(signal: FeishuAlertDto, userId?: string) {
+  async sendFeishu(signal: FeishuAlertDto, userId?: string, options: FeishuSendOptions = {}) {
+    const persistDelivery = options.persistDelivery !== false;
     const currentUserId = await this.currentUserId(userId);
     const entitlements = (await this.usersService.getCurrentEntitlements(currentUserId)).entitlements;
     if (!entitlements.feishuAlerts || entitlements.maxPushPerDay <= 0) {
@@ -219,7 +230,7 @@ export class AlertsService {
         reason: `当前套餐 ${entitlements.plan} 不支持实时飞书推送。`,
         signal
       };
-      await this.recordHistory(signal, result, buildFeishuPayload(signal), currentUserId);
+      await this.recordHistory(signal, result, buildFeishuPayload(signal), currentUserId, persistDelivery);
       return result;
     }
     if (this.database.enabled) {
@@ -242,7 +253,7 @@ export class AlertsService {
           reason: `今日推送次数已达套餐上限 ${entitlements.maxPushPerDay} 条。`,
           signal
         };
-        await this.recordHistory(signal, result, buildFeishuPayload(signal), currentUserId);
+        await this.recordHistory(signal, result, buildFeishuPayload(signal), currentUserId, persistDelivery);
         return result;
       }
     }
@@ -258,30 +269,78 @@ export class AlertsService {
         payload,
         config: (await this.getFeishuConfig(userId)).config
       };
-      await this.recordHistory(signal, result, payload, userId);
+      await this.recordHistory(signal, result, payload, userId, persistDelivery);
       return result;
     }
 
+    return this.sendResolvedFeishu(signal, currentUserId, webhookUrl, options);
+  }
+
+  async sendFormalFeishu(
+    signal: FeishuAlertDto,
+    target: FormalFeishuTarget,
+    options: Pick<FeishuSendOptions, "timeoutMs"> = {}
+  ) {
+    const exactUserId = String(target.userId || "").trim();
+    if (!exactUserId) throw new Error("formal_feishu_user_id_required");
+    const webhookUrl = String(target.webhookUrl || "").trim();
+    if (!webhookUrl) {
+      const payload = buildFeishuPayload(signal);
+      const result = {
+        sent: false,
+        failed: true,
+        reason: "formal_feishu_webhook_missing",
+        signal,
+        payload
+      };
+      await this.recordResolvedHistory(signal, result, payload, exactUserId, false);
+      return result;
+    }
+
+    return this.sendResolvedFeishu(signal, exactUserId, webhookUrl, {
+      timeoutMs: options.timeoutMs,
+      persistDelivery: false
+    });
+  }
+
+  private async sendResolvedFeishu(
+    signal: FeishuAlertDto,
+    exactUserId: string,
+    webhookUrl: string,
+    options: FeishuSendOptions
+  ) {
+    const payload = buildFeishuPayload(signal);
     let response: Response;
+    let responseText: string;
+    const timeoutMs = normalizeFeishuTimeoutMs(options.timeoutMs);
+    const controller = timeoutMs ? new AbortController() : null;
+    const timeout = timeoutMs
+      ? setTimeout(() => controller?.abort(), timeoutMs)
+      : null;
     try {
       response = await fetch(webhookUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller?.signal
       });
+      responseText = await response.text();
     } catch (error) {
       const result = {
         sent: false,
         failed: true,
-        reason: (error as Error).message,
+        reason: controller?.signal.aborted && timeoutMs
+          ? `feishu_delivery_timeout:${timeoutMs}ms`
+          : (error as Error).message,
         signal,
         payload
       };
-      await this.recordHistory(signal, result, payload, userId);
+      await this.recordResolvedHistory(signal, result, payload, exactUserId, options.persistDelivery !== false);
       return result;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
-    const responseText = await response.text();
     if (!response.ok) {
       const result = {
         sent: false,
@@ -291,7 +350,7 @@ export class AlertsService {
         signal,
         payload
       };
-      await this.recordHistory(signal, result, payload, userId);
+      await this.recordResolvedHistory(signal, result, payload, exactUserId, options.persistDelivery !== false);
       return result;
     }
 
@@ -301,7 +360,7 @@ export class AlertsService {
       signal,
       payload
     };
-    await this.recordHistory(signal, result, payload, userId);
+    await this.recordResolvedHistory(signal, result, payload, exactUserId, options.persistDelivery !== false);
     return result;
   }
 
@@ -422,9 +481,19 @@ export class AlertsService {
     );
   }
 
-  private async recordHistory(signal: FeishuAlertDto, result: AlertResult, payload: FeishuTextPayload, requestUserId?: string) {
-    const status = result.sent ? "sent" : result.failed ? "failed" : "skipped";
+  private async recordHistory(signal: FeishuAlertDto, result: AlertResult, payload: FeishuTextPayload, requestUserId?: string, persistDelivery = true) {
     const currentUserId = await this.currentUserId(requestUserId);
+    return this.recordResolvedHistory(signal, result, payload, currentUserId, persistDelivery);
+  }
+
+  private async recordResolvedHistory(
+    signal: FeishuAlertDto,
+    result: AlertResult,
+    payload: FeishuTextPayload,
+    exactUserId: string,
+    persistDelivery = true
+  ) {
+    const status = result.sent ? "sent" : result.failed ? "failed" : "skipped";
     const record: AlertHistoryRecord = {
       id: `alert_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
       channel: "feishu",
@@ -441,10 +510,10 @@ export class AlertsService {
     };
 
     this.history = [record, ...this.history].slice(0, 50);
-    const userHistory = this.historyByUserId.get(currentUserId) ?? [];
-    this.historyByUserId.set(currentUserId, [record, ...userHistory].slice(0, 50));
+    const userHistory = this.historyByUserId.get(exactUserId) ?? [];
+    this.historyByUserId.set(exactUserId, [record, ...userHistory].slice(0, 50));
 
-    if (this.database.enabled) {
+    if (persistDelivery && this.database.enabled) {
       await this.database.query(
         `
           insert into alert_deliveries (
@@ -473,7 +542,7 @@ export class AlertsService {
             sent_at = case when excluded.status = 'sent' then now() else alert_deliveries.sent_at end
         `,
         [
-          currentUserId,
+          exactUserId,
           signal.signalEventId ?? null,
           signal.symbol,
           signal.timeframe ?? null,
@@ -555,4 +624,10 @@ function maskWebhook(webhookUrl: string) {
   }
 
   return `${webhookUrl.slice(0, 12)}...${webhookUrl.slice(-6)}`;
+}
+
+function normalizeFeishuTimeoutMs(value: number | undefined) {
+  const timeoutMs = Number(value);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
+  return Math.max(1, Math.min(Math.round(timeoutMs), 60_000));
 }

@@ -95,7 +95,7 @@ async function testPlansAndMeAreConsistent() {
   assertEntitlements(planToEntitlements(byName.SVIP), {
     plan: 'SVIP',
     maxWatchlistSymbols: 200,
-    allowedTimeframes: ['5m', '15m', '1h', '4h'],
+    allowedTimeframes: ['5m', '15m', '30m', '1h', '4h'],
     realtimeDelayHours: 0,
     historyDays: 180,
     minAlertScore: 65,
@@ -182,7 +182,7 @@ async function testWatchlistAndInboxRespectPlanLimits() {
 
   const svipInbox = await request('/strategy/inbox?mode=all&limit=5', { token: svipToken });
   assert.equal(svipInbox.access.plan, 'SVIP');
-  assert.deepEqual(svipInbox.access.allowedTimeframes, ['5m', '15m', '1h', '4h']);
+  assert.deepEqual(svipInbox.access.allowedTimeframes, ['5m', '15m', '30m', '1h', '4h']);
   assert.equal(svipInbox.access.performancePreviewOnly, false);
 }
 
